@@ -47,17 +47,17 @@ const CanonicalInputBaseShape = {
   provenance: CanonicalInputProvenanceV1Schema,
 };
 
-const RequirementsInputV1Schema = z.strictObject({
+export const RequirementsInputV1Schema = z.strictObject({
   ...CanonicalInputBaseShape,
   kind: z.literal("REQUIREMENTS"),
 });
 
-const ImplementationPlanInputV1Schema = z.strictObject({
+export const ImplementationPlanInputV1Schema = z.strictObject({
   ...CanonicalInputBaseShape,
   kind: z.literal("IMPLEMENTATION_PLAN"),
 });
 
-const ProjectGuidanceInputV1Schema = z.strictObject({
+export const ProjectGuidanceInputV1Schema = z.strictObject({
   ...CanonicalInputBaseShape,
   kind: z.literal("PROJECT_GUIDANCE"),
 });
@@ -67,6 +67,26 @@ export const CanonicalInputV1Schema = z.discriminatedUnion("kind", [
   ImplementationPlanInputV1Schema,
   ProjectGuidanceInputV1Schema,
 ]);
+
+export const CanonicalInputsV1Schema = z
+  .strictObject({
+    requirements: z.array(RequirementsInputV1Schema).min(1),
+    implementationPlan: ImplementationPlanInputV1Schema,
+    projectGuidance: z.array(ProjectGuidanceInputV1Schema).default([]),
+  })
+  .superRefine((inputs, context) => {
+    const ids = [
+      ...inputs.requirements.map((input) => input.id),
+      inputs.implementationPlan.id,
+      ...inputs.projectGuidance.map((input) => input.id),
+    ];
+    if (new Set(ids).size !== ids.length) {
+      context.addIssue({
+        code: "custom",
+        message: "canonical input identifiers must be unique",
+      });
+    }
+  });
 
 export const AuthorPacketV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -140,11 +160,7 @@ export const ReviewRequestV1Schema = z.strictObject({
     head: GitRefSchema.optional(),
     workingTree: WorkingTreeInclusionV1Schema,
   }),
-  canonicalInputs: z.strictObject({
-    requirements: z.array(RequirementsInputV1Schema).min(1),
-    implementationPlan: ImplementationPlanInputV1Schema,
-    projectGuidance: z.array(ProjectGuidanceInputV1Schema).default([]),
-  }),
+  canonicalInputs: CanonicalInputsV1Schema,
   authorPacket: AuthorPacketV1Schema.optional(),
   reviewConfigRef: ConfigReferenceSchema,
 });

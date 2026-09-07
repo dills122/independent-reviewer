@@ -12,9 +12,12 @@ during a red-green-refactor cycle and the complete command before committing.
 Generated JSON Schema artifacts must match the runtime schemas in the same
 change.
 
-The initial application suite covers strict `ReviewRequestV1` parsing,
-cumulative working-tree defaults, optional author-packet separation,
-review-instance bounds, canonical-input kinds, and JSON Schema drift.
+The initial application suite covers strict `ReviewRequestV1`,
+`SnapshotManifestV1`, and `NeutralReviewBriefV1` parsing; cumulative
+working-tree defaults; optional author-packet separation; review-instance
+bounds; normalized snapshot paths; capture-race stability; untracked-path and
+canonical-input ledgers; blind-brief author-field rejection; evidence anchors;
+and JSON Schema drift.
 
 ## Expanding runtime gates
 

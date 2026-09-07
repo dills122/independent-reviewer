@@ -1,0 +1,1656 @@
+{
+  "$id": "urn:independent-reviewer:schema:neutral-review-brief:v1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "briefId": {
+      "type": "string",
+      "minLength": 7,
+      "maxLength": 128,
+      "pattern": "^brief_[A-Za-z0-9][A-Za-z0-9_-]*$"
+    },
+    "objective": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "canonicalInputIds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 7,
+            "maxLength": 128,
+            "pattern": "^input_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          }
+        }
+      },
+      "required": [
+        "text",
+        "canonicalInputIds"
+      ],
+      "additionalProperties": false
+    },
+    "successCriteria": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "canonicalInputIds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 7,
+              "maxLength": 128,
+              "pattern": "^input_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            }
+          }
+        },
+        "required": [
+          "text",
+          "canonicalInputIds"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "canonicalInputs": {
+      "type": "object",
+      "properties": {
+        "requirements": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 7,
+                "maxLength": 128,
+                "pattern": "^input_[A-Za-z0-9][A-Za-z0-9_-]*$"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "provenance": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "REPOSITORY_FILE"
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "revision": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "path"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "INLINE"
+                      },
+                      "label": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "const": "REQUIREMENTS"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "content",
+              "provenance",
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "implementationPlan": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 7,
+              "maxLength": 128,
+              "pattern": "^input_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1
+            },
+            "content": {
+              "type": "string",
+              "minLength": 1
+            },
+            "provenance": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "REPOSITORY_FILE"
+                    },
+                    "path": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "revision": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "path"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "INLINE"
+                    },
+                    "label": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "label"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "IMPLEMENTATION_PLAN"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "content",
+            "provenance",
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        "projectGuidance": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 7,
+                "maxLength": 128,
+                "pattern": "^input_[A-Za-z0-9][A-Za-z0-9_-]*$"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "provenance": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "REPOSITORY_FILE"
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "revision": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "path"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "INLINE"
+                      },
+                      "label": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "const": "PROJECT_GUIDANCE"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "content",
+              "provenance",
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "requirements",
+        "implementationPlan"
+      ],
+      "additionalProperties": false
+    },
+    "snapshotManifest": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "snapshotId": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 128,
+          "pattern": "^snapshot_[A-Za-z0-9][A-Za-z0-9_-]*$"
+        },
+        "flowId": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 128,
+          "pattern": "^flow_[A-Za-z0-9][A-Za-z0-9_-]*$"
+        },
+        "reviewInstance": {
+          "type": "object",
+          "properties": {
+            "number": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "maximum": {
+              "default": 3,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 3
+            }
+          },
+          "required": [
+            "number"
+          ],
+          "additionalProperties": false
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "repositoryId": {
+              "type": "string",
+              "minLength": 6,
+              "maxLength": 128,
+              "pattern": "^repo_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            },
+            "baseCommit": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "headCommit": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+            },
+            "branch": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "repositoryId",
+            "baseCommit",
+            "headCommit",
+            "branch"
+          ],
+          "additionalProperties": false
+        },
+        "workingTree": {
+          "type": "object",
+          "properties": {
+            "hasStagedChanges": {
+              "type": "boolean"
+            },
+            "hasUnstagedChanges": {
+              "type": "boolean"
+            },
+            "includedUntrackedPaths": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              }
+            }
+          },
+          "required": [
+            "hasStagedChanges",
+            "hasUnstagedChanges",
+            "includedUntrackedPaths"
+          ],
+          "additionalProperties": false
+        },
+        "snapshotDigest": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "changeType": {
+                    "type": "string",
+                    "enum": [
+                      "ADDED",
+                      "UNTRACKED"
+                    ]
+                  },
+                  "before": {
+                    "type": "null"
+                  },
+                  "after": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "TEXT",
+                              "BINARY",
+                              "SYMLINK",
+                              "SUBMODULE"
+                            ]
+                          },
+                          "digest": {
+                            "type": "object",
+                            "properties": {
+                              "algorithm": {
+                                "type": "string",
+                                "const": "SHA256"
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "algorithm",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "byteLength": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "gitMode": {
+                            "type": "string",
+                            "pattern": "^[0-7]{6}$"
+                          },
+                          "isGenerated": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "digest",
+                          "byteLength",
+                          "gitMode",
+                          "isGenerated"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "UNSUPPORTED"
+                          },
+                          "digest": {
+                            "type": "object",
+                            "properties": {
+                              "algorithm": {
+                                "type": "string",
+                                "const": "SHA256"
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "algorithm",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "byteLength": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "gitMode": {
+                            "type": "string",
+                            "pattern": "^[0-7]{6}$"
+                          },
+                          "isGenerated": {
+                            "type": "boolean"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "gitMode",
+                          "isGenerated",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "path",
+                  "changeType",
+                  "before",
+                  "after"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "changeType": {
+                    "type": "string",
+                    "const": "DELETED"
+                  },
+                  "before": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "TEXT",
+                              "BINARY",
+                              "SYMLINK",
+                              "SUBMODULE"
+                            ]
+                          },
+                          "digest": {
+                            "type": "object",
+                            "properties": {
+                              "algorithm": {
+                                "type": "string",
+                                "const": "SHA256"
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "algorithm",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "byteLength": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "gitMode": {
+                            "type": "string",
+                            "pattern": "^[0-7]{6}$"
+                          },
+                          "isGenerated": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "digest",
+                          "byteLength",
+                          "gitMode",
+                          "isGenerated"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "UNSUPPORTED"
+                          },
+                          "digest": {
+                            "type": "object",
+                            "properties": {
+                              "algorithm": {
+                                "type": "string",
+                                "const": "SHA256"
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "algorithm",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "byteLength": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "gitMode": {
+                            "type": "string",
+                            "pattern": "^[0-7]{6}$"
+                          },
+                          "isGenerated": {
+                            "type": "boolean"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "gitMode",
+                          "isGenerated",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "after": {
+                    "type": "null"
+                  }
+                },
+                "required": [
+                  "path",
+                  "changeType",
+                  "before",
+                  "after"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "changeType": {
+                    "type": "string",
+                    "enum": [
+                      "MODIFIED",
+                      "TYPE_CHANGED"
+                    ]
+                  },
+                  "before": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "TEXT",
+                              "BINARY",
+                              "SYMLINK",
+                              "SUBMODULE"
+                            ]
+                          },
+                          "digest": {
+                            "type": "object",
+                            "properties": {
+                              "algorithm": {
+                                "type": "string",
+                                "const": "SHA256"
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "algorithm",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "byteLength": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "gitMode": {
+                            "type": "string",
+                            "pattern": "^[0-7]{6}$"
+                          },
+                          "isGenerated": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "digest",
+                          "byteLength",
+                          "gitMode",
+                          "isGenerated"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "UNSUPPORTED"
+                          },
+                          "digest": {
+                            "type": "object",
+                            "properties": {
+                              "algorithm": {
+                                "type": "string",
+                                "const": "SHA256"
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "algorithm",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "byteLength": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "gitMode": {
+                            "type": "string",
+                            "pattern": "^[0-7]{6}$"
+                          },
+                          "isGenerated": {
+                            "type": "boolean"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "gitMode",
+                          "isGenerated",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "after": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "TEXT",
+                              "BINARY",
+                              "SYMLINK",
+                              "SUBMODULE"
+                            ]
+                          },
+                          "digest": {
+                            "type": "object",
+                            "properties": {
+                              "algorithm": {
+                                "type": "string",
+                                "const": "SHA256"
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "algorithm",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "byteLength": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "gitMode": {
+                            "type": "string",
+                            "pattern": "^[0-7]{6}$"
+                          },
+                          "isGenerated": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "digest",
+                          "byteLength",
+                          "gitMode",
+                          "isGenerated"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "UNSUPPORTED"
+                          },
+                          "digest": {
+                            "type": "object",
+                            "properties": {
+                              "algorithm": {
+                                "type": "string",
+                                "const": "SHA256"
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "algorithm",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "byteLength": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "gitMode": {
+                            "type": "string",
+                            "pattern": "^[0-7]{6}$"
+                          },
+                          "isGenerated": {
+                            "type": "boolean"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "gitMode",
+                          "isGenerated",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "path",
+                  "changeType",
+                  "before",
+                  "after"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "changeType": {
+                    "type": "string",
+                    "enum": [
+                      "RENAMED",
+                      "COPIED"
+                    ]
+                  },
+                  "previousPath": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "before": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "TEXT",
+                              "BINARY",
+                              "SYMLINK",
+                              "SUBMODULE"
+                            ]
+                          },
+                          "digest": {
+                            "type": "object",
+                            "properties": {
+                              "algorithm": {
+                                "type": "string",
+                                "const": "SHA256"
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "algorithm",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "byteLength": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "gitMode": {
+                            "type": "string",
+                            "pattern": "^[0-7]{6}$"
+                          },
+                          "isGenerated": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "digest",
+                          "byteLength",
+                          "gitMode",
+                          "isGenerated"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "UNSUPPORTED"
+                          },
+                          "digest": {
+                            "type": "object",
+                            "properties": {
+                              "algorithm": {
+                                "type": "string",
+                                "const": "SHA256"
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "algorithm",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "byteLength": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "gitMode": {
+                            "type": "string",
+                            "pattern": "^[0-7]{6}$"
+                          },
+                          "isGenerated": {
+                            "type": "boolean"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "gitMode",
+                          "isGenerated",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "after": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "TEXT",
+                              "BINARY",
+                              "SYMLINK",
+                              "SUBMODULE"
+                            ]
+                          },
+                          "digest": {
+                            "type": "object",
+                            "properties": {
+                              "algorithm": {
+                                "type": "string",
+                                "const": "SHA256"
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "algorithm",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "byteLength": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "gitMode": {
+                            "type": "string",
+                            "pattern": "^[0-7]{6}$"
+                          },
+                          "isGenerated": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "digest",
+                          "byteLength",
+                          "gitMode",
+                          "isGenerated"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "UNSUPPORTED"
+                          },
+                          "digest": {
+                            "type": "object",
+                            "properties": {
+                              "algorithm": {
+                                "type": "string",
+                                "const": "SHA256"
+                              },
+                              "value": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$"
+                              }
+                            },
+                            "required": [
+                              "algorithm",
+                              "value"
+                            ],
+                            "additionalProperties": false
+                          },
+                          "byteLength": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "gitMode": {
+                            "type": "string",
+                            "pattern": "^[0-7]{6}$"
+                          },
+                          "isGenerated": {
+                            "type": "boolean"
+                          },
+                          "reason": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "gitMode",
+                          "isGenerated",
+                          "reason"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "path",
+                  "changeType",
+                  "previousPath",
+                  "before",
+                  "after"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "exclusions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "SECRET_POLICY",
+                  "PATH_POLICY",
+                  "SIZE_LIMIT",
+                  "GENERATED_POLICY",
+                  "USER_EXCLUDED",
+                  "UNSUPPORTED_KIND"
+                ]
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "path",
+              "reason",
+              "detail"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "omissions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "scope": {
+                "type": "string",
+                "minLength": 1
+              },
+              "reason": {
+                "type": "string",
+                "enum": [
+                  "UNREADABLE",
+                  "CAPTURE_FAILED",
+                  "SUBMODULE_UNAVAILABLE",
+                  "RACE_DETECTED",
+                  "OTHER"
+                ]
+              },
+              "detail": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "scope",
+              "reason",
+              "detail"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "canonicalInputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 7,
+                "maxLength": 128,
+                "pattern": "^input_[A-Za-z0-9][A-Za-z0-9_-]*$"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "REQUIREMENTS",
+                  "IMPLEMENTATION_PLAN",
+                  "PROJECT_GUIDANCE"
+                ]
+              },
+              "digest": {
+                "type": "object",
+                "properties": {
+                  "algorithm": {
+                    "type": "string",
+                    "const": "SHA256"
+                  },
+                  "value": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "algorithm",
+                  "value"
+                ],
+                "additionalProperties": false
+              },
+              "provenance": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "REPOSITORY_FILE"
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "revision": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "path"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "const": "INLINE"
+                      },
+                      "label": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "kind",
+              "digest",
+              "provenance"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "policies": {
+          "type": "object",
+          "properties": {
+            "capture": {
+              "type": "string",
+              "minLength": 1
+            },
+            "transmission": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "capture",
+            "transmission"
+          ],
+          "additionalProperties": false
+        },
+        "raceCheck": {
+          "type": "object",
+          "properties": {
+            "attempts": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "status": {
+              "type": "string",
+              "const": "STABLE"
+            },
+            "beforeStateDigest": {
+              "type": "object",
+              "properties": {
+                "algorithm": {
+                  "type": "string",
+                  "const": "SHA256"
+                },
+                "value": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "algorithm",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            "afterStateDigest": {
+              "type": "object",
+              "properties": {
+                "algorithm": {
+                  "type": "string",
+                  "const": "SHA256"
+                },
+                "value": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                }
+              },
+              "required": [
+                "algorithm",
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "attempts",
+            "status",
+            "beforeStateDigest",
+            "afterStateDigest"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "snapshotId",
+        "flowId",
+        "reviewInstance",
+        "source",
+        "workingTree",
+        "snapshotDigest",
+        "paths",
+        "exclusions",
+        "omissions",
+        "canonicalInputs",
+        "policies",
+        "raceCheck"
+      ],
+      "additionalProperties": false
+    },
+    "initialEvidence": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "DIFF_HUNK"
+              },
+              "evidenceId": {
+                "type": "string",
+                "minLength": 10,
+                "maxLength": 128,
+                "pattern": "^evidence_[A-Za-z0-9][A-Za-z0-9_-]*$"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "hunkId": {
+                "type": "string",
+                "minLength": 6,
+                "maxLength": 128,
+                "pattern": "^hunk_[A-Za-z0-9][A-Za-z0-9_-]*$"
+              },
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "digest": {
+                "type": "object",
+                "properties": {
+                  "algorithm": {
+                    "type": "string",
+                    "const": "SHA256"
+                  },
+                  "value": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "algorithm",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "evidenceId",
+              "path",
+              "hunkId",
+              "content",
+              "digest"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "SOURCE_CONTEXT"
+              },
+              "evidenceId": {
+                "type": "string",
+                "minLength": 10,
+                "maxLength": 128,
+                "pattern": "^evidence_[A-Za-z0-9][A-Za-z0-9_-]*$"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "side": {
+                "type": "string",
+                "enum": [
+                  "BASE",
+                  "HEAD"
+                ]
+              },
+              "startLine": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "endLine": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "digest": {
+                "type": "object",
+                "properties": {
+                  "algorithm": {
+                    "type": "string",
+                    "const": "SHA256"
+                  },
+                  "value": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "algorithm",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "type",
+              "evidenceId",
+              "path",
+              "side",
+              "startLine",
+              "endLine",
+              "content",
+              "digest"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "coverageConstraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "EXCLUDED_PATH",
+              "OMITTED_CONTENT",
+              "UNSUPPORTED_CONTENT",
+              "EVIDENCE_BUDGET"
+            ]
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          }
+        },
+        "required": [
+          "type",
+          "detail",
+          "paths"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "evidenceOperations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "READ_SNAPSHOT_FILE",
+              "READ_DIFF",
+              "SEARCH_SNAPSHOT",
+              "READ_CANONICAL_INPUT"
+            ]
+          }
+        },
+        "verificationChecks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 7,
+                "maxLength": 128,
+                "pattern": "^check_[A-Za-z0-9][A-Za-z0-9_-]*$"
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "title"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "evidenceOperations",
+        "verificationChecks"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "briefId",
+    "objective",
+    "successCriteria",
+    "canonicalInputs",
+    "snapshotManifest",
+    "initialEvidence",
+    "coverageConstraints",
+    "capabilities"
+  ],
+  "additionalProperties": false
+}

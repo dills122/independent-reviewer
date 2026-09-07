@@ -216,6 +216,14 @@ The snapshot manifest records:
 Snapshot identity excludes wall-clock timestamps and local storage paths so
 unchanged logical inputs remain reproducible.
 
+Implementation status: `SnapshotManifestV1Schema` now defines the strict
+persisted boundary for source commits, dirty-state evidence, typed path changes,
+content digests, exclusions, omissions, canonical-input identities, policy
+versions, and stable capture-race evidence. It validates normalized relative
+paths and exact untracked-path accounting. Git capture and digest construction
+remain separate follow-on work; fixture digests do not claim those behaviors
+exist yet.
+
 ### Neutral review brief
 
 The brief contains only information permitted before preliminary persistence:
@@ -231,6 +239,14 @@ The brief contains only information permitted before preliminary persistence:
 It must not contain author rationale, retrospective implementation narration,
 claimed design intent that is not canonical, prior reviewer verdicts, or the
 implementation conversation.
+
+Implementation status: `NeutralReviewBriefV1Schema` now provides a strict
+blind-stage boundary containing canonical-source-attributed objectives and
+criteria, canonical inputs, one complete snapshot manifest, bounded initial
+evidence, visible coverage constraints, and capability identifiers. Runtime
+validation rejects undeclared author fields, canonical-input identity mismatch,
+evidence outside the manifest, and invalid source ranges. Orchestration must
+still prove that only this artifact is sent before preliminary persistence.
 
 ### Author packet
 

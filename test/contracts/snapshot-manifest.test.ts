@@ -61,6 +61,17 @@ describe("SnapshotManifestV1Schema", () => {
     assert.equal(SnapshotManifestV1Schema.safeParse(fixture).success, false);
   });
 
+  it("rejects duplicate paths in the change manifest", async () => {
+    const fixture = structuredClone(await readFixture()) as {
+      paths: unknown[];
+    };
+    const firstPath = fixture.paths[0];
+    assert.ok(firstPath);
+    fixture.paths.push(firstPath);
+
+    assert.equal(SnapshotManifestV1Schema.safeParse(fixture).success, false);
+  });
+
   it("matches the committed JSON Schema artifact", async () => {
     const contents = await readFile(resolve("schemas", "snapshot-manifest-v1.schema.json"), "utf8");
 

@@ -6,10 +6,10 @@ The project expands AI Central's independent-review workflow into an enforceable
 
 ## Status
 
-Implementation has started. The repository now has an exact-pinned TypeScript 6
-and Node.js 24 runtime scaffold plus the first versioned boundary contract,
-`ReviewRequestV1`. Snapshot capture, orchestration, provider integration, and a
-user-facing CLI have not been implemented yet.
+Implementation has started. The exact-pinned TypeScript 6 and Node.js 24
+runtime now defines strict versioned contracts for review requests, snapshot
+manifests, and blind-stage neutral briefs. Snapshot capture, orchestration,
+provider integration, and a user-facing CLI have not been implemented yet.
 
 Read [Architecture and roadmap](docs/architecture-and-roadmap.md) for component boundaries, contracts, milestones, and acceptance gates.
 The [review protocol specification](docs/review-protocol-spec.md) defines the
@@ -32,8 +32,8 @@ with the full source trail retained in the
 
 ## Next step
 
-Extend the versioned contract suite with snapshot-manifest and neutral-brief
-artifacts, then implement deterministic identity and packet construction. The
+Implement deterministic snapshot identity and packet construction against the
+versioned contracts, then add Git capture behind that boundary. The
 model/provider choice and numerical budgets remain gated on the small evaluation
 described in milestone 4.
 

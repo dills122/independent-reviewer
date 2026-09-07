@@ -194,13 +194,33 @@ export const SnapshotManifestV1Schema = z
     raceCheck: CaptureRaceCheckV1Schema,
   })
   .superRefine((manifest, context) => {
+    const manifestPaths = manifest.paths.map((path) => path.path);
+    if (new Set(manifestPaths).size !== manifestPaths.length) {
+      context.addIssue({
+        code: "custom",
+        message: "change-manifest paths must be unique",
+        path: ["paths"],
+      });
+    }
+
+    const canonicalInputIds = manifest.canonicalInputs.map((input) => input.id);
+    if (new Set(canonicalInputIds).size !== canonicalInputIds.length) {
+      context.addIssue({
+        code: "custom",
+        message: "canonical input identifiers must be unique",
+        path: ["canonicalInputs"],
+      });
+    }
+
     const declared = manifest.workingTree.includedUntrackedPaths;
     const captured = manifest.paths
       .filter((path) => path.changeType === "UNTRACKED")
       .map((path) => path.path);
+    const declaredPaths = [...declared].sort();
+    const capturedPaths = [...captured].sort();
     const samePaths =
-      declared.length === captured.length &&
-      [...declared].sort().every((path, index) => path === [...captured].sort()[index]);
+      declaredPaths.length === capturedPaths.length &&
+      declaredPaths.every((path, index) => path === capturedPaths[index]);
 
     if (!samePaths) {
       context.addIssue({

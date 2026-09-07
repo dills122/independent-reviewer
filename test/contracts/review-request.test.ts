@@ -76,6 +76,20 @@ describe("ReviewRequestV1Schema", () => {
     assert.equal(result.success, false);
   });
 
+  it("rejects duplicate canonical-input identifiers", async () => {
+    const fixture = structuredClone(await readFixture("review-request.valid.json")) as {
+      canonicalInputs: {
+        requirements: Array<{ id: string }>;
+        implementationPlan: { id: string };
+      };
+    };
+    const requirement = fixture.canonicalInputs.requirements[0];
+    assert.ok(requirement);
+    fixture.canonicalInputs.implementationPlan.id = requirement.id;
+
+    assert.equal(ReviewRequestV1Schema.safeParse(fixture).success, false);
+  });
+
   it("exports a strict draft 2020-12 JSON Schema", () => {
     assert.equal(
       REVIEW_REQUEST_V1_JSON_SCHEMA.$id,
