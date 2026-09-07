@@ -9,6 +9,15 @@ The project expands AI Central's independent-review workflow into an enforceable
 Architecture and planning. No CLI or API integration has been implemented yet.
 
 Read [Architecture and roadmap](docs/architecture-and-roadmap.md) for component boundaries, contracts, milestones, and acceptance gates.
+The [review protocol specification](docs/review-protocol-spec.md) defines the
+staged reviewer/author exchange, local verification boundary, token-efficiency
+rules, and first offline acceptance gate.
+The initial TypeScript 6 and Node.js 24 LTS runtime is accepted in
+[ADR-002](docs/decisions/002-use-typescript-node-runtime.md).
+The versioned prompt, call-budget, caching, and failure policy is accepted in
+[ADR-003](docs/decisions/003-use-versioned-budgeted-model-call-protocol.md),
+with the full source trail retained in the
+[prompt and token-efficiency research spike](docs/research/2026-09-07-prompt-call-and-token-efficiency-spike.md).
 
 ## Proposed first release
 
@@ -20,7 +29,9 @@ Read [Architecture and roadmap](docs/architecture-and-roadmap.md) for component 
 
 ## Next step
 
-Settle the initial stack, snapshot scope, and model/budget configuration, then implement the contracts and packet builder described in milestone 1.
+Review and approve the remaining protocol details, settle the exact dependency
+versions and model/budget defaults, then implement the contracts and packet
+builder described in milestone 1.
 
 ## Development context
 
