@@ -2,6 +2,16 @@
 
 Status: proposed architecture; implementation has not started.
 
+The staged lifecycle, evidence surface, verification boundary, and efficiency
+requirements are refined in the
+[review protocol technical specification](review-protocol-spec.md). The
+orchestrator decision is recorded in
+[ADR-001](decisions/001-orchestrator-mediated-staged-review.md). The initial
+TypeScript and Node.js runtime is recorded in
+[ADR-002](decisions/002-use-typescript-node-runtime.md). The prompt, call,
+budget, and failure protocol is recorded in
+[ADR-003](decisions/003-use-versioned-budgeted-model-call-protocol.md).
+
 ## Objective
 
 Build a standalone review engine that takes a frozen implementation target and canonical requirements, conducts an engineering review through an external model on OpenRouter, and returns an evidence-backed report to the implementation workflow. Start with a local CLI; add an MR/PR bot using the same engine later.
@@ -55,7 +65,10 @@ AI Central skill                       Hosting adapter
 | Report layer | Preserve preliminary assessment and final report, validate evidence anchors, render Markdown. |
 | Hosting adapter | Translate MR/PR state into review input and later publish results without changing review semantics. |
 
-Suggested implementation: TypeScript in a single package with explicit modules. No daemon, database server, or web UI is needed for the first version. This is a proposed stack, not a dependency on Codex or an OpenAI SDK.
+The accepted initial runtime is TypeScript 6 on Node.js 24 LTS in a single ESM
+package with explicit modules. No daemon, database server, or web UI is needed
+for the first version. The runtime is not a dependency on Codex or an OpenAI
+SDK. See [ADR-002](decisions/002-use-typescript-node-runtime.md).
 
 ## Review lifecycle
 
@@ -96,11 +109,34 @@ Persist artifacts locally under a configured private run directory, excluded fro
 
 Use an explicit configured model ID. Do not choose an automatic model router for the first release. Select supported models based on tool calling, structured output support, context capacity, and evaluation results. Model choice stays configurable; no named model is selected by this plan.
 
-Use schema-constrained output when supported and validate responses locally regardless. Set `require_parameters: true` so routing does not silently ignore requested capabilities. Prefer an explicit provider policy; disable fallback for initial reproducibility, or later permit a declared provider allowlist and record the actual route. OpenRouter documents these controls in its [provider-routing documentation](https://openrouter.ai/docs/guides/routing/provider-selection).
+The initial adapter uses non-streaming Chat Completions with a local authoritative
+message ledger. Prompts and response schemas are stage-specific and versioned.
+The preliminary response also requests the author packet, avoiding an otherwise
+empty model turn. See
+[ADR-003](decisions/003-use-versioned-budgeted-model-call-protocol.md).
+
+Use schema-constrained output when supported and validate responses locally
+regardless.[^or-structured] Set `require_parameters: true` so routing does not
+silently ignore requested capabilities. Prefer an explicit provider policy and
+disable fallback for initial reproducibility; a later declared provider
+allowlist must record the actual route.[^or-routing]
+
+Explicitly disable provider context compression because it can remove or
+truncate messages from the middle.[^or-transforms] Disable response caching for
+live reviews because it stores and replays complete responses and is unavailable
+with account-level ZDR. Prompt caching remains an opt-in optimization after data-
+policy and measured-cost review.[^or-response-cache][^or-prompt-cache]
 
 For source review, propose `data_collection: "deny"` and `zdr: true`, failing when no eligible route exists. OpenRouter describes ZDR as endpoint routing enforcement; this is not a blanket claim about all storage across the application and providers. Review account logging separately. See [provider data-policy and ZDR controls](https://openrouter.ai/docs/guides/routing/provider-selection).
 
 Read the API key at runtime from environment or an external secret store. Keep it out of packets, model messages, tool results, and logs. Bound completion tokens, calls, retries, and time; use pricing estimates for preflight, record actual usage when returned, and never describe a local estimate as a guaranteed billing cap.
+
+The orchestrator owns retries and reserves the maximum permitted cost of each
+attempt plus enough capacity for a final non-ready or limitation report. A
+possibly submitted timeout remains `TRANSPORT_UNCERTAIN`; it is not retried
+automatically. OpenRouter can return typed errors inside an HTTP `200`, so the
+adapter validates the body and finish reason rather than trusting status
+alone.[^or-errors]
 
 ## Delivery plan and acceptance gates
 
@@ -119,6 +155,10 @@ Update the existing skill to invoke the engine and preserve its author/reviewer 
 ### Milestone 4 — review quality evaluation
 
 Build small changes with known defects, clean changes, misleading author claims, missing plan coverage, insufficient context, and prompt-injection attempts. Measure actionable defect recall, false positives on clean changes, citation validity, claim reconciliation, context omissions, cost, and latency. Gate: establish a recorded baseline and explicit acceptance thresholds before choosing the default model. Avoid treating a persuasive report or one successful API call as quality validation.
+
+Keep the evaluation task-specific and change one model, reasoning, prompt, or
+context variable at a time. Current provider guidance treats prompt engineering
+as an empirical loop with measurable success criteria.[^openai-evals][^anthropic-evals]
 
 ### Milestone 5 — MR/PR adapter
 
@@ -141,6 +181,26 @@ Exact working-tree and author-packet options follow the capture contract. A fail
 
 ## Decisions to settle before implementation
 
-Repository location and final name; TypeScript stack acceptance; first model and provider policy; per-review budget; and whether initial work should support working-tree snapshots immediately or begin with committed base/head pairs. Hosting choice can wait until the bot milestone.
+Exact dependency versions; first model and provider policy; concrete token,
+cost, evidence, verification, and duration budgets; repository configuration;
+and the private run-directory default remain open.
+
+The initial scope now includes cumulative working-tree snapshots. The base
+resolves from an explicit value, repository configuration, branch upstream, or
+remote default branch in that order and fails when still ambiguous. The first
+review protocol uses one external reviewer conversation, an immutable blind
+assessment, a separately delivered author packet, at most three author
+ask-backs, and a bounded local named-check executor. Token efficiency is a
+first-class correctness constraint; required evidence cannot be silently
+omitted to fit a budget.
 
 No external review request, AI Central edit, or bot publication was performed while preparing this plan.
+
+[^or-structured]: OpenRouter, [Structured Outputs](https://openrouter.ai/docs/guides/features/structured-outputs).
+[^or-routing]: OpenRouter, [Provider Routing](https://openrouter.ai/docs/guides/routing/provider-selection).
+[^or-transforms]: OpenRouter, [Message Transforms](https://openrouter.ai/docs/guides/features/message-transforms).
+[^or-response-cache]: OpenRouter, [Response Caching](https://openrouter.ai/docs/guides/features/response-caching).
+[^or-prompt-cache]: OpenRouter, [Prompt Caching](https://openrouter.ai/docs/guides/best-practices/prompt-caching).
+[^or-errors]: OpenRouter, [Errors and Debugging](https://openrouter.ai/docs/api_reference/errors-and-debugging).
+[^openai-evals]: OpenAI, [Evaluation Best Practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices).
+[^anthropic-evals]: Anthropic, [Define Success Criteria and Build Evaluations](https://platform.claude.com/docs/en/test-and-evaluate/develop-tests).
