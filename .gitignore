@@ -1,0 +1,9 @@
+# Local credentials and review artifacts
+.env
+.env.*
+!.env.example
+.review-runs/
+work/
+
+# OS files
+.DS_Store
