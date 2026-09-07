@@ -13,6 +13,24 @@
       "maxLength": 128,
       "pattern": "^brief_[A-Za-z0-9][A-Za-z0-9_-]*$"
     },
+    "briefDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
     "objective": {
       "type": "object",
       "properties": {
@@ -1644,6 +1662,7 @@
   "required": [
     "schemaVersion",
     "briefId",
+    "briefDigest",
     "objective",
     "successCriteria",
     "canonicalInputs",

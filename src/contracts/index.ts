@@ -1,9 +1,15 @@
 export {
+  computeNeutralReviewBriefDigestV1,
   computeSnapshotManifestDigestV1,
+  finalizeNeutralReviewBriefV1,
   finalizeSnapshotManifestV1,
+  verifyNeutralReviewBriefIdentityV1,
   verifySnapshotManifestIdentityV1,
 } from "./artifact-identity.js";
-export type { SnapshotManifestIdentityInputV1 } from "./artifact-identity.js";
+export type {
+  NeutralReviewBriefIdentityInputV1,
+  SnapshotManifestIdentityInputV1,
+} from "./artifact-identity.js";
 export {
   canonicalizeJson,
   digestCanonicalJson,

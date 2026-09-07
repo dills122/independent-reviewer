@@ -17,7 +17,8 @@ The initial application suite covers strict `ReviewRequestV1`,
 working-tree defaults; optional author-packet separation; review-instance
 bounds; normalized snapshot paths; capture-race stability; untracked-path and
 canonical-input ledgers; blind-brief author-field rejection; evidence anchors;
-and JSON Schema drift.
+JSON Schema drift; RFC 8785 canonicalization; SHA-256 vectors; golden artifact
+digests; identity normalization; and post-finalization tamper detection.
 
 ## Expanding runtime gates
 

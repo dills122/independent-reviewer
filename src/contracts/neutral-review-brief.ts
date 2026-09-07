@@ -59,6 +59,7 @@ export const NeutralReviewBriefV1Schema = z
   .strictObject({
     schemaVersion: z.literal(1),
     briefId: prefixedIdentifier("brief"),
+    briefDigest: DigestV1Schema,
     objective: CanonicalStatementV1Schema,
     successCriteria: z.array(CanonicalStatementV1Schema).min(1),
     canonicalInputs: CanonicalInputsV1Schema,

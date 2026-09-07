@@ -1,4 +1,5 @@
 import { canonicalizeJson, digestCanonicalJson } from "./canonical-json.js";
+import { type NeutralReviewBriefV1, NeutralReviewBriefV1Schema } from "./neutral-review-brief.js";
 import {
   type DigestV1,
   type SnapshotManifestV1,
@@ -6,6 +7,7 @@ import {
 } from "./snapshot-manifest.js";
 
 export type SnapshotManifestIdentityInputV1 = Omit<SnapshotManifestV1, "snapshotDigest">;
+export type NeutralReviewBriefIdentityInputV1 = Omit<NeutralReviewBriefV1, "briefDigest">;
 
 const PLACEHOLDER_DIGEST: DigestV1 = {
   algorithm: "SHA256",
@@ -96,4 +98,64 @@ export function verifySnapshotManifestIdentityV1(value: unknown): value is Snaps
 
   const { snapshotDigest, ...identityInput } = parsed.data;
   return snapshotDigest.value === computeParsedSnapshotDigest(identityInput).value;
+}
+
+function parseNeutralBriefIdentityInput(value: unknown): NeutralReviewBriefIdentityInputV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("neutral brief identity input must be an object");
+  }
+  if (Object.hasOwn(value, "briefDigest")) {
+    throw new TypeError("neutral brief identity input must not contain briefDigest");
+  }
+
+  const parsed = NeutralReviewBriefV1Schema.parse({
+    ...value,
+    briefDigest: PLACEHOLDER_DIGEST,
+  });
+  const { briefDigest: _briefDigest, ...identityInput } = parsed;
+  return identityInput;
+}
+
+function neutralBriefIdentityPayload(input: NeutralReviewBriefIdentityInputV1): unknown {
+  const { briefId: _briefId, ...blindContent } = input;
+  return {
+    identityProfile: "urn:independent-reviewer:identity:neutral-review-brief:v1",
+    neutralReviewBrief: blindContent,
+  };
+}
+
+function computeParsedNeutralBriefDigest(input: NeutralReviewBriefIdentityInputV1): DigestV1 {
+  return digestCanonicalJson(neutralBriefIdentityPayload(input));
+}
+
+/** Computes the exact blind-stage content digest after strict input validation. */
+export function computeNeutralReviewBriefDigestV1(value: unknown): DigestV1 {
+  const identityInput = parseNeutralBriefIdentityInput(value);
+  if (!verifySnapshotManifestIdentityV1(identityInput.snapshotManifest)) {
+    throw new TypeError("neutral brief contains an invalid snapshot identity");
+  }
+  return computeParsedNeutralBriefDigest(identityInput);
+}
+
+/** Validates blind-stage material and returns a complete, identity-bound brief. */
+export function finalizeNeutralReviewBriefV1(value: unknown): NeutralReviewBriefV1 {
+  const identityInput = parseNeutralBriefIdentityInput(value);
+  if (!verifySnapshotManifestIdentityV1(identityInput.snapshotManifest)) {
+    throw new TypeError("neutral brief contains an invalid snapshot identity");
+  }
+  return NeutralReviewBriefV1Schema.parse({
+    ...identityInput,
+    briefDigest: computeParsedNeutralBriefDigest(identityInput),
+  });
+}
+
+/** Returns true only when both the brief and its embedded snapshot identities match. */
+export function verifyNeutralReviewBriefIdentityV1(value: unknown): value is NeutralReviewBriefV1 {
+  const parsed = NeutralReviewBriefV1Schema.safeParse(value);
+  if (!parsed.success || !verifySnapshotManifestIdentityV1(parsed.data.snapshotManifest)) {
+    return false;
+  }
+
+  const { briefDigest, ...identityInput } = parsed.data;
+  return briefDigest.value === computeParsedNeutralBriefDigest(identityInput).value;
 }

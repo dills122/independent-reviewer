@@ -2,7 +2,7 @@
 
 ## Purpose and current phase
 
-Build an external engineering review engine using OpenRouter, starting with a local CLI and later an MR/PR adapter. The repository is in early implementation. TypeScript 6 on Node.js 24 is adopted, and the first versioned request contract exists; snapshot capture, orchestration, provider integration, and the CLI remain unimplemented.
+Build an external engineering review engine using OpenRouter, starting with a local CLI and later an MR/PR adapter. The repository is in early implementation. TypeScript 6 on Node.js 24 is adopted; versioned request, snapshot-manifest, and neutral-brief contracts plus deterministic artifact identities exist. Snapshot capture, orchestration, provider integration, and the CLI remain unimplemented.
 
 Read `docs/architecture-and-roadmap.md`, `.codex/steering/repository-steering.md`, and `.codex/steering/testing-quality-gates-steering.md` before implementation. `docs/ai-central-integration.md` explains local skills and the retained baseline.
 

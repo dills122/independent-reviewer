@@ -22,6 +22,10 @@ async function createValidBrief(): Promise<Record<string, unknown>> {
   return {
     schemaVersion: 1,
     briefId: "brief_contract_fixture",
+    briefDigest: {
+      algorithm: "SHA256",
+      value: "9".repeat(64),
+    },
     objective: {
       text: "Review the implementation against the accepted protocol.",
       canonicalInputIds: ["input_review_protocol"],

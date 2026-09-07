@@ -11,6 +11,8 @@ TypeScript and Node.js runtime is recorded in
 [ADR-002](decisions/002-use-typescript-node-runtime.md). The prompt, call,
 budget, and failure protocol is recorded in
 [ADR-003](decisions/003-use-versioned-budgeted-model-call-protocol.md).
+The deterministic artifact identity profile is recorded in
+[ADR-004](decisions/004-use-jcs-sha256-artifact-identities.md).
 
 ## Objective
 
@@ -146,8 +148,9 @@ Create the standalone repository, schemas, capture policy, CLI `prepare` and `in
 
 Progress: the TypeScript/Node runtime and strict `ReviewRequestV1`,
 `SnapshotManifestV1`, and `NeutralReviewBriefV1` contracts are implemented with
-fixtures, runtime validation, and committed JSON Schema artifacts. Snapshot
-capture, deterministic packet identity, and CLI work remains.
+fixtures, runtime validation, committed JSON Schema artifacts, and deterministic
+JCS/SHA-256 identity finalization. Snapshot capture, packet construction, and
+CLI work remains.
 
 ### Milestone 2 — external review engine
 
