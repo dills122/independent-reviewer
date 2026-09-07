@@ -1,4 +1,10 @@
 export {
+  canonicalizeJson,
+  digestCanonicalJson,
+  sha256Utf8,
+} from "./canonical-json.js";
+export type { CanonicalJsonValue } from "./canonical-json.js";
+export {
   InitialEvidenceV1Schema,
   NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,
   NeutralReviewBriefV1Schema,
@@ -26,4 +32,4 @@ export {
   SnapshotPathEntryV1Schema,
   SnapshotPathV1Schema,
 } from "./snapshot-manifest.js";
-export type { SnapshotManifestV1 } from "./snapshot-manifest.js";
+export type { DigestV1, SnapshotManifestV1 } from "./snapshot-manifest.js";

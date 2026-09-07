@@ -232,6 +232,7 @@ export const SnapshotManifestV1Schema = z
   });
 
 export type SnapshotManifestV1 = z.infer<typeof SnapshotManifestV1Schema>;
+export type DigestV1 = z.infer<typeof DigestV1Schema>;
 
 export const SNAPSHOT_MANIFEST_V1_JSON_SCHEMA = {
   $id: "urn:independent-reviewer:schema:snapshot-manifest:v1",
