@@ -1,6 +1,6 @@
 # Review protocol technical specification
 
-Status: proposed for approval before implementation.
+Status: accepted protocol; implementation is in progress.
 
 This specification turns the independent-review workflow in
 [`docs/architecture-and-roadmap.md`](architecture-and-roadmap.md) into an
@@ -189,6 +189,14 @@ The caller supplies:
 
 The author packet may be absent at preparation time. A run then enters
 `AWAITING_AUTHOR` after preliminary persistence.
+
+Implementation status: `ReviewRequestV1Schema` currently enforces this request
+boundary, including a separately typed optional author packet, cumulative
+working-tree defaults, contextual canonical-input kinds, and review-instance
+bounds. The snapshot and orchestration layers do not exist yet, so structural
+separation is not yet a claim that runtime author withholding has been proven.
+Its committed JSON Schema describes caller input; defaulted fields remain
+optional at the serialized boundary and are materialized during local parsing.
 
 ### Snapshot manifest
 

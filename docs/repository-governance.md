@@ -10,13 +10,22 @@ Required approvals remain zero while the owner is the only collaborator. Increas
 
 `python3 -B scripts/check-ai-context.py --ci` checks committed guidance, retained source hashes, bootstrap shell syntax, and that machine-local skills and review artifacts are not tracked. It works on a clean clone without AI Central. The default command additionally validates local AI Central links and exclusions.
 
-CI runs on pull requests and pushes to main, with read-only permissions, pinned official Actions, a five-minute timeout, and cancellation of superseded runs. It performs no external-model requests. This is a setup gate, not an application test suite; expand it as runtime contracts and code land while retaining the stable required job name.
+CI runs on pull requests and pushes to main, with read-only permissions, pinned
+official Actions, a five-minute timeout, and cancellation of superseded runs.
+It installs the committed npm dependency graph on Node.js 24, validates project
+context, and runs formatting, lint, strict type checking, build, and application
+tests. It performs no external-model requests and retains the stable required
+`Repository checks` job name.
 
 ## Repository settings
 
 Squash is the only merge method, merged branches are automatically deleted, and squash commit titles use the PR title. Auto-merge is available but must be enabled per PR. Issues stay enabled; documentation lives in the repository rather than a separate wiki. The repository remains public.
 
-GitHub Actions keeps read-only default workflow tokens and cannot approve pull requests. Dependabot checks pinned Actions weekly. Dependency alerts and security updates are enabled; existing secret scanning and push protection remain enabled. Runtime dependency updates and code scanning can be added when the application stack is adopted.
+GitHub Actions keeps read-only default workflow tokens and cannot approve pull
+requests. Dependabot checks pinned Actions and npm dependencies weekly.
+Dependency alerts and security updates are enabled; existing secret scanning
+and push protection remain enabled. Code scanning can be added as the
+application grows.
 
 ## Maintenance
 

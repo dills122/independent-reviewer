@@ -6,11 +6,24 @@ case "$source_root" in */templates) source_root=${source_root%/templates} ;; esa
 source_root=$(CDPATH= cd -- "$source_root" && pwd -P)
 case "$#:$*" in 0:) ;; 1:--dry-run) ;; *) echo "Usage: $0 [--dry-run]" >&2; exit 2 ;; esac
 "$source_root/scripts/setup-ai-context.sh" "$project_root" --yes --mode link \
-  --profiles base --bundles core,orchestration,documentation,delivery,engineering,planning "$@"
+  --profiles base,javascript-typescript \
+  --bundles core,orchestration,documentation,delivery,engineering,planning "$@"
 if [ "$#" -ne 0 ]; then exit 0; fi
 exclude_file=$(git -C "$project_root" rev-parse --path-format=absolute --git-path info/exclude)
 mkdir -p "$(dirname -- "$exclude_file")"
 touch "$exclude_file"
+language_steering=.codex/steering/javascript-typescript-steering.md
+if [ -L "$project_root/$language_steering" ]; then
+  target=$(readlink "$project_root/$language_steering")
+  case "$target" in
+    "$source_root"/*)
+      pattern="/$language_steering"
+      if ! grep -Fqx -- "$pattern" "$exclude_file"; then
+        printf '\n%s\n' "$pattern" >> "$exclude_file"
+      fi
+      ;;
+  esac
+fi
 for link in "$project_root"/.agents/skills/*; do
   [ -L "$link" ] || continue
   target=$(readlink "$link")

@@ -20,4 +20,15 @@ The architecture roadmap is canonical for proposed behavior. Preserve the upstre
 
 ## Language and tools
 
-No language profile is installed yet because the runtime stack is still proposed. When adopted, add the matching profile through AI Central's maintained setup script and document actual commands. Do not install unrelated language or frontend profiles merely because they are available.
+Use the accepted TypeScript 6 and Node.js 24 LTS ESM runtime. npm owns the
+committed lockfile; runtime and development dependencies are exact-pinned. Zod
+owns runtime contract validation and JSON Schema generation, Node's built-in
+test runner owns application tests, TypeScript owns type checking and build
+output, and Biome owns formatting and linting.
+
+Run `npm ci` on a clean checkout and `npm run check` before proposing an
+application change. After a deliberate contract change, run
+`npm run schemas:write` and commit the regenerated schema with its runtime
+definition and tests. The AI Central setup selects the
+`javascript-typescript` language profile. Do not install unrelated language or
+frontend profiles merely because they are available.

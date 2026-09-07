@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "flowId": "flow_contract_fixture",
+  "reviewInstance": {
+    "number": 1,
+    "maximum": 3
+  },
+  "repository": {
+    "path": ".",
+    "base": "main"
+  },
+  "canonicalInputs": {
+    "requirements": [
+      {
+        "id": "input_review_protocol",
+        "kind": "REQUIREMENTS",
+        "title": "Review protocol",
+        "content": "The reviewer must receive neutral evidence before author rationale.",
+        "provenance": {
+          "type": "REPOSITORY_FILE",
+          "path": "docs/review-protocol-spec.md",
+          "revision": "d7d62a3"
+        }
+      }
+    ],
+    "implementationPlan": {
+      "id": "input_architecture_roadmap",
+      "kind": "IMPLEMENTATION_PLAN",
+      "title": "Architecture and roadmap",
+      "content": "Define versioned contracts before their consumers.",
+      "provenance": {
+        "type": "REPOSITORY_FILE",
+        "path": "docs/architecture-and-roadmap.md",
+        "revision": "d7d62a3"
+      }
+    },
+    "projectGuidance": [
+      {
+        "id": "input_repository_steering",
+        "kind": "PROJECT_GUIDANCE",
+        "title": "Repository steering",
+        "content": "Preserve explicit module boundaries.",
+        "provenance": {
+          "type": "REPOSITORY_FILE",
+          "path": ".codex/steering/repository-steering.md",
+          "revision": "d7d62a3"
+        }
+      }
+    ]
+  },
+  "authorPacket": {
+    "schemaVersion": 1,
+    "intent": "Establish the first runtime contract boundary.",
+    "successCriteria": [
+      "Valid requests parse deterministically.",
+      "Author content remains a separately typed field."
+    ],
+    "planTraceability": [
+      {
+        "planItem": "Define versioned contracts.",
+        "implementation": "Add ReviewRequestV1Schema and fixtures."
+      }
+    ],
+    "technicalApproach": "Use one strict Zod schema as the runtime and type source.",
+    "componentWalkthrough": [
+      {
+        "component": "contracts",
+        "changes": "Validate request identity, canonical inputs, and author packet separation."
+      }
+    ],
+    "decisions": [
+      {
+        "decision": "Default working-tree scope to cumulative.",
+        "rationale": "This is the accepted review default.",
+        "alternatives": ["Require callers to repeat the default."]
+      }
+    ],
+    "invariants": ["Author content is never merged into canonical inputs."],
+    "claimedVerification": [
+      {
+        "command": "npm test",
+        "outcome": "PASSED",
+        "summary": "Contract fixtures passed locally."
+      }
+    ],
+    "risks": ["Later packet limits must bound large text inputs."],
+    "knownGaps": ["Snapshot capture is not part of this slice."],
+    "challengePoints": ["Check whether the contract is strict enough at every nested boundary."]
+  },
+  "reviewConfigRef": "config_local_default"
+}
