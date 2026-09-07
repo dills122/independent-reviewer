@@ -38,3 +38,7 @@ Keep changes scoped to the current request and update affected contracts and doc
 - Validate the sibling AI Central checkout: `(cd ../ai-central && ./scripts/check.sh)`
 
 Add actual application checks when the runtime scaffold exists. Never claim application tests passed based on setup checks.
+
+## Committed repository gate
+
+Run `python3 -B scripts/check-ai-context.py --ci` for the clean-clone checks used by GitHub Actions. Run without `--ci` to additionally verify local AI Central links. See `docs/repository-governance.md` for merge rules and required checks.
