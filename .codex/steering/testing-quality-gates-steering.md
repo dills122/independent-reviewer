@@ -11,3 +11,7 @@ Test behavior and trust boundaries: snapshot races, dirty files, rename/delete s
 Verify citations against captured evidence, but do not equate a valid location with a correct finding. Keep known-defect and clean-change evaluation fixtures and measure false positives as well as recall.
 
 No application test suite or build exists yet. Document that limitation instead of inventing passing commands. Introduce focused tests as runtime behavior is implemented.
+
+## Committed repository gate
+
+Run `python3 -B scripts/check-ai-context.py --ci` for the clean-clone checks used by GitHub Actions. Run without `--ci` to additionally verify local AI Central links. See `docs/repository-governance.md` for merge rules and required checks.

@@ -27,3 +27,7 @@ Settle the initial stack, snapshot scope, and model/budget configuration, then i
 See [AI Central integration](docs/ai-central-integration.md) for the installed bundles, refresh commands, and retained [independent-review skill](docs/reference/ai-central/independent-review/SKILL.md). Project-specific instructions live in `AGENTS.md` and `.codex/steering/`.
 
 Verify the local setup with `python3 -B scripts/check-ai-context.py`. Application implementation and runtime tests have not started.
+
+## Contributing
+
+Changes go through pull requests and the required Repository checks job. Read [Repository governance](docs/repository-governance.md) for branch rules and CI, and run `python3 -B scripts/check-ai-context.py --ci` before opening a PR.
