@@ -5,5 +5,11 @@
 .review-runs/
 work/
 
+# Node.js runtime artifacts
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
 # OS files
 .DS_Store

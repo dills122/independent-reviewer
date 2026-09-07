@@ -2,7 +2,7 @@
 
 ## Purpose and current phase
 
-Build an external engineering review engine using OpenRouter, starting with a local CLI and later an MR/PR adapter. The repository is in architecture and setup phase. TypeScript is proposed, not yet adopted; no application dependency install, lint, test, or build commands exist yet.
+Build an external engineering review engine using OpenRouter, starting with a local CLI and later an MR/PR adapter. The repository is in early implementation. TypeScript 6 on Node.js 24 is adopted, and the first versioned request contract exists; snapshot capture, orchestration, provider integration, and the CLI remain unimplemented.
 
 Read `docs/architecture-and-roadmap.md`, `.codex/steering/repository-steering.md`, and `.codex/steering/testing-quality-gates-steering.md` before implementation. `docs/ai-central-integration.md` explains local skills and the retained baseline.
 
@@ -10,7 +10,10 @@ Read `docs/architecture-and-roadmap.md`, `.codex/steering/repository-steering.md
 
 - `docs/architecture-and-roadmap.md` owns the proposed architecture and milestone acceptance gates.
 - `docs/reference/ai-central/independent-review/` is an unchanged upstream reference, not the product runtime prompt. Do not edit it as a shortcut to implementing the engine.
-- `.codex/steering/` contains project-owned guidance.
+- `.codex/steering/repository-steering.md` and
+  `.codex/steering/testing-quality-gates-steering.md` are project-owned.
+  The JavaScript/TypeScript profile in that directory is a machine-local shared
+  link; do not edit through it.
 - `.agents/skills/` and `.codex/skills/` are local shared links. Do not edit through those links: that would edit AI Central itself.
 - `scripts/` owns local bootstrap and setup verification only.
 - Future snapshot, review-core, provider, report, and hosting modules must preserve the boundaries in the architecture plan. Define versioned contracts before implementing their consumers.
@@ -33,11 +36,14 @@ Keep changes scoped to the current request and update affected contracts and doc
 ## Available checks
 
 - Verify repository setup: `python3 -B scripts/check-ai-context.py`
+- Install exact application dependencies: `npm ci`
+- Run all application gates: `npm run check`
+- Regenerate committed contract schemas after deliberate contract changes: `npm run schemas:write`
 - Preview AI Central refresh: `sh scripts/setup-ai-context.sh --dry-run`
 - Apply non-overwriting refresh: `sh scripts/setup-ai-context.sh`
 - Validate the sibling AI Central checkout: `(cd ../ai-central && ./scripts/check.sh)`
 
-Add actual application checks when the runtime scaffold exists. Never claim application tests passed based on setup checks.
+Run application and repository-context checks separately; neither substitutes for the other.
 
 ## Committed repository gate
 

@@ -1,0 +1,39 @@
+{
+  "name": "independent-reviewer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./schemas/review-request-v1": "./schemas/review-request-v1.schema.json"
+  },
+  "files": [
+    "dist/src",
+    "schemas"
+  ],
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "packageManager": "npm@11.17.0",
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "schemas:write": "npm run build && node dist/scripts/write-json-schemas.js",
+    "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
+    "typecheck": "tsc --noEmit --project tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.12",
+    "@types/node": "24.13.3",
+    "typescript": "6.0.3"
+  }
+}

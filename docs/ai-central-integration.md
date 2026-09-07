@@ -4,12 +4,18 @@ Source: sibling `../ai-central`, initially at `33bd2293f0682bde71938f2b2ad14a4f3
 
 ## Installed context
 
-- Profile: `base` (real project-owned AGENTS, repository steering, and testing gates).
+- Profiles: `base` plus `javascript-typescript` (real project-owned AGENTS,
+  repository steering, testing gates, and a machine-local language steering
+  link).
 - Bundles: core, orchestration, documentation, delivery, engineering, planning.
 - 57 skill links under `.agents/skills/`, with `.codex/skills/` compatibility links maintained by AI Central.
 - Exact local link exclusions in `.git/info/exclude`; real project guidance remains available to commit.
 
-The engineering bundle includes some adjacent skills (browser, UI, infrastructure) as part of its maintained selection. They are available on demand, not mandatory workflows. No language profile or custom agent preset was selected. The proposed runtime stack remains undecided.
+The engineering bundle includes some adjacent skills (browser, UI,
+infrastructure) as part of its maintained selection. They are available on
+demand, not mandatory workflows. No custom agent preset is selected. The
+JavaScript/TypeScript profile follows the accepted TypeScript 6 and Node.js 24
+runtime.
 
 ## Retained independent-review baseline
 
@@ -19,7 +25,9 @@ The installed `independent-review` skill is a live link to AI Central. Changes t
 
 ## Reproduce or refresh
 
-Requires Git, POSIX sh, Python 3, and an existing AI Central checkout. No provider key or package installation is needed for setup.
+The AI context setup requires Git, POSIX sh, Python 3, and an existing AI Central
+checkout. It does not install application packages or require a provider key.
+Application development separately requires Node.js 24 and npm.
 
 ```sh
 sh scripts/setup-ai-context.sh --dry-run
@@ -39,4 +47,7 @@ To validate the source checkout:
 
 ## Implementation handoff
 
-Read the architecture roadmap and the retained skill. First define packet, report, and stage-state contracts; then build the frozen packet collector. Keep proposed CLI commands in the roadmap distinct from the setup commands that exist today.
+The runtime scaffold and `ReviewRequestV1` boundary are implemented. Continue
+with snapshot-manifest and neutral-brief contracts, then build deterministic
+identity and frozen packet collection. Keep proposed CLI commands in the roadmap
+distinct from the setup commands that exist today.

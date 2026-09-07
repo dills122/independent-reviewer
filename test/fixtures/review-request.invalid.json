@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "flowId": "flow_invalid_instance",
+  "reviewInstance": {
+    "number": 4,
+    "maximum": 3
+  },
+  "repository": {
+    "path": "."
+  },
+  "canonicalInputs": {
+    "requirements": [
+      {
+        "id": "input_requirements",
+        "kind": "REQUIREMENTS",
+        "title": "Requirements",
+        "content": "Example",
+        "provenance": {
+          "type": "INLINE",
+          "label": "caller input"
+        }
+      }
+    ],
+    "implementationPlan": {
+      "id": "input_plan",
+      "kind": "IMPLEMENTATION_PLAN",
+      "title": "Plan",
+      "content": "Example",
+      "provenance": {
+        "type": "INLINE",
+        "label": "caller input"
+      }
+    }
+  },
+  "reviewConfigRef": "config_local_default"
+}

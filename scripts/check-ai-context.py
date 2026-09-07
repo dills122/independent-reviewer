@@ -35,7 +35,8 @@ require(syntax.returncode == 0, "Invalid bootstrap shell syntax")
 tracked = git("ls-files", "-z")
 require(tracked.returncode == 0, "Unable to inspect tracked repository files")
 for relative in filter(None, tracked.stdout.split("\0")):
-    require(not relative.startswith((".agents/skills/", ".codex/skills/", ".review-runs/")),
+    require(not relative.startswith((".agents/skills/", ".codex/skills/", ".review-runs/"))
+            and relative != ".codex/steering/javascript-typescript-steering.md",
             f"Machine-local context or review artifacts are tracked: {relative}")
 
 if args.ci:
@@ -44,6 +45,11 @@ if args.ci:
 
 installed = ROOT / ".agents/skills"
 require(installed.is_dir(), "Missing skills; run sh scripts/setup-ai-context.sh")
+language_steering = ROOT / ".codex/steering/javascript-typescript-steering.md"
+require(language_steering.is_symlink() and language_steering.is_file(),
+        "Missing JavaScript/TypeScript steering; run sh scripts/setup-ai-context.sh")
+require(git("check-ignore", "-q", "--", str(language_steering.relative_to(ROOT))).returncode == 0,
+        "JavaScript/TypeScript steering link is not ignored")
 for name, source_relative in manifest["installed_skills"].items():
     link = installed / name
     require(link.is_symlink() and (link / "SKILL.md").is_file(), f"Missing/broken skill: {name}")

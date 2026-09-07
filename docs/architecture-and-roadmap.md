@@ -1,6 +1,6 @@
 # Independent Reviewer — architecture and project plan
 
-Status: proposed architecture; implementation has not started.
+Status: accepted architecture; implementation is in progress.
 
 The staged lifecycle, evidence surface, verification boundary, and efficiency
 requirements are refined in the
@@ -143,6 +143,10 @@ alone.[^or-errors]
 ### Milestone 1 — contracts and packet builder
 
 Create the standalone repository, schemas, capture policy, CLI `prepare` and `inspect` commands, and fixtures. Gate: reproducible packet identity for unchanged input; correct staged/unstaged/untracked and rename/delete handling; visible exclusions; detected capture races; no author content in the blind payload; no escaping snapshot reads.
+
+Progress: the TypeScript/Node runtime and strict `ReviewRequestV1` contract are
+implemented with fixtures and a committed JSON Schema artifact. Snapshot,
+manifest, neutral-brief, packet-identity, and CLI work remains.
 
 ### Milestone 2 — external review engine
 
