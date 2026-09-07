@@ -12,7 +12,7 @@ function prefixedIdentifier(prefix: "config" | "flow" | "input"): z.ZodString {
 }
 
 const ConfigReferenceSchema = prefixedIdentifier("config");
-const FlowIdSchema = prefixedIdentifier("flow");
+export const FlowIdSchema = prefixedIdentifier("flow");
 const InputIdSchema = prefixedIdentifier("input");
 
 const NonEmptyTextSchema = z.string().min(1);
@@ -105,7 +105,7 @@ export const AuthorPacketV1Schema = z.strictObject({
   challengePoints: z.array(NonEmptyTextSchema),
 });
 
-const ReviewInstanceV1Schema = z
+export const ReviewInstanceV1Schema = z
   .strictObject({
     number: z.int().min(1),
     maximum: z.int().min(1).max(3).default(3),

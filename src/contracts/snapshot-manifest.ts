@@ -1,0 +1,222 @@
+import * as z from "zod";
+
+import {
+  CanonicalInputProvenanceV1Schema,
+  FlowIdSchema,
+  ReviewInstanceV1Schema,
+} from "./review-request.js";
+
+function prefixedIdentifier(prefix: "repo" | "snapshot"): z.ZodString {
+  return z
+    .string()
+    .min(prefix.length + 2)
+    .max(128)
+    .regex(
+      new RegExp(`^${prefix}_[A-Za-z0-9][A-Za-z0-9_-]*$`),
+      `must use the ${prefix}_ identifier prefix`,
+    );
+}
+
+const NonEmptyTextSchema = z.string().min(1);
+const GitObjectIdSchema = z
+  .string()
+  .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/, "must be a lowercase Git object ID");
+const GitRefSchema = z
+  .string()
+  .min(1)
+  .max(1024)
+  .refine((value) => !value.includes("\0") && !value.includes("\n"), {
+    message: "must not contain NUL or newline characters",
+  });
+
+export const SnapshotPathV1Schema = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine(
+    (value) =>
+      !value.startsWith("/") &&
+      !value.includes("\\") &&
+      !value.includes("\0") &&
+      !value.includes("\n") &&
+      value.split("/").every((part) => part !== "" && part !== "." && part !== ".."),
+    "must be a normalized relative snapshot path",
+  );
+
+export const DigestV1Schema = z.strictObject({
+  algorithm: z.literal("SHA256"),
+  value: z.string().regex(/^[0-9a-f]{64}$/, "must be a lowercase SHA-256 digest"),
+});
+
+const GitModeSchema = z.string().regex(/^[0-7]{6}$/, "must be a six-digit Git mode");
+
+const CapturedContentV1Schema = z.strictObject({
+  kind: z.enum(["TEXT", "BINARY", "SYMLINK", "SUBMODULE"]),
+  digest: DigestV1Schema,
+  byteLength: z.int().nonnegative(),
+  gitMode: GitModeSchema,
+  isGenerated: z.boolean(),
+});
+
+const UnsupportedContentV1Schema = z.strictObject({
+  kind: z.literal("UNSUPPORTED"),
+  digest: DigestV1Schema.optional(),
+  byteLength: z.int().nonnegative().optional(),
+  gitMode: GitModeSchema,
+  isGenerated: z.boolean(),
+  reason: NonEmptyTextSchema,
+});
+
+export const SnapshotContentV1Schema = z.discriminatedUnion("kind", [
+  CapturedContentV1Schema,
+  UnsupportedContentV1Schema,
+]);
+
+const PathIdentityShape = {
+  path: SnapshotPathV1Schema,
+};
+
+const AddedPathV1Schema = z.strictObject({
+  ...PathIdentityShape,
+  changeType: z.literal(["ADDED", "UNTRACKED"]),
+  before: z.null(),
+  after: SnapshotContentV1Schema,
+});
+
+const DeletedPathV1Schema = z.strictObject({
+  ...PathIdentityShape,
+  changeType: z.literal("DELETED"),
+  before: SnapshotContentV1Schema,
+  after: z.null(),
+});
+
+const ModifiedPathV1Schema = z.strictObject({
+  ...PathIdentityShape,
+  changeType: z.literal(["MODIFIED", "TYPE_CHANGED"]),
+  before: SnapshotContentV1Schema,
+  after: SnapshotContentV1Schema,
+});
+
+const RelocatedPathV1Schema = z.strictObject({
+  ...PathIdentityShape,
+  changeType: z.literal(["RENAMED", "COPIED"]),
+  previousPath: SnapshotPathV1Schema,
+  before: SnapshotContentV1Schema,
+  after: SnapshotContentV1Schema,
+});
+
+export const SnapshotPathEntryV1Schema = z.discriminatedUnion("changeType", [
+  AddedPathV1Schema,
+  DeletedPathV1Schema,
+  ModifiedPathV1Schema,
+  RelocatedPathV1Schema,
+]);
+
+const CaptureRaceCheckV1Schema = z
+  .strictObject({
+    attempts: z.int().min(1),
+    status: z.literal("STABLE"),
+    beforeStateDigest: DigestV1Schema,
+    afterStateDigest: DigestV1Schema,
+  })
+  .superRefine((raceCheck, context) => {
+    if (raceCheck.beforeStateDigest.value !== raceCheck.afterStateDigest.value) {
+      context.addIssue({
+        code: "custom",
+        message: "must equal the before-state digest for a stable snapshot",
+        path: ["afterStateDigest", "value"],
+      });
+    }
+  });
+
+export const SnapshotManifestV1Schema = z
+  .strictObject({
+    schemaVersion: z.literal(1),
+    snapshotId: prefixedIdentifier("snapshot"),
+    flowId: FlowIdSchema,
+    reviewInstance: ReviewInstanceV1Schema,
+    source: z.strictObject({
+      repositoryId: prefixedIdentifier("repo"),
+      baseCommit: GitObjectIdSchema,
+      headCommit: GitObjectIdSchema,
+      branch: GitRefSchema.nullable(),
+    }),
+    workingTree: z.strictObject({
+      hasStagedChanges: z.boolean(),
+      hasUnstagedChanges: z.boolean(),
+      includedUntrackedPaths: z.array(SnapshotPathV1Schema),
+    }),
+    snapshotDigest: DigestV1Schema,
+    paths: z.array(SnapshotPathEntryV1Schema),
+    exclusions: z.array(
+      z.strictObject({
+        path: SnapshotPathV1Schema,
+        reason: z.enum([
+          "SECRET_POLICY",
+          "PATH_POLICY",
+          "SIZE_LIMIT",
+          "GENERATED_POLICY",
+          "USER_EXCLUDED",
+          "UNSUPPORTED_KIND",
+        ]),
+        detail: NonEmptyTextSchema,
+      }),
+    ),
+    omissions: z.array(
+      z.strictObject({
+        scope: NonEmptyTextSchema,
+        reason: z.enum([
+          "UNREADABLE",
+          "CAPTURE_FAILED",
+          "SUBMODULE_UNAVAILABLE",
+          "RACE_DETECTED",
+          "OTHER",
+        ]),
+        detail: NonEmptyTextSchema,
+      }),
+    ),
+    canonicalInputs: z.array(
+      z.strictObject({
+        id: z
+          .string()
+          .min(7)
+          .max(128)
+          .regex(/^input_[A-Za-z0-9][A-Za-z0-9_-]*$/, "must use the input_ identifier prefix"),
+        kind: z.enum(["REQUIREMENTS", "IMPLEMENTATION_PLAN", "PROJECT_GUIDANCE"]),
+        digest: DigestV1Schema,
+        provenance: CanonicalInputProvenanceV1Schema,
+      }),
+    ),
+    policies: z.strictObject({
+      capture: NonEmptyTextSchema,
+      transmission: NonEmptyTextSchema,
+    }),
+    raceCheck: CaptureRaceCheckV1Schema,
+  })
+  .superRefine((manifest, context) => {
+    const declared = manifest.workingTree.includedUntrackedPaths;
+    const captured = manifest.paths
+      .filter((path) => path.changeType === "UNTRACKED")
+      .map((path) => path.path);
+    const samePaths =
+      declared.length === captured.length &&
+      [...declared].sort().every((path, index) => path === [...captured].sort()[index]);
+
+    if (!samePaths) {
+      context.addIssue({
+        code: "custom",
+        message: "must exactly match paths classified as UNTRACKED",
+        path: ["workingTree", "includedUntrackedPaths"],
+      });
+    }
+  });
+
+export type SnapshotManifestV1 = z.infer<typeof SnapshotManifestV1Schema>;
+
+export const SNAPSHOT_MANIFEST_V1_JSON_SCHEMA = {
+  $id: "urn:independent-reviewer:schema:snapshot-manifest:v1",
+  ...z.toJSONSchema(SnapshotManifestV1Schema, {
+    target: "draft-2020-12",
+    io: "input",
+  }),
+};

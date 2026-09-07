@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "snapshotId": "snapshot_contract_fixture",
+  "flowId": "flow_contract_fixture",
+  "reviewInstance": {
+    "number": 1,
+    "maximum": 3
+  },
+  "source": {
+    "repositoryId": "repo_independent_reviewer",
+    "baseCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "headCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "branch": "codex/example"
+  },
+  "workingTree": {
+    "hasStagedChanges": true,
+    "hasUnstagedChanges": true,
+    "includedUntrackedPaths": ["test/new-contract.test.ts"]
+  },
+  "snapshotDigest": {
+    "algorithm": "SHA256",
+    "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "paths": [
+    {
+      "changeType": "MODIFIED",
+      "path": "src/contracts/review-request.ts",
+      "before": {
+        "kind": "TEXT",
+        "digest": {
+          "algorithm": "SHA256",
+          "value": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "byteLength": 120,
+        "gitMode": "100644",
+        "isGenerated": false
+      },
+      "after": {
+        "kind": "TEXT",
+        "digest": {
+          "algorithm": "SHA256",
+          "value": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        },
+        "byteLength": 180,
+        "gitMode": "100644",
+        "isGenerated": false
+      }
+    },
+    {
+      "changeType": "RENAMED",
+      "path": "docs/current-name.md",
+      "previousPath": "docs/old-name.md",
+      "before": {
+        "kind": "TEXT",
+        "digest": {
+          "algorithm": "SHA256",
+          "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        },
+        "byteLength": 42,
+        "gitMode": "100644",
+        "isGenerated": false
+      },
+      "after": {
+        "kind": "TEXT",
+        "digest": {
+          "algorithm": "SHA256",
+          "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        },
+        "byteLength": 42,
+        "gitMode": "100644",
+        "isGenerated": false
+      }
+    },
+    {
+      "changeType": "UNTRACKED",
+      "path": "test/new-contract.test.ts",
+      "before": null,
+      "after": {
+        "kind": "TEXT",
+        "digest": {
+          "algorithm": "SHA256",
+          "value": "1111111111111111111111111111111111111111111111111111111111111111"
+        },
+        "byteLength": 64,
+        "gitMode": "100644",
+        "isGenerated": false
+      }
+    }
+  ],
+  "exclusions": [
+    {
+      "path": ".env",
+      "reason": "SECRET_POLICY",
+      "detail": "Excluded by the trusted capture policy."
+    }
+  ],
+  "omissions": [],
+  "canonicalInputs": [
+    {
+      "id": "input_review_protocol",
+      "kind": "REQUIREMENTS",
+      "digest": {
+        "algorithm": "SHA256",
+        "value": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "provenance": {
+        "type": "REPOSITORY_FILE",
+        "path": "docs/review-protocol-spec.md",
+        "revision": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    }
+  ],
+  "policies": {
+    "capture": "capture-v1",
+    "transmission": "transmission-v1"
+  },
+  "raceCheck": {
+    "attempts": 1,
+    "status": "STABLE",
+    "beforeStateDigest": {
+      "algorithm": "SHA256",
+      "value": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "afterStateDigest": {
+      "algorithm": "SHA256",
+      "value": "3333333333333333333333333333333333333333333333333333333333333333"
+    }
+  }
+}
