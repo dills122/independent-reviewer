@@ -1,4 +1,10 @@
 export {
+  computeSnapshotManifestDigestV1,
+  finalizeSnapshotManifestV1,
+  verifySnapshotManifestIdentityV1,
+} from "./artifact-identity.js";
+export type { SnapshotManifestIdentityInputV1 } from "./artifact-identity.js";
+export {
   canonicalizeJson,
   digestCanonicalJson,
   sha256Utf8,

@@ -1,0 +1,80 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { describe, it } from "node:test";
+
+import { finalizeSnapshotManifestV1, verifySnapshotManifestIdentityV1 } from "../../src/index.js";
+
+async function readSnapshotDraft(): Promise<Record<string, unknown>> {
+  const contents = await readFile(
+    resolve("test", "fixtures", "snapshot-manifest.valid.json"),
+    "utf8",
+  );
+  const { snapshotDigest: _snapshotDigest, ...draft } = JSON.parse(contents) as Record<
+    string,
+    unknown
+  >;
+  return draft;
+}
+
+describe("snapshot manifest identity", () => {
+  it("finalizes and verifies a valid snapshot manifest", async () => {
+    const manifest = finalizeSnapshotManifestV1(await readSnapshotDraft());
+
+    assert.equal(manifest.snapshotDigest.algorithm, "SHA256");
+    assert.equal(
+      manifest.snapshotDigest.value,
+      "a09e0229ad5fad95a0261656c16d7694af9c4bba2c36e0177e30ef4ad17d3b14",
+    );
+    assert.equal(verifySnapshotManifestIdentityV1(manifest), true);
+  });
+
+  it("is stable across opaque run metadata and ledger order", async () => {
+    const draft = await readSnapshotDraft();
+    const reordered = structuredClone(draft) as {
+      snapshotId: string;
+      flowId: string;
+      reviewInstance: { number: number; maximum: number };
+      raceCheck: { attempts: number };
+      paths: unknown[];
+    };
+    reordered.snapshotId = "snapshot_another_artifact";
+    reordered.flowId = "flow_another_run";
+    reordered.reviewInstance = { number: 2, maximum: 3 };
+    reordered.raceCheck.attempts = 3;
+    reordered.paths.reverse();
+
+    assert.deepEqual(
+      finalizeSnapshotManifestV1(reordered).snapshotDigest,
+      finalizeSnapshotManifestV1(draft).snapshotDigest,
+    );
+  });
+
+  it("changes when captured content identity changes", async () => {
+    const draft = await readSnapshotDraft();
+    const changed = structuredClone(draft) as {
+      paths: Array<{ after: null | { digest?: { value: string } } }>;
+    };
+    const modified = changed.paths.find((path) => path.after?.digest);
+    assert.ok(modified?.after?.digest);
+    modified.after.digest.value = "9".repeat(64);
+
+    assert.notDeepEqual(
+      finalizeSnapshotManifestV1(changed).snapshotDigest,
+      finalizeSnapshotManifestV1(draft).snapshotDigest,
+    );
+  });
+
+  it("detects a changed manifest after finalization", async () => {
+    const manifest = finalizeSnapshotManifestV1(await readSnapshotDraft());
+    manifest.source.branch = "codex/different-branch";
+
+    assert.equal(verifySnapshotManifestIdentityV1(manifest), false);
+  });
+
+  it("rejects invalid draft material before hashing", async () => {
+    const draft = { ...(await readSnapshotDraft()), unexpected: true };
+
+    assert.throws(() => finalizeSnapshotManifestV1(draft));
+  });
+});
