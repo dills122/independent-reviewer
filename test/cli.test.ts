@@ -14,6 +14,7 @@ import type {
 import { reviewOutcomeExitCodeV1, runCliV1 } from "../src/cli.js";
 
 const execFileAsync = promisify(execFile);
+const mockDigest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
 
 async function git(repositoryPath: string, ...args: string[]): Promise<void> {
   await execFileAsync("git", ["-C", repositoryPath, ...args], { encoding: "utf8" });
@@ -153,7 +154,7 @@ it("composes capture and the two-stage provider flow through the review command"
           maxInitialEvidenceBytes: 32_000,
           maxConversationBytes: 128_000,
           maxOutputTokensPerCall: 1_000,
-          maxTotalTokens: 10_000,
+          maxTotalTokens: 100_000,
           timeoutMs: 10_000,
         },
       }),
@@ -169,6 +170,12 @@ it("composes capture and the two-stage provider flow through the review command"
       usage: { promptTokens: 90, completionTokens: 10, totalTokens: 100, cost: 0 },
     });
     const provider: ReviewProviderV1 = {
+      auditRequest: (providerRequest) => ({
+        providerPolicyVersion: "mock-provider-v1",
+        wireBodyDigest: mockDigest,
+        wireBodyBytes: Buffer.byteLength(JSON.stringify(providerRequest), "utf8"),
+        credentialFreeWireRequestDigest: mockDigest,
+      }),
       complete: async (providerRequest) => {
         calls.push(providerRequest);
         const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
@@ -181,6 +188,18 @@ it("composes capture and the two-stage provider flow through the review command"
             briefDigest: brief.briefDigest,
             summary: "The visible change is straightforward.",
             inspectedPaths: ["reviewed.txt"],
+            canonicalInputCoverage: [
+              {
+                canonicalInputId: "input_requirement",
+                status: "ASSESSED",
+                explanation: "The requirement was assessed.",
+              },
+              {
+                canonicalInputId: "input_plan",
+                status: "ASSESSED",
+                explanation: "The plan was assessed.",
+              },
+            ],
             findings: [],
             evidenceGaps: [],
             limitations: [],
@@ -195,7 +214,28 @@ it("composes capture and the two-stage provider flow through the review command"
           summary: "The change is ready.",
           findings: [],
           preliminaryFindingDispositions: [],
+          preliminaryConcernDispositions: [],
           authorClaims: [],
+          authorVerificationClaims: [],
+          changedPathCoverage: [
+            {
+              path: "reviewed.txt",
+              status: "INSPECTED",
+              explanation: "The complete changed file was inspected.",
+            },
+          ],
+          canonicalInputCoverage: [
+            {
+              canonicalInputId: "input_requirement",
+              status: "ASSESSED",
+              explanation: "The requirement is satisfied.",
+            },
+            {
+              canonicalInputId: "input_plan",
+              status: "ASSESSED",
+              explanation: "The plan is implemented.",
+            },
+          ],
           limitations: [],
           verdict: "READY",
           nextActions: { blockers: [], fastFollows: [] },
@@ -227,6 +267,10 @@ it("composes capture and the two-stage provider flow through the review command"
     assert.match(output.join("\n"), /review\/report\.md/);
     assert.doesNotMatch(output.join("\n"), /test-api-key|AUTHOR_PRIVATE_CONTEXT/);
     assert.match(await readFile(join(packetPath, "review", "report.md"), "utf8"), /Ready/);
+    assert.match(
+      await readFile(join(packetPath, "review", "run-record.jsonl"), "utf8"),
+      /RUN_COMPLETED/,
+    );
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });
   }

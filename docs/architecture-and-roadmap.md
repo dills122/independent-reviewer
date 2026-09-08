@@ -1,6 +1,6 @@
 # Independent Reviewer — architecture and project plan
 
-Status: accepted architecture; implementation is in progress.
+Status: first local release implemented; explicitly authorized live smoke pending.
 
 The staged lifecycle, evidence surface, verification boundary, and efficiency
 requirements are refined in the
@@ -165,7 +165,21 @@ Progress: the offline engine is complete. It builds a digest-bound neutral
 brief from the packet, fails rather than clipping an oversized initial evidence
 set, persists the raw and validated preliminary result before author delivery,
 makes exactly one reconciliation call, validates identities and evidence paths,
-and renders the final JSON report to Markdown. The OpenRouter adapter uses
+requires exact changed-path/canonical-input coverage and preliminary-concern
+dispositions, validates line/symbol anchors against frozen blobs, and renders
+the complete, presentation-safe reconciliation ledger to Markdown. Final-only
+findings require an emergence rationale, and author-reported commands cannot be
+promoted to runner-confirmed evidence. It conservatively reserves both
+message/schema inputs and outputs before the first submission, uses that same
+token-unit reservation when retransmitting the preliminary result, and retains
+reservations when usage is missing or malformed. It also rejects a known
+author-inclusive final conversation skeleton that exceeds the byte cap before
+making call one, then rechecks the actual preliminary content before call two.
+Its private run record binds
+each attempt to the provider-policy version and credential-free wire/body
+digests and records stage, identity, timing, route, valid usage, errors, and
+lifecycle-terminal events. The OpenRouter
+adapter uses
 strict structured output, an explicit model, no fallback or retry, ZDR-only
 routing, data-collection denial, disabled response caching, and disabled context
 compression.[^or-structured][^or-routing][^or-transforms][^or-response-cache]
@@ -214,11 +228,11 @@ independent-reviewer report --run <id> --format markdown
 
 Exact working-tree and author-packet options follow the capture contract. A failed or incomplete review must produce a distinct non-success exit status and a readable diagnostic artifact.
 
-## Decisions to settle before implementation
+## Decisions to settle before live use
 
-Exact dependency versions; first model and provider policy; concrete token,
-cost, evidence, verification, and duration budgets; repository configuration;
-and the private run-directory default remain open.
+The first smoke-test model and provider policy; representative numerical token
+and cost budgets; repository configuration; and the private run-directory
+default remain open. Runtime and development dependencies are exact-pinned.
 
 The initial scope now includes cumulative working-tree snapshots. The base
 resolves from an explicit value, repository configuration, branch upstream, or

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { OpenRouterProviderV1, ProviderCallError } from "../../src/index.js";
+import { OpenRouterProviderV1, ProviderCallError, sha256Utf8 } from "../../src/index.js";
 
 const request = {
   stage: "PRELIMINARY" as const,
@@ -54,6 +54,16 @@ describe("OpenRouterProviderV1", () => {
     assert.deepEqual(result.value, { ok: true });
     assert.equal(result.usage.totalTokens, 25);
     assert.equal(result.provider, "Mock Provider");
+
+    const audit = provider.auditRequest(request);
+    assert.equal(audit.providerPolicyVersion, "openrouter-chat-completions-v1");
+    assert.deepEqual(audit.wireBodyDigest, sha256Utf8(String(capturedInit?.body)));
+    assert.equal(audit.wireBodyBytes, Buffer.byteLength(String(capturedInit?.body), "utf8"));
+    assert.notDeepEqual(
+      audit.credentialFreeWireRequestDigest,
+      provider.auditRequest({ ...request, model: "vendor/another-model" })
+        .credentialFreeWireRequestDigest,
+    );
   });
 
   it("rejects an error embedded in an HTTP 200 response", async () => {
@@ -77,5 +87,24 @@ describe("OpenRouterProviderV1", () => {
       (error: unknown) =>
         error instanceof ProviderCallError && error.code === "TRANSPORT_UNCERTAIN",
     );
+  });
+
+  it("rejects fractional or internally inconsistent token usage", async () => {
+    for (const usage of [
+      { prompt_tokens: 20.5, completion_tokens: 5, total_tokens: 25.5 },
+      { prompt_tokens: 20, completion_tokens: 5, total_tokens: 0 },
+    ]) {
+      const provider = new OpenRouterProviderV1("secret-key", async () =>
+        Response.json({
+          choices: [{ finish_reason: "stop", message: { content: '{"ok":true}' } }],
+          usage,
+        }),
+      );
+
+      await assert.rejects(
+        () => provider.complete(request),
+        (error: unknown) => error instanceof ProviderCallError && error.code === "INVALID_RESPONSE",
+      );
+    }
   });
 });

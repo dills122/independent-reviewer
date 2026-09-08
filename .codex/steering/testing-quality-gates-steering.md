@@ -36,6 +36,19 @@ Verify citations against captured evidence, but do not equate a valid location w
 
 Introduce focused deterministic tests as each runtime behavior is implemented.
 
+Final-review tests must prove exact changed-path and canonical-input coverage,
+disposition of every preliminary gap and limitation, reconciliation of every
+indexed author verification claim, and source-coordinate validation against
+the frozen blob. Budget tests must prove insufficient total-token capacity or
+known final conversation-skeleton byte capacity stops the run before its first
+provider call. Failure-path tests must verify the durable
+run-attempt ledger without exposing author content or credentials.
+Rendered-report tests must treat all provider text as untrusted presentation
+data and cover heading, link, backtick, list, and HTML control characters.
+Provider tests must reject fractional or inconsistent usage, bind each attempt
+to a credential-free exact wire/body identity, and prove the preliminary
+retransmission cannot invalidate an already admitted two-call token budget.
+
 ## Committed repository gate
 
 Run `python3 -B scripts/check-ai-context.py --ci` and `npm run check` for the

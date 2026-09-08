@@ -53,11 +53,44 @@
       "minLength": 1
     },
     "inspectedPaths": {
+      "minItems": 1,
       "type": "array",
       "items": {
         "type": "string",
         "minLength": 1,
         "maxLength": 4096
+      }
+    },
+    "canonicalInputCoverage": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "canonicalInputId": {
+            "type": "string",
+            "minLength": 7,
+            "maxLength": 128,
+            "pattern": "^input_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ASSESSED",
+              "UNASSESSED"
+            ]
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "canonicalInputId",
+          "status",
+          "explanation"
+        ],
+        "additionalProperties": false
       }
     },
     "findings": {
@@ -96,23 +129,89 @@
             "minItems": 1,
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "path": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 4096
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "anchor": {
+                      "type": "string",
+                      "const": "LINE_RANGE"
+                    },
+                    "side": {
+                      "type": "string",
+                      "enum": [
+                        "BASE",
+                        "HEAD"
+                      ]
+                    },
+                    "startLine": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "endLine": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "detail": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "anchor",
+                    "side",
+                    "startLine",
+                    "endLine",
+                    "detail"
+                  ],
+                  "additionalProperties": false
                 },
-                "detail": {
-                  "type": "string",
-                  "minLength": 1
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "anchor": {
+                      "type": "string",
+                      "const": "SYMBOL"
+                    },
+                    "side": {
+                      "type": "string",
+                      "enum": [
+                        "BASE",
+                        "HEAD"
+                      ]
+                    },
+                    "symbol": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "detail": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "anchor",
+                    "side",
+                    "symbol",
+                    "detail"
+                  ],
+                  "additionalProperties": false
                 }
-              },
-              "required": [
-                "path",
-                "detail"
-              ],
-              "additionalProperties": false
+              ]
             }
           },
           "correction": {
@@ -158,6 +257,7 @@
     "briefDigest",
     "summary",
     "inspectedPaths",
+    "canonicalInputCoverage",
     "findings",
     "evidenceGaps",
     "limitations",

@@ -6,6 +6,7 @@ export type { ProviderCallErrorCode } from "./provider/openrouter.js";
 export type {
   ReviewMessageV1,
   ReviewProviderRequestV1,
+  ReviewProviderRequestAuditV1,
   ReviewProviderResponseV1,
   ReviewProviderV1,
   ReviewStageV1,

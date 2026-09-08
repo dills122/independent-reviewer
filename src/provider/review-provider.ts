@@ -1,3 +1,5 @@
+import type { DigestV1 } from "../contracts/index.js";
+
 export type ReviewStageV1 = "PRELIMINARY" | "FINAL";
 
 export interface ReviewMessageV1 {
@@ -31,6 +33,14 @@ export interface ReviewProviderResponseV1 {
   };
 }
 
+export interface ReviewProviderRequestAuditV1 {
+  providerPolicyVersion: string;
+  wireBodyDigest: DigestV1;
+  wireBodyBytes: number;
+  credentialFreeWireRequestDigest: DigestV1;
+}
+
 export interface ReviewProviderV1 {
+  auditRequest(request: ReviewProviderRequestV1): ReviewProviderRequestAuditV1;
   complete(request: ReviewProviderRequestV1): Promise<ReviewProviderResponseV1>;
 }

@@ -8,8 +8,11 @@ The project expands AI Central's independent-review workflow into an enforceable
 
 The first local release is implemented. The exact-pinned TypeScript 6 and Node.js
 24 runtime captures frozen Git evidence, enforces blind and reconciliation
-stages, validates provider output, and writes private JSON and Markdown review
-artifacts. OpenRouter use remains explicit and metered: callers select the model
+stages, validates provider output and frozen evidence coordinates, and writes
+private JSON, presentation-safe Markdown, and append-only run-attempt artifacts.
+It rejects an insufficient conservative token reservation before making a
+provider call and retains that reservation when provider usage is unavailable.
+OpenRouter use remains explicit and metered: callers select the model
 and budgets and provide the API key only through the environment.
 
 Read [Architecture and roadmap](docs/architecture-and-roadmap.md) for component boundaries, contracts, milestones, and acceptance gates.
@@ -67,7 +70,12 @@ node dist/src/cli.js review \
 
 The review config schema is
 [`schemas/review-run-config-v1.schema.json`](schemas/review-run-config-v1.schema.json).
-The command prints the final report path. Exit `0` means `Ready` or `Ready with
+The command prints the final report path. The adjacent `run-record.jsonl`
+records prompt/schema and provider-policy versions, stage-input and
+credential-free wire-request digests, exact wire-body digest and byte count,
+timings, validated returned routing and usage data, sanitized failures, and
+terminal state without storing API keys, wire bodies, or model-bound message
+content. Exit `0` means `Ready` or `Ready with
 non-blocking follow-ups`, `2` means `Not ready`, `3` means `Unable to verify`,
 and `4` means the provider submission became transport-uncertain. Other input
 or execution failures use exit `1`. Request and config control files are

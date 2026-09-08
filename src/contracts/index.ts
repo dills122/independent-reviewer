@@ -46,11 +46,13 @@ export {
   FinalReviewReportV1Schema,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
   PreliminaryAssessmentV1Schema,
+  ReviewEvidenceV1Schema,
   ReviewFindingV1Schema,
 } from "./review-results.js";
 export type {
   FinalReviewReportV1,
   PreliminaryAssessmentV1,
+  ReviewEvidenceV1,
   ReviewFindingV1,
 } from "./review-results.js";
 export {

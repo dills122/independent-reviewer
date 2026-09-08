@@ -1,5 +1,6 @@
 import * as z from "zod";
 
+import { sha256Utf8 } from "../contracts/index.js";
 import type {
   ReviewProviderRequestV1,
   ReviewProviderResponseV1,
@@ -7,6 +8,11 @@ import type {
 } from "./review-provider.js";
 
 const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_PROVIDER_POLICY_VERSION_V1 = "openrouter-chat-completions-v1";
+const OPENROUTER_PUBLIC_HEADERS_V1 = {
+  "content-type": "application/json",
+  "x-openrouter-cache": "false",
+} as const;
 
 export type ProviderCallErrorCode =
   | "INVALID_CONFIGURATION"
@@ -24,6 +30,24 @@ export class ProviderCallError extends Error {
   }
 }
 
+const TokenUsageSchema = z
+  .object({
+    prompt_tokens: z.int().nonnegative().optional(),
+    completion_tokens: z.int().nonnegative().optional(),
+    total_tokens: z.int().nonnegative().optional(),
+    cost: z.number().nonnegative().optional(),
+  })
+  .superRefine((usage, context) => {
+    if (
+      usage.prompt_tokens !== undefined &&
+      usage.completion_tokens !== undefined &&
+      usage.total_tokens !== undefined &&
+      usage.prompt_tokens + usage.completion_tokens !== usage.total_tokens
+    ) {
+      context.addIssue({ code: "custom", message: "token usage totals are inconsistent" });
+    }
+  });
+
 const OpenRouterResponseSchema = z.object({
   id: z.string().optional(),
   model: z.string().optional(),
@@ -36,14 +60,7 @@ const OpenRouterResponseSchema = z.object({
       }),
     )
     .min(1),
-  usage: z
-    .object({
-      prompt_tokens: z.number().nonnegative().optional(),
-      completion_tokens: z.number().nonnegative().optional(),
-      total_tokens: z.number().nonnegative().optional(),
-      cost: z.number().nonnegative().optional(),
-    })
-    .optional(),
+  usage: TokenUsageSchema.optional(),
 });
 
 function safeProviderErrorLabel(value: unknown): string {
@@ -58,6 +75,31 @@ function safeProviderErrorLabel(value: unknown): string {
     return code;
   }
   return "unknown";
+}
+
+function openRouterWireBodyV1(request: ReviewProviderRequestV1): string {
+  return JSON.stringify({
+    model: request.model,
+    messages: request.messages,
+    stream: false,
+    max_tokens: request.maxOutputTokens,
+    response_format: {
+      type: "json_schema",
+      json_schema: {
+        name: request.responseSchema.name,
+        strict: true,
+        schema: request.responseSchema.schema,
+      },
+    },
+    provider: {
+      allow_fallbacks: false,
+      data_collection: "deny",
+      require_parameters: true,
+      zdr: true,
+    },
+    // OpenRouter context compression may remove middle messages.
+    plugins: [{ id: "context-compression", enabled: false }],
+  });
 }
 
 /**
@@ -78,39 +120,33 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
     this.#fetch = fetchImplementation;
   }
 
+  auditRequest(request: ReviewProviderRequestV1) {
+    const wireBody = openRouterWireBodyV1(request);
+    const credentialFreeWireRequest = JSON.stringify({
+      url: OPENROUTER_CHAT_COMPLETIONS_URL,
+      method: "POST",
+      headers: OPENROUTER_PUBLIC_HEADERS_V1,
+      body: wireBody,
+    });
+    return {
+      providerPolicyVersion: OPENROUTER_PROVIDER_POLICY_VERSION_V1,
+      wireBodyDigest: sha256Utf8(wireBody),
+      wireBodyBytes: Buffer.byteLength(wireBody, "utf8"),
+      credentialFreeWireRequestDigest: sha256Utf8(credentialFreeWireRequest),
+    };
+  }
+
   async complete(request: ReviewProviderRequestV1): Promise<ReviewProviderResponseV1> {
+    const wireBody = openRouterWireBodyV1(request);
     let response: Response;
     try {
       response = await this.#fetch(OPENROUTER_CHAT_COMPLETIONS_URL, {
         method: "POST",
         headers: {
           authorization: `Bearer ${this.#apiKey}`,
-          "content-type": "application/json",
-          // Response caching is opt-in, but make the live-review policy explicit.
-          "x-openrouter-cache": "false",
+          ...OPENROUTER_PUBLIC_HEADERS_V1,
         },
-        body: JSON.stringify({
-          model: request.model,
-          messages: request.messages,
-          stream: false,
-          max_tokens: request.maxOutputTokens,
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: request.responseSchema.name,
-              strict: true,
-              schema: request.responseSchema.schema,
-            },
-          },
-          provider: {
-            allow_fallbacks: false,
-            data_collection: "deny",
-            require_parameters: true,
-            zdr: true,
-          },
-          // OpenRouter context compression may remove middle messages.
-          plugins: [{ id: "context-compression", enabled: false }],
-        }),
+        body: wireBody,
         signal: AbortSignal.timeout(request.timeoutMs),
       });
     } catch (error) {

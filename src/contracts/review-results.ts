@@ -9,6 +9,52 @@ const FindingIdSchema = z
   .min(9)
   .max(128)
   .regex(/^finding_[A-Za-z0-9][A-Za-z0-9_-]*$/, "must use the finding_ identifier prefix");
+const CanonicalInputIdSchema = z
+  .string()
+  .min(7)
+  .max(128)
+  .regex(/^input_[A-Za-z0-9][A-Za-z0-9_-]*$/, "must use the input_ identifier prefix");
+
+const LineRangeEvidenceV1Schema = z
+  .strictObject({
+    path: SnapshotPathV1Schema,
+    anchor: z.literal("LINE_RANGE"),
+    side: z.enum(["BASE", "HEAD"]),
+    startLine: z.int().min(1),
+    endLine: z.int().min(1),
+    detail: NonEmptyTextSchema,
+  })
+  .superRefine((evidence, context) => {
+    if (evidence.startLine > evidence.endLine) {
+      context.addIssue({
+        code: "custom",
+        message: "must be greater than or equal to startLine",
+        path: ["endLine"],
+      });
+    }
+  });
+
+const SymbolEvidenceV1Schema = z.strictObject({
+  path: SnapshotPathV1Schema,
+  anchor: z.literal("SYMBOL"),
+  side: z.enum(["BASE", "HEAD"]),
+  symbol: NonEmptyTextSchema,
+  detail: NonEmptyTextSchema,
+});
+
+export const ReviewEvidenceV1Schema = z.union([LineRangeEvidenceV1Schema, SymbolEvidenceV1Schema]);
+
+const CanonicalInputCoverageV1Schema = z.strictObject({
+  canonicalInputId: CanonicalInputIdSchema,
+  status: z.enum(["ASSESSED", "UNASSESSED"]),
+  explanation: NonEmptyTextSchema,
+});
+
+const ChangedPathCoverageV1Schema = z.strictObject({
+  path: SnapshotPathV1Schema,
+  status: z.enum(["INSPECTED", "UNASSESSED"]),
+  explanation: NonEmptyTextSchema,
+});
 
 export const ReviewFindingV1Schema = z.strictObject({
   id: FindingIdSchema,
@@ -16,15 +62,28 @@ export const ReviewFindingV1Schema = z.strictObject({
   title: NonEmptyTextSchema,
   scenario: NonEmptyTextSchema,
   impact: NonEmptyTextSchema,
-  evidence: z
-    .array(
-      z.strictObject({
-        path: SnapshotPathV1Schema,
-        detail: NonEmptyTextSchema,
-      }),
-    )
-    .min(1),
+  evidence: z.array(ReviewEvidenceV1Schema).min(1),
   correction: NonEmptyTextSchema,
+});
+
+const FinalReviewFindingV1Schema = ReviewFindingV1Schema.extend({
+  origin: z.enum(["PRELIMINARY", "FINAL_ONLY"]),
+  emergenceRationale: NonEmptyTextSchema.nullable(),
+}).superRefine((finding, context) => {
+  if (finding.origin === "FINAL_ONLY" && finding.emergenceRationale === null) {
+    context.addIssue({
+      code: "custom",
+      message: "a final-only finding must explain why it emerged after the blind stage",
+      path: ["emergenceRationale"],
+    });
+  }
+  if (finding.origin === "PRELIMINARY" && finding.emergenceRationale !== null) {
+    context.addIssue({
+      code: "custom",
+      message: "a preliminary-origin finding must use a null emergence rationale",
+      path: ["emergenceRationale"],
+    });
+  }
 });
 
 function requireUniqueFindingIds(
@@ -44,7 +103,8 @@ export const PreliminaryAssessmentV1Schema = z
     snapshotDigest: DigestV1Schema,
     briefDigest: DigestV1Schema,
     summary: NonEmptyTextSchema,
-    inspectedPaths: z.array(SnapshotPathV1Schema),
+    inspectedPaths: z.array(SnapshotPathV1Schema).min(1),
+    canonicalInputCoverage: z.array(CanonicalInputCoverageV1Schema).min(1),
     findings: z.array(ReviewFindingV1Schema),
     evidenceGaps: z.array(NonEmptyTextSchema),
     limitations: z.array(NonEmptyTextSchema),
@@ -59,6 +119,25 @@ export const PreliminaryAssessmentV1Schema = z
         path: ["inspectedPaths"],
       });
     }
+    const canonicalInputIds = assessment.canonicalInputCoverage.map(
+      (coverage) => coverage.canonicalInputId,
+    );
+    if (new Set(canonicalInputIds).size !== canonicalInputIds.length) {
+      context.addIssue({
+        code: "custom",
+        message: "canonical-input coverage entries must be unique",
+        path: ["canonicalInputCoverage"],
+      });
+    }
+    for (const field of ["evidenceGaps", "limitations"] as const) {
+      if (new Set(assessment[field]).size !== assessment[field].length) {
+        context.addIssue({
+          code: "custom",
+          message: `${field} entries must be unique`,
+          path: [field],
+        });
+      }
+    }
   });
 
 export const FinalReviewReportV1Schema = z
@@ -68,12 +147,20 @@ export const FinalReviewReportV1Schema = z
     snapshotDigest: DigestV1Schema,
     briefDigest: DigestV1Schema,
     summary: NonEmptyTextSchema,
-    findings: z.array(ReviewFindingV1Schema),
+    findings: z.array(FinalReviewFindingV1Schema),
     preliminaryFindingDispositions: z.array(
       z.strictObject({
         preliminaryFindingId: FindingIdSchema,
         disposition: z.enum(["RETAINED", "REVISED", "WITHDRAWN", "MERGED"]),
         finalFindingId: FindingIdSchema.nullable(),
+        rationale: NonEmptyTextSchema,
+      }),
+    ),
+    preliminaryConcernDispositions: z.array(
+      z.strictObject({
+        kind: z.enum(["EVIDENCE_GAP", "LIMITATION"]),
+        preliminaryConcern: NonEmptyTextSchema,
+        disposition: z.enum(["RESOLVED", "REMAINS"]),
         rationale: NonEmptyTextSchema,
       }),
     ),
@@ -84,6 +171,18 @@ export const FinalReviewReportV1Schema = z
         explanation: NonEmptyTextSchema,
       }),
     ),
+    authorVerificationClaims: z.array(
+      z.strictObject({
+        claimIndex: z.int().nonnegative(),
+        command: NonEmptyTextSchema,
+        claimedOutcome: z.enum(["PASSED", "FAILED", "PARTIAL", "NOT_RUN"]),
+        claimedSummary: NonEmptyTextSchema,
+        status: z.enum(["CONTRADICTED", "UNVERIFIED"]),
+        explanation: NonEmptyTextSchema,
+      }),
+    ),
+    changedPathCoverage: z.array(ChangedPathCoverageV1Schema).min(1),
+    canonicalInputCoverage: z.array(CanonicalInputCoverageV1Schema).min(1),
     limitations: z.array(NonEmptyTextSchema),
     verdict: z.enum(["READY", "READY_WITH_FOLLOW_UPS", "NOT_READY", "UNABLE_TO_VERIFY"]),
     nextActions: z.strictObject({
@@ -104,16 +203,64 @@ export const FinalReviewReportV1Schema = z
       });
     }
 
+    const concernKeys = report.preliminaryConcernDispositions.map(
+      (disposition) => `${disposition.kind}:${disposition.preliminaryConcern}`,
+    );
+    if (new Set(concernKeys).size !== concernKeys.length) {
+      context.addIssue({
+        code: "custom",
+        message: "preliminary concern dispositions must be unique",
+        path: ["preliminaryConcernDispositions"],
+      });
+    }
+    const verificationIndexes = report.authorVerificationClaims.map((claim) => claim.claimIndex);
+    if (new Set(verificationIndexes).size !== verificationIndexes.length) {
+      context.addIssue({
+        code: "custom",
+        message: "author verification claim indexes must be unique",
+        path: ["authorVerificationClaims"],
+      });
+    }
+    const changedPaths = report.changedPathCoverage.map((coverage) => coverage.path);
+    if (new Set(changedPaths).size !== changedPaths.length) {
+      context.addIssue({
+        code: "custom",
+        message: "changed-path coverage entries must be unique",
+        path: ["changedPathCoverage"],
+      });
+    }
+    const canonicalInputIds = report.canonicalInputCoverage.map(
+      (coverage) => coverage.canonicalInputId,
+    );
+    if (new Set(canonicalInputIds).size !== canonicalInputIds.length) {
+      context.addIssue({
+        code: "custom",
+        message: "canonical-input coverage entries must be unique",
+        path: ["canonicalInputCoverage"],
+      });
+    }
+
     const blockingFinding = report.findings.some(
       (finding) => finding.severity === "P0" || finding.severity === "P1",
     );
+    const incompleteCoverage =
+      report.changedPathCoverage.some((coverage) => coverage.status === "UNASSESSED") ||
+      report.canonicalInputCoverage.some((coverage) => coverage.status === "UNASSESSED");
+    const unresolvedPreliminaryConcern = report.preliminaryConcernDispositions.some(
+      (disposition) => disposition.disposition === "REMAINS",
+    );
     if (
       (report.verdict === "READY" || report.verdict === "READY_WITH_FOLLOW_UPS") &&
-      (blockingFinding || report.nextActions.blockers.length > 0 || report.limitations.length > 0)
+      (blockingFinding ||
+        report.nextActions.blockers.length > 0 ||
+        report.limitations.length > 0 ||
+        incompleteCoverage ||
+        unresolvedPreliminaryConcern)
     ) {
       context.addIssue({
         code: "custom",
-        message: "a ready verdict cannot retain blockers, P0/P1 findings, or limitations",
+        message:
+          "a ready verdict cannot retain blockers, P0/P1 findings, limitations, unresolved preliminary concerns, or unassessed coverage",
         path: ["verdict"],
       });
     }
@@ -141,6 +288,7 @@ export const FinalReviewReportV1Schema = z
   });
 
 export type ReviewFindingV1 = z.infer<typeof ReviewFindingV1Schema>;
+export type ReviewEvidenceV1 = z.infer<typeof ReviewEvidenceV1Schema>;
 export type PreliminaryAssessmentV1 = z.infer<typeof PreliminaryAssessmentV1Schema>;
 export type FinalReviewReportV1 = z.infer<typeof FinalReviewReportV1Schema>;
 

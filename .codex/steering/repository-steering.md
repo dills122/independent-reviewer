@@ -10,7 +10,7 @@ Independent Reviewer turns AI Central's independent-review workflow into an exte
 
 ## Priorities
 
-Independence of inputs, evidence provenance, explicit uncertainty, bounded cost and review loops, and maintainable contracts. Keep the current phase as planning/setup until implementation is requested.
+Independence of inputs, evidence provenance, explicit uncertainty, bounded cost and review loops, and maintainable contracts. The first local release is implemented; prioritize focused hardening and an explicitly authorized provider smoke before considering deferred hosting or interactive-protocol work.
 
 ## Boundaries
 

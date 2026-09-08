@@ -88,28 +88,112 @@
             "minItems": 1,
             "type": "array",
             "items": {
-              "type": "object",
-              "properties": {
-                "path": {
-                  "type": "string",
-                  "minLength": 1,
-                  "maxLength": 4096
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "anchor": {
+                      "type": "string",
+                      "const": "LINE_RANGE"
+                    },
+                    "side": {
+                      "type": "string",
+                      "enum": [
+                        "BASE",
+                        "HEAD"
+                      ]
+                    },
+                    "startLine": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "endLine": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "detail": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "anchor",
+                    "side",
+                    "startLine",
+                    "endLine",
+                    "detail"
+                  ],
+                  "additionalProperties": false
                 },
-                "detail": {
-                  "type": "string",
-                  "minLength": 1
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "anchor": {
+                      "type": "string",
+                      "const": "SYMBOL"
+                    },
+                    "side": {
+                      "type": "string",
+                      "enum": [
+                        "BASE",
+                        "HEAD"
+                      ]
+                    },
+                    "symbol": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "detail": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "anchor",
+                    "side",
+                    "symbol",
+                    "detail"
+                  ],
+                  "additionalProperties": false
                 }
-              },
-              "required": [
-                "path",
-                "detail"
-              ],
-              "additionalProperties": false
+              ]
             }
           },
           "correction": {
             "type": "string",
             "minLength": 1
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "PRELIMINARY",
+              "FINAL_ONLY"
+            ]
+          },
+          "emergenceRationale": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -119,7 +203,9 @@
           "scenario",
           "impact",
           "evidence",
-          "correction"
+          "correction",
+          "origin",
+          "emergenceRationale"
         ],
         "additionalProperties": false
       }
@@ -171,6 +257,43 @@
         "additionalProperties": false
       }
     },
+    "preliminaryConcernDispositions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "EVIDENCE_GAP",
+              "LIMITATION"
+            ]
+          },
+          "preliminaryConcern": {
+            "type": "string",
+            "minLength": 1
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "RESOLVED",
+              "REMAINS"
+            ]
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "kind",
+          "preliminaryConcern",
+          "disposition",
+          "rationale"
+        ],
+        "additionalProperties": false
+      }
+    },
     "authorClaims": {
       "type": "array",
       "items": {
@@ -195,6 +318,119 @@
         },
         "required": [
           "claim",
+          "status",
+          "explanation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "authorVerificationClaims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claimIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "command": {
+            "type": "string",
+            "minLength": 1
+          },
+          "claimedOutcome": {
+            "type": "string",
+            "enum": [
+              "PASSED",
+              "FAILED",
+              "PARTIAL",
+              "NOT_RUN"
+            ]
+          },
+          "claimedSummary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "CONTRADICTED",
+              "UNVERIFIED"
+            ]
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "claimIndex",
+          "command",
+          "claimedOutcome",
+          "claimedSummary",
+          "status",
+          "explanation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "changedPathCoverage": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "INSPECTED",
+              "UNASSESSED"
+            ]
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "path",
+          "status",
+          "explanation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "canonicalInputCoverage": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "canonicalInputId": {
+            "type": "string",
+            "minLength": 7,
+            "maxLength": 128,
+            "pattern": "^input_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ASSESSED",
+              "UNASSESSED"
+            ]
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "canonicalInputId",
           "status",
           "explanation"
         ],
@@ -250,7 +486,11 @@
     "summary",
     "findings",
     "preliminaryFindingDispositions",
+    "preliminaryConcernDispositions",
     "authorClaims",
+    "authorVerificationClaims",
+    "changedPathCoverage",
+    "canonicalInputCoverage",
     "limitations",
     "verdict",
     "nextActions"
