@@ -169,7 +169,9 @@ requires exact changed-path/canonical-input coverage and preliminary-concern
 dispositions, validates line/symbol anchors against frozen blobs, and renders
 the complete, presentation-safe reconciliation ledger to Markdown. Final-only
 findings require an emergence rationale, and author-reported commands cannot be
-promoted to runner-confirmed evidence. It conservatively reserves both
+promoted to runner-confirmed evidence. Each stage specializes its provider-facing
+schema with the frozen snapshot's permitted evidence paths, while retaining local
+semantic and anchor validation. It conservatively reserves both
 message/schema inputs and outputs before the first submission, uses that same
 token-unit reservation when retransmitting the preliminary result, and retains
 reservations when usage is missing or malformed. It also rejects a known
