@@ -53,6 +53,10 @@ separation:
   includes the complete embedded manifest, canonical inputs, evidence order,
   constraints, and capability declarations. Its finalizer refuses an embedded
   snapshot whose identity does not verify.
+- Initial-evidence identity uses SHA-256 over the exact evidence-content UTF-8
+  bytes. The runtime recomputes this digest and checks that source-context
+  content covers its declared logical line range before a neutral brief is
+  accepted.
 
 Creation APIs accept digest-free material, validate it against the versioned
 runtime contract, and return a finalized artifact. Verification APIs validate
@@ -107,6 +111,8 @@ adopted later only with compatibility tests proving identical bytes.
   hashing.
 - Request JSON Schema describes caller input, while snapshot and neutral-brief
   JSON Schemas describe fully materialized output.
+- Relational reconciliation compares structured provenance fields directly;
+  delimiter-joined composite strings are not artifact identities.
 
 [^jcs]: RFC Editor, [RFC 8785 — JSON Canonicalization Scheme](https://www.rfc-editor.org/rfc/rfc8785.html).
 [^node-crypto]: Node.js, [`crypto.createHash`, `hash.update`, and `hash.digest`](https://nodejs.org/docs/latest-v24.x/api/crypto.html#cryptocreatehashalgorithm-options).

@@ -268,7 +268,12 @@ criteria, canonical inputs, one complete snapshot manifest, bounded initial
 evidence, visible coverage constraints, and capability identifiers. Runtime
 validation rejects undeclared author fields, canonical-input identity mismatch,
 duplicate evidence identifiers, evidence outside the manifest, source context
-for a path/side that does not exist, and invalid source ranges. Orchestration
+for a path/side that does not exist, invalid source ranges, and duplicate
+verification-check identifiers. Canonical-input reconciliation compares typed
+provenance fields rather than delimiter-joined text. Each initial-evidence
+digest is SHA-256 over the exact UTF-8 content, and source-context content must
+contain exactly the declared logical line count (with CRLF treated as one line
+separator and a terminal separator not creating an extra line). Orchestration
 must still prove that only this artifact is sent before preliminary persistence.
 A required `briefDigest` now binds the exact ordered blind-stage content, and
 its finalizer refuses an embedded manifest whose snapshot identity does not

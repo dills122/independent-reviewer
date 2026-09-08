@@ -19,6 +19,7 @@ export {
 export type { CanonicalJsonValue } from "./canonical-json.js";
 export { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 export {
+  computeInitialEvidenceContentDigestV1,
   InitialEvidenceV1Schema,
   NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,
   NeutralReviewBriefV1Schema,

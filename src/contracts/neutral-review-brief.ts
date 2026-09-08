@@ -1,6 +1,7 @@
 import * as z from "zod";
 
 import { computeCanonicalInputDigestV1 } from "./canonical-input-identity.js";
+import { sha256Utf8 } from "./canonical-json.js";
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 import { PersistedCanonicalInputsV1Schema } from "./review-request.js";
 import {
@@ -56,6 +57,40 @@ export const InitialEvidenceV1Schema = z.discriminatedUnion("type", [
   DiffHunkEvidenceV1Schema,
   SourceContextEvidenceV1Schema,
 ]);
+
+/** Computes the SHA-256 digest of the evidence content's exact UTF-8 bytes. */
+export function computeInitialEvidenceContentDigestV1(
+  content: string,
+): z.infer<typeof DigestV1Schema> {
+  if (content.length === 0) {
+    throw new TypeError("initial evidence content must not be empty");
+  }
+  return sha256Utf8(content);
+}
+
+function logicalLineCount(content: string): number {
+  const lineSeparators = content.match(/\r\n|[\r\n]/g)?.length ?? 0;
+  const endsWithLineSeparator = /(?:\r\n|[\r\n])$/.test(content);
+  return lineSeparators + (endsWithLineSeparator ? 0 : 1);
+}
+
+function sameProvenance(
+  left: z.infer<typeof PersistedCanonicalInputsV1Schema>["requirements"][number]["provenance"],
+  right: z.infer<typeof PersistedCanonicalInputsV1Schema>["requirements"][number]["provenance"],
+): boolean {
+  if (left.type !== right.type) {
+    return false;
+  }
+  if (left.type === "INLINE" && right.type === "INLINE") {
+    return left.label === right.label;
+  }
+  return (
+    left.type === "REPOSITORY_FILE" &&
+    right.type === "REPOSITORY_FILE" &&
+    left.path === right.path &&
+    left.revision === right.revision
+  );
+}
 
 type SnapshotPathEntryV1 = z.infer<typeof SnapshotManifestV1Schema>["paths"][number];
 
@@ -140,28 +175,21 @@ export const NeutralReviewBriefV1Schema = z
       });
     });
 
-    const provenanceIdentity = (
-      provenance: (typeof canonicalInputs)[number]["provenance"],
-    ): string =>
-      provenance.type === "REPOSITORY_FILE"
-        ? `${provenance.type}:${provenance.path}:${provenance.revision ?? ""}`
-        : `${provenance.type}:${provenance.label}`;
-    const expectedIdentities = canonicalInputs
-      .map(
-        (input) =>
-          `${input.kind}:${input.id}:${provenanceIdentity(input.provenance)}:${computeCanonicalInputDigestV1(input).value}`,
-      )
-      .sort();
-    const manifestIdentities = brief.snapshotManifest.canonicalInputs
-      .map(
-        (input) =>
-          `${input.kind}:${input.id}:${provenanceIdentity(input.provenance)}:${input.digest.value}`,
-      )
-      .sort();
-    if (
-      expectedIdentities.length !== manifestIdentities.length ||
-      !expectedIdentities.every((identity, index) => identity === manifestIdentities[index])
-    ) {
+    const manifestInputById = new Map(
+      brief.snapshotManifest.canonicalInputs.map((input) => [input.id, input]),
+    );
+    const canonicalInputsMatch =
+      canonicalInputs.length === manifestInputById.size &&
+      canonicalInputs.every((input) => {
+        const manifestInput = manifestInputById.get(input.id);
+        return (
+          manifestInput !== undefined &&
+          manifestInput.kind === input.kind &&
+          sameProvenance(manifestInput.provenance, input.provenance) &&
+          manifestInput.digest.value === computeCanonicalInputDigestV1(input).value
+        );
+      });
+    if (!canonicalInputsMatch) {
       context.addIssue({
         code: "custom",
         message: "must exactly match canonical inputs included in this brief",
@@ -182,6 +210,14 @@ export const NeutralReviewBriefV1Schema = z
         path: ["initialEvidence"],
       });
     }
+    const verificationCheckIds = brief.capabilities.verificationChecks.map((check) => check.id);
+    if (new Set(verificationCheckIds).size !== verificationCheckIds.length) {
+      context.addIssue({
+        code: "custom",
+        message: "verification-check identifiers must be unique",
+        path: ["capabilities", "verificationChecks"],
+      });
+    }
     brief.initialEvidence.forEach((evidence, index) => {
       if (!manifestPaths.has(evidence.path)) {
         context.addIssue({
@@ -195,6 +231,23 @@ export const NeutralReviewBriefV1Schema = z
           code: "custom",
           message: "must be greater than or equal to startLine",
           path: ["initialEvidence", index, "endLine"],
+        });
+      }
+      if (evidence.digest.value !== computeInitialEvidenceContentDigestV1(evidence.content).value) {
+        context.addIssue({
+          code: "custom",
+          message: "must match the SHA-256 digest of the exact evidence content",
+          path: ["initialEvidence", index, "digest"],
+        });
+      }
+      if (
+        evidence.type === "SOURCE_CONTEXT" &&
+        logicalLineCount(evidence.content) !== evidence.endLine - evidence.startLine + 1
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "content must contain exactly the declared logical line range",
+          path: ["initialEvidence", index, "content"],
         });
       }
       if (

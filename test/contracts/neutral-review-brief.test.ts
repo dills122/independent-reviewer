@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 
 import {
   computeCanonicalInputDigestV1,
+  computeInitialEvidenceContentDigestV1,
   NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,
   NeutralReviewBriefV1Schema,
 } from "../../src/index.js";
@@ -31,6 +32,8 @@ async function createValidBrief(): Promise<Record<string, unknown>> {
       ...canonicalInputs.projectGuidance,
     ].map((input) => [input.id, input]),
   );
+  const diffContent = "@@ -1,1 +1,1 @@";
+  const sourceContent = 'import * as z from "zod";';
 
   return {
     schemaVersion: 1,
@@ -95,11 +98,8 @@ async function createValidBrief(): Promise<Record<string, unknown>> {
         evidenceId: "evidence_initial_diff",
         path: "src/contracts/review-request.ts",
         hunkId: "hunk_review_request_1",
-        content: "@@ -1,1 +1,1 @@",
-        digest: {
-          algorithm: "SHA256",
-          value: "7".repeat(64),
-        },
+        content: diffContent,
+        digest: computeInitialEvidenceContentDigestV1(diffContent),
       },
       {
         type: "SOURCE_CONTEXT",
@@ -107,12 +107,9 @@ async function createValidBrief(): Promise<Record<string, unknown>> {
         path: "src/contracts/review-request.ts",
         side: "HEAD",
         startLine: 1,
-        endLine: 10,
-        content: 'import * as z from "zod";',
-        digest: {
-          algorithm: "SHA256",
-          value: "8".repeat(64),
-        },
+        endLine: 1,
+        content: sourceContent,
+        digest: computeInitialEvidenceContentDigestV1(sourceContent),
       },
     ],
     coverageConstraints: [
@@ -170,6 +167,41 @@ describe("NeutralReviewBriefV1Schema", () => {
     assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, false);
   });
 
+  it("rejects structurally different provenance that collides when colon-delimited", async () => {
+    const brief = (await createValidBrief()) as {
+      canonicalInputs: {
+        requirements: Array<{
+          provenance: { type: "REPOSITORY_FILE"; path: string; revision?: string };
+        }>;
+      };
+      snapshotManifest: {
+        canonicalInputs: Array<{
+          id: string;
+          digest: unknown;
+          provenance: { type: "REPOSITORY_FILE"; path: string; revision?: string };
+        }>;
+      };
+    };
+    const requirement = brief.canonicalInputs.requirements[0];
+    const manifestRequirement = brief.snapshotManifest.canonicalInputs.find(
+      (input) => input.id === "input_review_protocol",
+    );
+    assert.ok(requirement && manifestRequirement);
+    requirement.provenance = {
+      type: "REPOSITORY_FILE",
+      path: "docs/a:b",
+      revision: "c",
+    };
+    manifestRequirement.provenance = {
+      type: "REPOSITORY_FILE",
+      path: "docs/a",
+      revision: "b:c",
+    };
+    manifestRequirement.digest = computeCanonicalInputDigestV1(requirement);
+
+    assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, false);
+  });
+
   it("rejects canonical content that does not match its manifest digest", async () => {
     const brief = (await createValidBrief()) as {
       canonicalInputs: {
@@ -202,6 +234,39 @@ describe("NeutralReviewBriefV1Schema", () => {
     const second = brief.initialEvidence[1];
     assert.ok(first && second);
     second.evidenceId = first.evidenceId;
+
+    assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, false);
+  });
+
+  it("rejects initial evidence whose digest does not match its exact content", async () => {
+    const brief = (await createValidBrief()) as {
+      initialEvidence: Array<{ content: string }>;
+    };
+    const firstEvidence = brief.initialEvidence[0];
+    assert.ok(firstEvidence);
+    firstEvidence.content = "@@ -2,1 +2,1 @@";
+
+    assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, false);
+  });
+
+  it("requires source-context content to cover the declared logical lines", async () => {
+    const brief = (await createValidBrief()) as {
+      initialEvidence: Array<{ type: string; endLine?: number }>;
+    };
+    const context = brief.initialEvidence.find((evidence) => evidence.type === "SOURCE_CONTEXT");
+    assert.ok(context);
+    context.endLine = 2;
+
+    assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, false);
+  });
+
+  it("rejects duplicate verification-check identifiers", async () => {
+    const brief = (await createValidBrief()) as {
+      capabilities: { verificationChecks: unknown[] };
+    };
+    const check = brief.capabilities.verificationChecks[0];
+    assert.ok(check);
+    brief.capabilities.verificationChecks.push(structuredClone(check));
 
     assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, false);
   });
