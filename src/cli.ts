@@ -6,10 +6,11 @@ import { pathToFileURL } from "node:url";
 
 import {
   type FinalReviewReportV1,
+  type OpenRouterProviderRoutingV1,
   ReviewRequestV1Schema,
-  ReviewRunConfigV1Schema,
+  ReviewRunConfigV2Schema,
 } from "./contracts/index.js";
-import { runTwoStageReviewV1 } from "./orchestrator/two-stage-review.js";
+import { resumeFinalReviewV1, runTwoStageReviewV1 } from "./orchestrator/two-stage-review.js";
 import { OpenRouterProviderV1, ProviderCallError } from "./provider/openrouter.js";
 import type { ReviewProviderV1 } from "./provider/review-provider.js";
 import { captureGitSnapshotV1 } from "./snapshot/git-capture.js";
@@ -27,12 +28,12 @@ const processIo: CliIoV1 = {
 
 export interface CliDependenciesV1 {
   readOpenRouterApiKey(): string | undefined;
-  createProvider(apiKey: string): ReviewProviderV1;
+  createProvider(apiKey: string, routing: OpenRouterProviderRoutingV1): ReviewProviderV1;
 }
 
 const processDependencies: CliDependenciesV1 = {
   readOpenRouterApiKey: () => process.env.OPENROUTER_API_KEY,
-  createProvider: (apiKey) => new OpenRouterProviderV1(apiKey),
+  createProvider: (apiKey, routing) => new OpenRouterProviderV1(apiKey, routing),
 };
 
 interface PreparedPacketV1 {
@@ -163,11 +164,34 @@ async function review(
     throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
   }
   const configPath = resolve(requiredOption(options, "--config"));
-  const config = ReviewRunConfigV1Schema.parse(JSON.parse(await readFile(configPath, "utf8")));
-  const provider = dependencies.createProvider(apiKey);
+  const config = ReviewRunConfigV2Schema.parse(JSON.parse(await readFile(configPath, "utf8")));
+  const provider = dependencies.createProvider(apiKey, config.providerRouting);
   const prepared = await preparePacket(options, config.configId);
   io.stdout(`Prepared snapshot packet: ${prepared.packetPath}`);
   const result = await runTwoStageReviewV1(prepared.packetPath, config, provider);
+  io.stdout(`Verdict: ${verdictLabels[result.report.verdict]}`);
+  io.stdout(`Report: ${result.markdownPath}`);
+  return reviewOutcomeExitCodeV1(result.report.verdict);
+}
+
+async function resumeFinal(
+  options: Map<string, string | true>,
+  io: CliIoV1,
+  dependencies: CliDependenciesV1,
+): Promise<number> {
+  assertAllowedOptions(options, ["--packet", "--config"]);
+  const apiKey = dependencies.readOpenRouterApiKey();
+  if (!apiKey || apiKey.trim().length === 0) {
+    throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
+  }
+  const configPath = resolve(requiredOption(options, "--config"));
+  const config = ReviewRunConfigV2Schema.parse(JSON.parse(await readFile(configPath, "utf8")));
+  const provider = dependencies.createProvider(apiKey, config.providerRouting);
+  const result = await resumeFinalReviewV1(
+    resolve(requiredOption(options, "--packet")),
+    config,
+    provider,
+  );
   io.stdout(`Verdict: ${verdictLabels[result.report.verdict]}`);
   io.stdout(`Report: ${result.markdownPath}`);
   return reviewOutcomeExitCodeV1(result.report.verdict);
@@ -212,7 +236,10 @@ export async function runCliV1(
     if (command === "review") {
       return await review(options, io, dependencies);
     }
-    throw new Error("Usage: independent-reviewer <prepare|inspect|review> [options]");
+    if (command === "resume-final") {
+      return await resumeFinal(options, io, dependencies);
+    }
+    throw new Error("Usage: independent-reviewer <prepare|inspect|review|resume-final> [options]");
   } catch (error) {
     io.stderr(error instanceof Error ? error.message : "Unknown command failure");
     if (error instanceof ProviderCallError && error.code === "TRANSPORT_UNCERTAIN") {

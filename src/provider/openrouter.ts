@@ -1,6 +1,10 @@
 import * as z from "zod";
 
-import { sha256Utf8 } from "../contracts/index.js";
+import {
+  OpenRouterProviderRoutingV1Schema,
+  sha256Utf8,
+  type OpenRouterProviderRoutingV1,
+} from "../contracts/index.js";
 import {
   ProviderCallError,
   type ProviderErrorDiagnosticV1,
@@ -10,7 +14,7 @@ import {
 } from "./review-provider.js";
 
 const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
-const OPENROUTER_PROVIDER_POLICY_VERSION_V1 = "openrouter-chat-completions-v1";
+const OPENROUTER_PROVIDER_POLICY_VERSION_V2 = "openrouter-chat-completions-v2";
 const OPENROUTER_PUBLIC_HEADERS_V1 = {
   "content-type": "application/json",
   "x-openrouter-cache": "false",
@@ -43,7 +47,7 @@ const TokenUsageSchema = z
 
 const OpenRouterResponseSchema = z.object({
   id: z.string().optional(),
-  model: z.string().optional(),
+  model: z.string(),
   provider: z.string().optional(),
   choices: z
     .array(
@@ -139,7 +143,10 @@ function providerErrorMessage(diagnostic: ProviderErrorDiagnosticV1): string {
   return `OpenRouter reported provider error ${diagnostic.providerErrorCode}${type}${provider}${message}.`;
 }
 
-function openRouterWireBodyV1(request: ReviewProviderRequestV1): string {
+function openRouterWireBodyV2(
+  request: ReviewProviderRequestV1,
+  routing: OpenRouterProviderRoutingV1,
+): string {
   return JSON.stringify({
     model: request.model,
     messages: request.messages,
@@ -154,8 +161,11 @@ function openRouterWireBodyV1(request: ReviewProviderRequestV1): string {
       },
     },
     provider: {
-      allow_fallbacks: false,
+      order: routing.order,
+      only: routing.order,
+      allow_fallbacks: true,
       data_collection: "deny",
+      max_price: routing.maxPrice,
       require_parameters: true,
       zdr: true,
     },
@@ -173,17 +183,19 @@ function openRouterWireBodyV1(request: ReviewProviderRequestV1): string {
 export class OpenRouterProviderV1 implements ReviewProviderV1 {
   readonly #apiKey: string;
   readonly #fetch: typeof fetch;
+  readonly #routing: OpenRouterProviderRoutingV1;
 
-  constructor(apiKey: string, fetchImplementation: typeof fetch = fetch) {
+  constructor(apiKey: string, routingValue: unknown, fetchImplementation: typeof fetch = fetch) {
     if (apiKey.trim().length === 0) {
       throw new ProviderCallError("INVALID_CONFIGURATION", "OpenRouter API key is required.");
     }
     this.#apiKey = apiKey;
+    this.#routing = OpenRouterProviderRoutingV1Schema.parse(routingValue);
     this.#fetch = fetchImplementation;
   }
 
   auditRequest(request: ReviewProviderRequestV1) {
-    const wireBody = openRouterWireBodyV1(request);
+    const wireBody = openRouterWireBodyV2(request, this.#routing);
     const credentialFreeWireRequest = JSON.stringify({
       url: OPENROUTER_CHAT_COMPLETIONS_URL,
       method: "POST",
@@ -191,7 +203,7 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       body: wireBody,
     });
     return {
-      providerPolicyVersion: OPENROUTER_PROVIDER_POLICY_VERSION_V1,
+      providerPolicyVersion: OPENROUTER_PROVIDER_POLICY_VERSION_V2,
       wireBodyDigest: sha256Utf8(wireBody),
       wireBodyBytes: Buffer.byteLength(wireBody, "utf8"),
       credentialFreeWireRequestDigest: sha256Utf8(credentialFreeWireRequest),
@@ -199,7 +211,7 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
   }
 
   async complete(request: ReviewProviderRequestV1): Promise<ReviewProviderResponseV1> {
-    const wireBody = openRouterWireBodyV1(request);
+    const wireBody = openRouterWireBodyV2(request, this.#routing);
     let response: Response;
     try {
       response = await this.#fetch(OPENROUTER_CHAT_COMPLETIONS_URL, {
@@ -260,6 +272,12 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
         `OpenRouter response did not complete normally (finish reason: ${choice?.finish_reason ?? "missing"}).`,
       );
     }
+    if (parsed.data.model !== request.model) {
+      throw new ProviderCallError(
+        "INVALID_RESPONSE",
+        `OpenRouter returned a different model than requested (${parsed.data.model}).`,
+      );
+    }
 
     let value: unknown;
     try {
@@ -279,7 +297,7 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       value,
       rawContent: choice.message.content,
       responseId: parsed.data.id ?? null,
-      model: parsed.data.model ?? null,
+      model: parsed.data.model,
       provider: parsed.data.provider ?? null,
       usage: {
         promptTokens: usage?.prompt_tokens ?? null,

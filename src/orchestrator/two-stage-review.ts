@@ -1,4 +1,4 @@
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import * as z from "zod";
@@ -7,6 +7,7 @@ import {
   FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
   FinalReviewReportV1Schema,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
+  NeutralReviewBriefV1Schema,
   PreliminaryAssessmentV1Schema,
   sha256Utf8,
   type AuthorPacketV1,
@@ -14,7 +15,8 @@ import {
   type NeutralReviewBriefV1,
   type PreliminaryAssessmentV1,
   type ReviewFindingV1,
-  ReviewRunConfigV1Schema,
+  ReviewRunConfigV2Schema,
+  verifyNeutralReviewBriefIdentityV1,
 } from "../contracts/index.js";
 import {
   ProviderCallError,
@@ -105,6 +107,12 @@ async function completeWithAudit(
   });
   try {
     const response = await provider.complete(request);
+    if (response.model !== request.model) {
+      throw new ProviderCallError(
+        "INVALID_RESPONSE",
+        `The provider returned a different model than requested (${response.model ?? "missing"}).`,
+      );
+    }
     await appendRunEvent(runRecordPath, {
       type: "CALL_SUCCEEDED",
       attemptNumber,
@@ -510,13 +518,77 @@ function providerRecord(response: ReviewProviderResponseV1): unknown {
   };
 }
 
+const StoredProviderResponseV1Schema = z.strictObject({
+  responseId: z.string().nullable(),
+  model: z.string().nullable(),
+  provider: z.string().nullable(),
+  rawContent: z.string(),
+  usage: z.strictObject({
+    promptTokens: z.int().nonnegative().nullable(),
+    completionTokens: z.int().nonnegative().nullable(),
+    totalTokens: z.int().nonnegative().nullable(),
+    cost: z.number().nonnegative().nullable(),
+  }),
+});
+
+async function completeFinalStageV1(
+  packetPath: string,
+  reviewDirectory: string,
+  runRecordPath: string,
+  attemptNumber: number,
+  config: z.infer<typeof ReviewRunConfigV2Schema>,
+  provider: ReviewProviderV1,
+  brief: NeutralReviewBriefV1,
+  preliminary: PreliminaryAssessmentV1,
+  finalMessages: ReviewMessageV1[],
+  finalResponseSchema: unknown,
+  firstCallTokens: number,
+  authorVerificationClaims: AuthorPacketV1["claimedVerification"],
+): Promise<FinalReviewReportV1> {
+  assertConversationBudget(finalMessages, config.budgets.maxConversationBytes);
+  const finalInputTokens = finalInputTokenReservation(
+    finalMessages.slice(0, -2),
+    finalMessages.at(-1)?.content ?? "",
+    config.budgets.maxOutputTokensPerCall,
+    finalResponseSchema,
+  );
+  if (
+    firstCallTokens + finalInputTokens + config.budgets.maxOutputTokensPerCall >
+    config.budgets.maxTotalTokens
+  ) {
+    throw new Error("The remaining token budget cannot reserve the final review call.");
+  }
+  const finalResponse = await completeWithAudit(runRecordPath, attemptNumber, provider, {
+    stage: "FINAL",
+    model: config.model,
+    maxOutputTokens: config.budgets.maxOutputTokensPerCall,
+    timeoutMs: config.budgets.timeoutMs,
+    messages: finalMessages,
+    responseSchema: {
+      name: "final_review_report_v1",
+      schema: finalResponseSchema,
+    },
+  });
+  await writeFile(
+    join(reviewDirectory, "final-provider-response.json"),
+    jsonDocument(providerRecord(finalResponse)),
+    { flag: "wx", mode: 0o600 },
+  );
+  const finalCallTokens =
+    chargedTokens(finalResponse) ?? finalInputTokens + config.budgets.maxOutputTokensPerCall;
+  if (firstCallTokens + finalCallTokens > config.budgets.maxTotalTokens) {
+    throw new Error("Provider-reported usage exceeded the total token budget.");
+  }
+  return parseFinal(finalResponse.value, preliminary, brief, packetPath, authorVerificationClaims);
+}
+
 /** Runs exactly two model calls with a durable author-visibility boundary between them. */
 export async function runTwoStageReviewV1(
   packetPath: string,
   configValue: unknown,
   provider: ReviewProviderV1,
 ): Promise<TwoStageReviewResultV1> {
-  const config = ReviewRunConfigV1Schema.parse(configValue);
+  const config = ReviewRunConfigV2Schema.parse(configValue);
   const packet = await inspectSnapshotPacketV1(packetPath);
   if (packet.manifest.paths.length === 0) {
     throw new Error("The snapshot contains no changed paths to review.");
@@ -543,6 +615,7 @@ export async function runTwoStageReviewV1(
     snapshotDigest: brief.snapshotManifest.snapshotDigest,
     briefDigest: brief.briefDigest,
     configId: config.configId,
+    configDigest: sha256Utf8(JSON.stringify(config)),
     requestedModel: config.model,
     promptVersion: REVIEW_PROMPT_VERSION_V1,
     preliminarySchema: "preliminary_assessment_v1",
@@ -621,49 +694,22 @@ export async function runTwoStageReviewV1(
       { role: "assistant", content: preliminaryResponse.rawContent },
       { role: "user", content: authorMessage },
     ];
-    assertConversationBudget(finalMessages, config.budgets.maxConversationBytes);
-    const finalInputTokens = finalInputTokenReservation(
-      blindMessages,
-      authorMessage,
-      config.budgets.maxOutputTokensPerCall,
-      finalResponseSchema,
-    );
-    if (
-      firstCallTokens + finalInputTokens + config.budgets.maxOutputTokensPerCall >
-      config.budgets.maxTotalTokens
-    ) {
-      throw new Error("The remaining token budget cannot reserve the final review call.");
-    }
     await appendRunEvent(runRecordPath, {
       type: "AUTHOR_DELIVERED",
       authorPacketDigest: sha256Utf8(JSON.stringify(packet.authorPacket)),
     });
-    const finalResponse = await completeWithAudit(runRecordPath, 2, provider, {
-      stage: "FINAL",
-      model: config.model,
-      maxOutputTokens: config.budgets.maxOutputTokensPerCall,
-      timeoutMs: config.budgets.timeoutMs,
-      messages: finalMessages,
-      responseSchema: {
-        name: "final_review_report_v1",
-        schema: finalResponseSchema,
-      },
-    });
-    await writeFile(
-      join(reviewDirectory, "final-provider-response.json"),
-      jsonDocument(providerRecord(finalResponse)),
-      { flag: "wx", mode: 0o600 },
-    );
-    const finalCallTokens =
-      chargedTokens(finalResponse) ?? finalInputTokens + config.budgets.maxOutputTokensPerCall;
-    if (firstCallTokens + finalCallTokens > config.budgets.maxTotalTokens) {
-      throw new Error("Provider-reported usage exceeded the total token budget.");
-    }
-    const report = await parseFinal(
-      finalResponse.value,
-      preliminary,
-      brief,
+    const report = await completeFinalStageV1(
       packetPath,
+      reviewDirectory,
+      runRecordPath,
+      2,
+      config,
+      provider,
+      brief,
+      preliminary,
+      finalMessages,
+      finalResponseSchema,
+      firstCallTokens,
       packet.authorPacket.claimedVerification,
     );
     await writeFile(finalPath, jsonDocument(report), { flag: "wx", mode: 0o600 });
@@ -676,6 +722,284 @@ export async function runTwoStageReviewV1(
       terminalState: report.verdict,
     });
 
+    return { report, briefPath, preliminaryPath, finalPath, markdownPath, runRecordPath };
+  } catch (error) {
+    const normalized = normalizedError(error);
+    await appendRunEvent(runRecordPath, {
+      type: "RUN_FAILED",
+      terminalState: normalized.code === "TRANSPORT_UNCERTAIN" ? "TRANSPORT_UNCERTAIN" : "FAILED",
+      error: normalized,
+    });
+    throw error;
+  }
+}
+
+function runEvent(value: unknown, label: string): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${label} is not a JSON object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+async function readRunEventsV1(runRecordPath: string): Promise<Record<string, unknown>[]> {
+  const lines = (await readFile(runRecordPath, "utf8"))
+    .split("\n")
+    .filter((line) => line.length > 0);
+  return lines.map((line, index) => {
+    try {
+      return runEvent(JSON.parse(line), `Run event ${index + 1}`);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(`Run event ${index + 1} is not valid JSON.`, { cause: error });
+      }
+      throw error;
+    }
+  });
+}
+
+async function assertFileAbsent(path: string): Promise<void> {
+  try {
+    await access(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  throw new Error(`Final-stage resume is not allowed because ${path} already exists.`);
+}
+
+/**
+ * Explicitly retries only a final call that received a definite provider 429.
+ * The persisted blind assessment and exact run configuration are reused.
+ */
+export async function resumeFinalReviewV1(
+  packetPath: string,
+  configValue: unknown,
+  provider: ReviewProviderV1,
+): Promise<TwoStageReviewResultV1> {
+  const config = ReviewRunConfigV2Schema.parse(configValue);
+  const packet = await inspectSnapshotPacketV1(packetPath);
+  if (!packet.authorPacket) {
+    throw new Error("An author packet is required to resume the final review stage.");
+  }
+  if (packet.reviewConfigRef !== config.configId) {
+    throw new Error(
+      `Review config ${config.configId} does not match packet reference ${packet.reviewConfigRef}.`,
+    );
+  }
+
+  const reviewDirectory = join(packetPath, "review");
+  const briefPath = join(reviewDirectory, "neutral-review-brief.json");
+  const preliminaryPath = join(reviewDirectory, "preliminary.json");
+  const preliminaryProviderPath = join(reviewDirectory, "preliminary-provider-response.json");
+  const finalProviderPath = join(reviewDirectory, "final-provider-response.json");
+  const finalResumeClaimPath = join(reviewDirectory, "final-resume-claim.json");
+  const finalPath = join(reviewDirectory, "final.json");
+  const markdownPath = join(reviewDirectory, "report.md");
+  const runRecordPath = join(reviewDirectory, "run-record.jsonl");
+
+  const events = await readRunEventsV1(runRecordPath);
+  const expectedEventTypes = [
+    "RUN_STARTED",
+    "CALL_STARTED",
+    "CALL_SUCCEEDED",
+    "PRELIMINARY_PERSISTED",
+    "AUTHOR_DELIVERED",
+    "CALL_STARTED",
+    "CALL_FAILED",
+    "RUN_FAILED",
+  ];
+  const eventTypes = events.map((event) => event.type);
+  if (JSON.stringify(eventTypes) !== JSON.stringify(expectedEventTypes)) {
+    if (eventTypes.includes("RUN_COMPLETED")) {
+      throw new Error("Final-stage resume is not allowed because the review is completed.");
+    }
+    if (eventTypes.includes("RUN_RESUMED")) {
+      throw new Error("The final stage has already been resumed once.");
+    }
+    throw new Error("The persisted run state is not eligible for a final-stage resume.");
+  }
+
+  const [
+    started,
+    preliminaryStarted,
+    preliminarySucceeded,
+    preliminaryPersisted,
+    authorDelivered,
+    finalStarted,
+    finalFailed,
+    runFailed,
+  ] = events;
+  const failedError = runEvent(finalFailed?.error, "Final call failure");
+  if (
+    failedError.code === "TRANSPORT_UNCERTAIN" ||
+    runFailed?.terminalState === "TRANSPORT_UNCERTAIN"
+  ) {
+    throw new Error("A transport-uncertain final submission must not be retried.");
+  }
+  const failedDiagnostic = runEvent(failedError.diagnostic, "Final call failure diagnostic");
+  if (
+    preliminaryStarted?.stage !== "PRELIMINARY" ||
+    preliminaryStarted.attemptNumber !== 1 ||
+    preliminarySucceeded?.stage !== "PRELIMINARY" ||
+    preliminarySucceeded.attemptNumber !== 1 ||
+    finalStarted?.stage !== "FINAL" ||
+    finalStarted.attemptNumber !== 2 ||
+    finalFailed?.stage !== "FINAL" ||
+    finalFailed.attemptNumber !== 2 ||
+    failedError.code !== "PROVIDER_ERROR" ||
+    failedDiagnostic.httpStatus !== 429 ||
+    runFailed?.terminalState !== "FAILED"
+  ) {
+    throw new Error("Only a definite final-stage provider 429 may be resumed.");
+  }
+
+  const expectedConfigDigest = sha256Utf8(JSON.stringify(config));
+  if (
+    started?.configId !== config.configId ||
+    JSON.stringify(started.configDigest) !== JSON.stringify(expectedConfigDigest) ||
+    started.requestedModel !== config.model
+  ) {
+    throw new Error("The resume configuration must exactly match the original review run.");
+  }
+
+  const briefValue = JSON.parse(await readFile(briefPath, "utf8")) as unknown;
+  if (!verifyNeutralReviewBriefIdentityV1(briefValue)) {
+    throw new Error("The persisted neutral review brief identity is invalid.");
+  }
+  const brief = NeutralReviewBriefV1Schema.parse(briefValue);
+  const rebuiltBrief = await buildNeutralReviewBriefV1(
+    packetPath,
+    config.budgets.maxInitialEvidenceBytes,
+  );
+  if (
+    JSON.stringify(brief) !== JSON.stringify(rebuiltBrief) ||
+    JSON.stringify(started?.snapshotDigest) !==
+      JSON.stringify(brief.snapshotManifest.snapshotDigest) ||
+    JSON.stringify(started?.briefDigest) !== JSON.stringify(brief.briefDigest)
+  ) {
+    throw new Error("The persisted final-stage inputs no longer match the frozen packet.");
+  }
+
+  const preliminaryProvider = StoredProviderResponseV1Schema.parse(
+    JSON.parse(await readFile(preliminaryProviderPath, "utf8")),
+  );
+  if (
+    preliminaryProvider.model !== config.model ||
+    preliminarySucceeded?.returnedModel !== config.model ||
+    JSON.stringify(preliminarySucceeded?.usage) !== JSON.stringify(preliminaryProvider.usage)
+  ) {
+    throw new Error(
+      "The persisted preliminary response does not match the requested model or ledger.",
+    );
+  }
+  const preliminaryCandidate = await parsePreliminary(
+    JSON.parse(preliminaryProvider.rawContent),
+    brief,
+    packetPath,
+  );
+  const preliminary = await parsePreliminary(
+    JSON.parse(await readFile(preliminaryPath, "utf8")),
+    brief,
+    packetPath,
+  );
+  if (
+    JSON.stringify(preliminaryCandidate) !== JSON.stringify(preliminary) ||
+    JSON.stringify(preliminaryPersisted?.preliminaryDigest) !==
+      JSON.stringify(sha256Utf8(jsonDocument(preliminary))) ||
+    JSON.stringify(authorDelivered?.authorPacketDigest) !==
+      JSON.stringify(sha256Utf8(JSON.stringify(packet.authorPacket)))
+  ) {
+    throw new Error("The persisted preliminary or author-stage identity is invalid.");
+  }
+
+  await Promise.all([
+    assertFileAbsent(finalProviderPath),
+    assertFileAbsent(finalPath),
+    assertFileAbsent(markdownPath),
+  ]);
+
+  const blindMessages: ReviewMessageV1[] = [
+    { role: "system", content: REVIEW_POLICY_V1 },
+    { role: "user", content: JSON.stringify(brief) },
+  ];
+  const authorMessage = JSON.stringify({
+    schemaVersion: 1,
+    type: "AUTHOR_PACKET",
+    snapshotDigest: brief.snapshotManifest.snapshotDigest,
+    authorPacket: packet.authorPacket,
+  });
+  const finalMessages: ReviewMessageV1[] = [
+    ...blindMessages,
+    { role: "assistant", content: preliminaryProvider.rawContent },
+    { role: "user", content: authorMessage },
+  ];
+  const finalResponseSchema = constrainFindingEvidencePaths(
+    FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
+    [...allowedPaths(brief)].sort(),
+  );
+  const preliminaryResponseSchema = constrainFindingEvidencePaths(
+    PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
+    [...allowedPaths(brief)].sort(),
+  );
+  const preliminaryResponse: ReviewProviderResponseV1 = {
+    ...preliminaryProvider,
+    value: preliminaryCandidate,
+  };
+  const firstCallTokens =
+    chargedTokens(preliminaryResponse) ??
+    conservativeInputTokenUpperBound(blindMessages, preliminaryResponseSchema) +
+      config.budgets.maxOutputTokensPerCall;
+
+  try {
+    await writeFile(
+      finalResumeClaimPath,
+      jsonDocument({
+        schemaVersion: 1,
+        stage: "FINAL",
+        failedAttemptNumber: 2,
+        claimedAttemptNumber: 3,
+        configDigest: expectedConfigDigest,
+      }),
+      { flag: "wx", mode: 0o600 },
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error("The one permitted final-stage resume has already been claimed.");
+    }
+    throw error;
+  }
+  await appendRunEvent(runRecordPath, {
+    type: "RUN_RESUMED",
+    stage: "FINAL",
+    failedAttemptNumber: 2,
+    nextAttemptNumber: 3,
+  });
+  try {
+    const report = await completeFinalStageV1(
+      packetPath,
+      reviewDirectory,
+      runRecordPath,
+      3,
+      config,
+      provider,
+      brief,
+      preliminary,
+      finalMessages,
+      finalResponseSchema,
+      firstCallTokens,
+      packet.authorPacket.claimedVerification,
+    );
+    await writeFile(finalPath, jsonDocument(report), { flag: "wx", mode: 0o600 });
+    await writeFile(markdownPath, renderFinalReviewMarkdownV1(report), {
+      flag: "wx",
+      mode: 0o600,
+    });
+    await appendRunEvent(runRecordPath, {
+      type: "RUN_COMPLETED",
+      terminalState: report.verdict,
+    });
     return { report, briefPath, preliminaryPath, finalPath, markdownPath, runRecordPath };
   } catch (error) {
     const normalized = normalizedError(error);

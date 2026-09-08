@@ -56,10 +56,17 @@ export type {
   ReviewFindingV1,
 } from "./review-results.js";
 export {
+  OpenRouterProviderRoutingV1Schema,
   REVIEW_RUN_CONFIG_V1_JSON_SCHEMA,
+  REVIEW_RUN_CONFIG_V2_JSON_SCHEMA,
   ReviewRunConfigV1Schema,
+  ReviewRunConfigV2Schema,
 } from "./review-run-config.js";
-export type { ReviewRunConfigV1 } from "./review-run-config.js";
+export type {
+  OpenRouterProviderRoutingV1,
+  ReviewRunConfigV1,
+  ReviewRunConfigV2,
+} from "./review-run-config.js";
 export {
   DigestV1Schema,
   SNAPSHOT_MANIFEST_V1_JSON_SCHEMA,

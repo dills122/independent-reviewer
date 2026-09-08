@@ -1,5 +1,8 @@
 export * from "./contracts/index.js";
-export { runTwoStageReviewV1 } from "./orchestrator/two-stage-review.js";
+export {
+  resumeFinalReviewV1,
+  runTwoStageReviewV1,
+} from "./orchestrator/two-stage-review.js";
 export type { TwoStageReviewResultV1 } from "./orchestrator/two-stage-review.js";
 export { OpenRouterProviderV1 } from "./provider/openrouter.js";
 export { ProviderCallError } from "./provider/review-provider.js";

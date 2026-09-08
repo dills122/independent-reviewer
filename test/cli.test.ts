@@ -6,11 +6,13 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { it } from "node:test";
 
-import type {
-  ReviewProviderRequestV1,
-  ReviewProviderResponseV1,
-  ReviewProviderV1,
+import {
+  ProviderCallError,
+  type ReviewProviderRequestV1,
+  type ReviewProviderResponseV1,
+  type ReviewProviderV1,
 } from "../src/index.js";
+import type { OpenRouterProviderRoutingV1 } from "../src/index.js";
 import { reviewOutcomeExitCodeV1, runCliV1 } from "../src/cli.js";
 
 const execFileAsync = promisify(execFile);
@@ -147,9 +149,13 @@ it("composes capture and the two-stage provider flow through the review command"
     await writeFile(
       configPath,
       JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         configId: "config_cli_review",
         model: "mock/reviewer",
+        providerRouting: {
+          order: ["provider-a/fp4", "provider-b/bf16"],
+          maxPrice: { prompt: 0.03, completion: 0.14, request: 0 },
+        },
         budgets: {
           maxInitialEvidenceBytes: 32_000,
           maxConversationBytes: 128_000,
@@ -254,8 +260,12 @@ it("composes capture and the two-stage provider flow through the review command"
       io,
       {
         readOpenRouterApiKey: () => "test-api-key",
-        createProvider: (apiKey) => {
+        createProvider: (apiKey, routing) => {
           assert.equal(apiKey, "test-api-key");
+          assert.deepEqual(routing, {
+            order: ["provider-a/fp4", "provider-b/bf16"],
+            maxPrice: { prompt: 0.03, completion: 0.14, request: 0 },
+          });
           return provider;
         },
       },
@@ -305,4 +315,207 @@ it("requires the OpenRouter key without accepting it as a command-line option", 
   );
   assert.equal(output.length, 0);
   assert.match(errors.join("\n"), /OPENROUTER_API_KEY/);
+});
+
+it("resumes a definite failed final stage without preparing or buying another preliminary", async () => {
+  const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-cli-resume-"));
+  try {
+    await git(repositoryPath, "init", "--initial-branch=main");
+    await git(repositoryPath, "config", "user.name", "CLI Resume Test");
+    await git(repositoryPath, "config", "user.email", "cli-resume@example.invalid");
+    await git(repositoryPath, "config", "commit.gpgsign", "false");
+    await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+    await git(repositoryPath, "add", ".");
+    await git(repositoryPath, "commit", "-m", "initial");
+    await git(repositoryPath, "switch", "-c", "feature/cli-resume");
+    await writeFile(join(repositoryPath, "reviewed.txt"), "after\n");
+
+    const requestPath = join(repositoryPath, "request.json");
+    const configPath = join(repositoryPath, "config.json");
+    const packetPath = join(repositoryPath, ".review-runs", "cli-resume");
+    const providerRouting: OpenRouterProviderRoutingV1 = {
+      order: ["provider-a/fp4", "provider-b/bf16"],
+      maxPrice: { prompt: 0.03, completion: 0.14, request: 0 },
+    };
+    await writeFile(
+      requestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        flowId: "flow_cli_resume",
+        reviewInstance: { number: 1, maximum: 3 },
+        repository: { path: repositoryPath, base: "main" },
+        canonicalInputs: {
+          requirements: [
+            {
+              id: "input_requirement",
+              kind: "REQUIREMENTS",
+              title: "Requirement",
+              content: "Review the changed file.",
+              provenance: { type: "INLINE", label: "CLI resume test" },
+            },
+          ],
+          implementationPlan: {
+            id: "input_plan",
+            kind: "IMPLEMENTATION_PLAN",
+            title: "Plan",
+            content: "Change one line.",
+            provenance: { type: "INLINE", label: "CLI resume test" },
+          },
+        },
+        authorPacket: {
+          schemaVersion: 1,
+          intent: "AUTHOR_RESUME_CONTEXT: change the file.",
+          successCriteria: ["The line changes."],
+          planTraceability: [{ planItem: "Change one line.", implementation: "Changed it." }],
+          technicalApproach: "Replace the text.",
+          componentWalkthrough: [{ component: "reviewed.txt", changes: "Changed one line." }],
+          decisions: [],
+          invariants: [],
+          claimedVerification: [],
+          risks: [],
+          knownGaps: [],
+          challengePoints: [],
+        },
+        reviewConfigRef: "config_cli_resume",
+      }),
+    );
+    await writeFile(
+      configPath,
+      JSON.stringify({
+        schemaVersion: 2,
+        configId: "config_cli_resume",
+        model: "mock/reviewer",
+        providerRouting,
+        budgets: {
+          maxInitialEvidenceBytes: 32_000,
+          maxConversationBytes: 128_000,
+          maxOutputTokensPerCall: 1_000,
+          maxTotalTokens: 100_000,
+          timeoutMs: 10_000,
+        },
+      }),
+    );
+
+    const makeResponse = (value: unknown): ReviewProviderResponseV1 => ({
+      value,
+      rawContent: JSON.stringify(value),
+      responseId: "mock-response",
+      model: "mock/reviewer",
+      provider: "mock",
+      usage: { promptTokens: 90, completionTokens: 10, totalTokens: 100, cost: 0 },
+    });
+    const preliminaryValue = (providerRequest: ReviewProviderRequestV1) => {
+      const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+      return {
+        schemaVersion: 1,
+        stage: "PRELIMINARY",
+        snapshotDigest: brief.snapshotManifest.snapshotDigest,
+        briefDigest: brief.briefDigest,
+        summary: "The file was inspected.",
+        inspectedPaths: ["reviewed.txt"],
+        canonicalInputCoverage: [
+          {
+            canonicalInputId: "input_requirement",
+            status: "ASSESSED",
+            explanation: "The requirement was assessed.",
+          },
+          {
+            canonicalInputId: "input_plan",
+            status: "ASSESSED",
+            explanation: "The plan was assessed.",
+          },
+        ],
+        findings: [],
+        evidenceGaps: [],
+        limitations: [],
+        nextAction: "REQUEST_AUTHOR_PACKET",
+      };
+    };
+    const firstProvider: ReviewProviderV1 = {
+      auditRequest: () => ({
+        providerPolicyVersion: "mock-provider-v1",
+        wireBodyDigest: mockDigest,
+        wireBodyBytes: 100,
+        credentialFreeWireRequestDigest: mockDigest,
+      }),
+      complete: async (providerRequest) => {
+        if (providerRequest.stage === "PRELIMINARY") {
+          return makeResponse(preliminaryValue(providerRequest));
+        }
+        throw new ProviderCallError("PROVIDER_ERROR", "Rate limited.", {
+          diagnostic: {
+            httpStatus: 429,
+            providerErrorCode: "429",
+            providerMessage: "Rate limited",
+            errorType: "rate_limit_exceeded",
+            providerCode: null,
+            providerName: "mock",
+            model: "mock/reviewer",
+            responseId: null,
+            retryAfter: null,
+          },
+        });
+      },
+    };
+    const firstExit = await runCliV1(
+      ["review", "--request", requestPath, "--config", configPath, "--output", packetPath],
+      { stdout: () => undefined, stderr: () => undefined },
+      { readOpenRouterApiKey: () => "test-api-key", createProvider: () => firstProvider },
+    );
+    assert.equal(firstExit, 1);
+
+    let resumedCalls = 0;
+    const resumedProvider: ReviewProviderV1 = {
+      auditRequest: firstProvider.auditRequest,
+      complete: async (providerRequest) => {
+        resumedCalls += 1;
+        assert.equal(providerRequest.stage, "FINAL");
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        return makeResponse({
+          schemaVersion: 1,
+          stage: "FINAL",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "The resumed final review completed.",
+          findings: [],
+          preliminaryFindingDispositions: [],
+          preliminaryConcernDispositions: [],
+          authorClaims: [],
+          authorVerificationClaims: [],
+          changedPathCoverage: [
+            { path: "reviewed.txt", status: "INSPECTED", explanation: "The file was inspected." },
+          ],
+          canonicalInputCoverage: [
+            {
+              canonicalInputId: "input_requirement",
+              status: "ASSESSED",
+              explanation: "The requirement was assessed.",
+            },
+            {
+              canonicalInputId: "input_plan",
+              status: "ASSESSED",
+              explanation: "The plan was assessed.",
+            },
+          ],
+          limitations: [],
+          verdict: "READY",
+          nextActions: { blockers: [], fastFollows: [] },
+        });
+      },
+    };
+    const output: string[] = [];
+    const errors: string[] = [];
+    const resumedExit = await runCliV1(
+      ["resume-final", "--packet", packetPath, "--config", configPath],
+      { stdout: (message) => output.push(message), stderr: (message) => errors.push(message) },
+      { readOpenRouterApiKey: () => "test-api-key", createProvider: () => resumedProvider },
+    );
+
+    assert.equal(resumedExit, 0, errors.join("\n"));
+    assert.equal(resumedCalls, 1);
+    assert.match(output.join("\n"), /Verdict: Ready/);
+    assert.doesNotMatch(output.join("\n"), /AUTHOR_RESUME_CONTEXT/);
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
 });
