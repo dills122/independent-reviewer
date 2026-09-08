@@ -333,6 +333,51 @@ describe("two-stage review orchestrator", () => {
     }
   });
 
+  it("persists allowlisted provider diagnostics in failure events", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async () => {
+        throw new ProviderCallError("PROVIDER_ERROR", "OpenRouter rate limit exceeded.", {
+          diagnostic: {
+            httpStatus: 429,
+            providerErrorCode: "429",
+            providerMessage: "Rate limit exceeded",
+            errorType: "rate_limit_exceeded",
+            providerCode: "rate_limited",
+            providerName: "Mock Provider",
+            model: "mock/reviewer",
+            responseId: "generation-error-1",
+            retryAfter: "45",
+          },
+        });
+      },
+    };
+
+    try {
+      await assert.rejects(() => runTwoStageReviewV1(packetPath, config, provider));
+      const events = (await readFile(join(packetPath, "review", "run-record.jsonl"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+
+      assert.deepEqual(events[2]?.error.diagnostic, {
+        httpStatus: 429,
+        providerErrorCode: "429",
+        providerMessage: "Rate limit exceeded",
+        errorType: "rate_limit_exceeded",
+        providerCode: "rate_limited",
+        providerName: "Mock Provider",
+        model: "mock/reviewer",
+        responseId: "generation-error-1",
+        retryAfter: "45",
+      });
+      assert.deepEqual(events[3]?.error.diagnostic, events[2]?.error.diagnostic);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("retains conservative reservations when either provider response omits usage", async () => {
     for (const stageWithoutUsage of ["PRELIMINARY", "FINAL"] as const) {
       const { repositoryPath, packetPath } = await arrangePacket();

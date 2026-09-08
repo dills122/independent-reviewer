@@ -1,10 +1,12 @@
 import * as z from "zod";
 
 import { sha256Utf8 } from "../contracts/index.js";
-import type {
-  ReviewProviderRequestV1,
-  ReviewProviderResponseV1,
-  ReviewProviderV1,
+import {
+  ProviderCallError,
+  type ProviderErrorDiagnosticV1,
+  type ReviewProviderRequestV1,
+  type ReviewProviderResponseV1,
+  type ReviewProviderV1,
 } from "./review-provider.js";
 
 const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -14,21 +16,12 @@ const OPENROUTER_PUBLIC_HEADERS_V1 = {
   "x-openrouter-cache": "false",
 } as const;
 
-export type ProviderCallErrorCode =
-  | "INVALID_CONFIGURATION"
-  | "PROVIDER_ERROR"
-  | "INVALID_RESPONSE"
-  | "TRANSPORT_UNCERTAIN";
-
-export class ProviderCallError extends Error {
-  readonly code: ProviderCallErrorCode;
-
-  constructor(code: ProviderCallErrorCode, message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "ProviderCallError";
-    this.code = code;
-  }
-}
+export { ProviderCallError } from "./review-provider.js";
+export type {
+  ProviderCallErrorCode,
+  ProviderCallErrorOptions,
+  ProviderErrorDiagnosticV1,
+} from "./review-provider.js";
 
 const TokenUsageSchema = z
   .object({
@@ -75,6 +68,75 @@ function safeProviderErrorLabel(value: unknown): string {
     return code;
   }
   return "unknown";
+}
+
+function boundedText(value: unknown, maximum: number, redaction: string): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const withoutControls = Array.from(value.replaceAll(redaction, "[REDACTED]"), (character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f ? " " : character;
+  }).join("");
+  const singleLine = withoutControls.replace(/\s+/g, " ").trim();
+  if (singleLine.length === 0) {
+    return null;
+  }
+  const characters = Array.from(singleLine);
+  return characters.length <= maximum
+    ? singleLine
+    : `${characters.slice(0, maximum - 3).join("")}...`;
+}
+
+function providerErrorFromBody(body: unknown): unknown {
+  if (!body || typeof body !== "object") {
+    return undefined;
+  }
+  if ("error" in body) {
+    return (body as { error?: unknown }).error;
+  }
+  const choices = (body as { choices?: unknown }).choices;
+  if (!Array.isArray(choices)) {
+    return undefined;
+  }
+  const choice = choices[0];
+  return choice && typeof choice === "object" && "error" in choice
+    ? (choice as { error?: unknown }).error
+    : undefined;
+}
+
+function providerErrorDiagnostic(
+  body: unknown,
+  error: unknown,
+  response: Response,
+  apiKey: string,
+): ProviderErrorDiagnosticV1 {
+  const envelope = body && typeof body === "object" ? body : {};
+  const errorObject = error && typeof error === "object" ? error : {};
+  const metadataValue = (errorObject as { metadata?: unknown }).metadata;
+  const metadata = metadataValue && typeof metadataValue === "object" ? metadataValue : {};
+  return {
+    httpStatus: response.status,
+    providerErrorCode: safeProviderErrorLabel(errorObject),
+    providerMessage: boundedText((errorObject as { message?: unknown }).message, 500, apiKey),
+    errorType: boundedText((metadata as { error_type?: unknown }).error_type, 80, apiKey),
+    providerCode: boundedText((metadata as { provider_code?: unknown }).provider_code, 80, apiKey),
+    providerName:
+      boundedText((envelope as { provider?: unknown }).provider, 120, apiKey) ??
+      boundedText((metadata as { provider_name?: unknown }).provider_name, 120, apiKey),
+    model:
+      boundedText((envelope as { model?: unknown }).model, 160, apiKey) ??
+      boundedText((metadata as { model_slug?: unknown }).model_slug, 160, apiKey),
+    responseId: boundedText((envelope as { id?: unknown }).id, 160, apiKey),
+    retryAfter: boundedText(response.headers.get("retry-after"), 120, apiKey),
+  };
+}
+
+function providerErrorMessage(diagnostic: ProviderErrorDiagnosticV1): string {
+  const type = diagnostic.errorType ? ` (${diagnostic.errorType})` : "";
+  const provider = diagnostic.providerName ? ` from ${diagnostic.providerName}` : "";
+  const message = diagnostic.providerMessage ? `: ${diagnostic.providerMessage}` : "";
+  return `OpenRouter reported provider error ${diagnostic.providerErrorCode}${type}${provider}${message}.`;
 }
 
 function openRouterWireBodyV1(request: ReviewProviderRequestV1): string {
@@ -170,11 +232,12 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
 
     // OpenRouter can report generation errors inside an HTTP 200 response.
     // https://openrouter.ai/docs/api_reference/errors-and-debugging
-    if (body && typeof body === "object" && "error" in body) {
-      throw new ProviderCallError(
-        "PROVIDER_ERROR",
-        `OpenRouter reported provider error ${safeProviderErrorLabel((body as { error?: unknown }).error)}.`,
-      );
+    const providerError = providerErrorFromBody(body);
+    if (providerError !== undefined) {
+      const diagnostic = providerErrorDiagnostic(body, providerError, response, this.#apiKey);
+      throw new ProviderCallError("PROVIDER_ERROR", providerErrorMessage(diagnostic), {
+        diagnostic,
+      });
     }
     if (!response.ok) {
       throw new ProviderCallError(

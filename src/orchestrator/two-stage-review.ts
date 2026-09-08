@@ -16,10 +16,12 @@ import {
   type ReviewFindingV1,
   ReviewRunConfigV1Schema,
 } from "../contracts/index.js";
-import type {
-  ReviewMessageV1,
-  ReviewProviderResponseV1,
-  ReviewProviderV1,
+import {
+  ProviderCallError,
+  type ProviderErrorDiagnosticV1,
+  type ReviewMessageV1,
+  type ReviewProviderResponseV1,
+  type ReviewProviderV1,
 } from "../provider/review-provider.js";
 import { renderFinalReviewMarkdownV1 } from "../report/markdown.js";
 import { inspectSnapshotPacketV1, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
@@ -52,16 +54,30 @@ async function appendRunEvent(
   );
 }
 
-function normalizedError(error: unknown): { name: string; code: string | null; message: string } {
+function normalizedError(error: unknown): {
+  name: string;
+  code: string | null;
+  message: string;
+  diagnostic?: ProviderErrorDiagnosticV1;
+} {
   if (!(error instanceof Error)) {
     return { name: "UnknownError", code: null, message: "A non-Error value was thrown." };
   }
   const possibleCode = (error as Error & { code?: unknown }).code;
-  return {
+  const normalized: {
+    name: string;
+    code: string | null;
+    message: string;
+    diagnostic?: ProviderErrorDiagnosticV1;
+  } = {
     name: error.name,
     code: typeof possibleCode === "string" ? possibleCode : null,
     message: error.message,
   };
+  if (error instanceof ProviderCallError && error.diagnostic !== null) {
+    normalized.diagnostic = error.diagnostic;
+  }
+  return normalized;
 }
 
 async function completeWithAudit(
