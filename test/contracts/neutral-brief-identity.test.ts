@@ -142,4 +142,18 @@ describe("neutral review brief identity", () => {
 
     assert.throws(() => finalizeNeutralReviewBriefV1(draft), /plain JSON objects/);
   });
+
+  it("rejects proxy-backed verification without invoking traps", async () => {
+    const brief = finalizeNeutralReviewBriefV1(await createBriefDraft());
+    let getTrapCalls = 0;
+    const proxy = new Proxy(brief, {
+      get(target, property, receiver) {
+        getTrapCalls += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    });
+
+    assert.equal(verifyNeutralReviewBriefIdentityV1(proxy), false);
+    assert.equal(getTrapCalls, 0);
+  });
 });

@@ -31,7 +31,9 @@ whitespace, and encodes the result as UTF-8.[^jcs]
 Accept only I-JSON-compatible in-memory data. Reject non-finite numbers, lone
 Unicode surrogates, sparse arrays, cycles, accessors, custom object instances,
 symbols, and values that JSON cannot represent without changing them. Do not
-normalize Unicode strings.
+normalize Unicode strings. Detect JavaScript `Proxy` instances with Node's
+non-reflective runtime predicate before any property inspection so neither
+finalization nor verification executes user-defined traps.[^node-is-proxy]
 
 Hash the canonical UTF-8 bytes with SHA-256 and store lowercase hexadecimal in
 the existing `DigestV1` shape. Node's built-in `node:crypto` implementation is
@@ -116,3 +118,4 @@ adopted later only with compatibility tests proving identical bytes.
 
 [^jcs]: RFC Editor, [RFC 8785 — JSON Canonicalization Scheme](https://www.rfc-editor.org/rfc/rfc8785.html).
 [^node-crypto]: Node.js, [`crypto.createHash`, `hash.update`, and `hash.digest`](https://nodejs.org/docs/latest-v24.x/api/crypto.html#cryptocreatehashalgorithm-options).
+[^node-is-proxy]: Node.js, [`util.types.isProxy`](https://nodejs.org/docs/latest-v24.x/api/util.html#utiltypesisproxyvalue).

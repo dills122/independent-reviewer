@@ -72,6 +72,22 @@ describe("canonicalizeJson", () => {
     assert.throws(() => canonicalizeJson(input), /data properties/);
     assert.equal(getterCalls, 0);
   });
+
+  it("rejects proxies without invoking their traps", () => {
+    let getTrapCalls = 0;
+    const input = new Proxy(
+      { value: "should not be read" },
+      {
+        get(target, property, receiver) {
+          getTrapCalls += 1;
+          return Reflect.get(target, property, receiver);
+        },
+      },
+    );
+
+    assert.throws(() => canonicalizeJson(input), /proxies/);
+    assert.equal(getTrapCalls, 0);
+  });
 });
 
 describe("sha256Utf8", () => {

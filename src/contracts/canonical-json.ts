@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { types } from "node:util";
 
 import type { DigestV1 } from "./snapshot-manifest.js";
 
@@ -79,6 +80,9 @@ function serializeObject(value: object, ancestors: Set<object>): string {
 }
 
 function serializeValue(value: unknown, ancestors: Set<object>): string {
+  if (types.isProxy(value)) {
+    throw new TypeError("canonical JSON cannot represent proxies");
+  }
   if (value === null || typeof value === "boolean") {
     return JSON.stringify(value);
   }

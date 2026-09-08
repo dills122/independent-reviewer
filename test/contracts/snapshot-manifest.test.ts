@@ -68,6 +68,50 @@ describe("SnapshotManifestV1Schema", () => {
     }
   });
 
+  it("requires TYPE_CHANGED entries to change Git object category", async () => {
+    const fixture = structuredClone(await readFixture()) as {
+      paths: Array<{ changeType: string }>;
+    };
+    const modified = fixture.paths.find((path) => path.changeType === "MODIFIED");
+    assert.ok(modified);
+    modified.changeType = "TYPE_CHANGED";
+
+    assert.equal(SnapshotManifestV1Schema.safeParse(fixture).success, false);
+  });
+
+  it("forbids MODIFIED entries from changing Git object category", async () => {
+    const fixture = structuredClone(await readFixture()) as {
+      paths: Array<{
+        changeType: string;
+        after: null | { kind: string; gitMode: string };
+      }>;
+    };
+    const modified = fixture.paths.find((path) => path.changeType === "MODIFIED");
+    assert.ok(modified?.after);
+    modified.after.kind = "SYMLINK";
+    modified.after.gitMode = "120000";
+
+    assert.equal(SnapshotManifestV1Schema.safeParse(fixture).success, false);
+  });
+
+  it("requires base and head commits to use the same Git object format", async () => {
+    const fixture = structuredClone(await readFixture()) as {
+      source: { headCommit: string };
+    };
+    fixture.source.headCommit = "b".repeat(64);
+
+    assert.equal(SnapshotManifestV1Schema.safeParse(fixture).success, false);
+  });
+
+  it("requires a persisted branch name rather than a revision expression", async () => {
+    const fixture = structuredClone(await readFixture()) as {
+      source: { branch: string | null };
+    };
+    fixture.source.branch = "bad..name";
+
+    assert.equal(SnapshotManifestV1Schema.safeParse(fixture).success, false);
+  });
+
   it("rejects a relocation whose old and new paths are identical", async () => {
     const fixture = structuredClone(await readFixture()) as {
       paths: Array<{ changeType: string; path: string; previousPath?: string }>;

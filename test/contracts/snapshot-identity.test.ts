@@ -110,4 +110,22 @@ describe("snapshot manifest identity", () => {
     assert.throws(() => finalizeSnapshotManifestV1(draft), /data properties/);
     assert.equal(getterCalls, 0);
   });
+
+  it("rejects proxy-backed finalization and verification without invoking traps", async () => {
+    let getTrapCalls = 0;
+    const handler: ProxyHandler<Record<string, unknown>> = {
+      get(target, property, receiver) {
+        getTrapCalls += 1;
+        return Reflect.get(target, property, receiver);
+      },
+    };
+    const draftProxy = new Proxy(await readSnapshotDraft(), handler);
+    assert.throws(() => finalizeSnapshotManifestV1(draftProxy), /proxies/);
+    assert.equal(getTrapCalls, 0);
+
+    const manifest = finalizeSnapshotManifestV1(await readSnapshotDraft());
+    const manifestProxy = new Proxy(manifest as unknown as Record<string, unknown>, handler);
+    assert.equal(verifySnapshotManifestIdentityV1(manifestProxy), false);
+    assert.equal(getTrapCalls, 0);
+  });
 });

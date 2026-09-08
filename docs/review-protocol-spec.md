@@ -196,6 +196,9 @@ The caller supplies:
 - review configuration reference; and
 - flow identity, review-instance number, and maximum instances.
 
+Request `base` and `head` values are Git revision expressions to be resolved by
+the snapshot builder; they are not persisted branch-name fields.
+
 The author packet may be absent at preparation time. A run then enters
 `AWAITING_AUTHOR` after preliminary persistence.
 
@@ -238,7 +241,11 @@ content digests, exclusions, omissions, canonical-input identities, policy
 versions, and stable capture-race evidence. It validates normalized relative
 paths, exact untracked-path accounting, Git kind/mode compatibility, and
 meaningful relocation paths. Git capture and per-content digest construction
-remain separate follow-on work. The identity finalizer now
+remain separate follow-on work. Base and head object IDs must use the same Git
+object format, `MODIFIED` preserves the regular-file/symlink/submodule category,
+and `TYPE_CHANGED` changes it. A persisted branch is either `null` or a concrete
+name satisfying Git's reference-format restrictions; revision expressions such
+as `bad..name` are rejected.[^git-check-ref-format] The identity finalizer now
 validates digest-free manifest material, normalizes set-like ledgers, and
 computes a reproducible JCS/SHA-256 logical digest. Opaque run metadata and
 capture-attempt count do not alter that digest; changes to captured source or
@@ -779,3 +786,4 @@ Never:
 [^or-healing]: OpenRouter, [Response Healing](https://openrouter.ai/docs/guides/features/plugins/response-healing).
 [^openai-evals]: OpenAI, [Evaluation Best Practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices).
 [^anthropic-evals]: Anthropic, [Define Success Criteria and Build Evaluations](https://platform.claude.com/docs/en/test-and-evaluate/develop-tests).
+[^git-check-ref-format]: Git, [`git-check-ref-format`](https://git-scm.com/docs/git-check-ref-format).

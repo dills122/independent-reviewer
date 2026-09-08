@@ -92,6 +92,11 @@ export function finalizeSnapshotManifestV1(value: unknown): SnapshotManifestV1 {
 
 /** Returns true only for a schema-valid manifest whose logical digest matches. */
 export function verifySnapshotManifestIdentityV1(value: unknown): value is SnapshotManifestV1 {
+  try {
+    canonicalizeJson(value);
+  } catch {
+    return false;
+  }
   const parsed = SnapshotManifestV1Schema.safeParse(value);
   if (!parsed.success) {
     return false;
@@ -153,6 +158,11 @@ export function finalizeNeutralReviewBriefV1(value: unknown): NeutralReviewBrief
 
 /** Returns true only when both the brief and its embedded snapshot identities match. */
 export function verifyNeutralReviewBriefIdentityV1(value: unknown): value is NeutralReviewBriefV1 {
+  try {
+    canonicalizeJson(value);
+  } catch {
+    return false;
+  }
   const parsed = NeutralReviewBriefV1Schema.safeParse(value);
   if (!parsed.success || !verifySnapshotManifestIdentityV1(parsed.data.snapshotManifest)) {
     return false;

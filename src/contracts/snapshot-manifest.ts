@@ -22,13 +22,29 @@ const NonEmptyTextSchema = z.string().min(1);
 const GitObjectIdSchema = z
   .string()
   .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/, "must be a lowercase Git object ID");
-const GitRefSchema = z
+const PersistedBranchNameSchema = z
   .string()
   .min(1)
   .max(1024)
-  .refine((value) => !value.includes("\0") && !value.includes("\n"), {
-    message: "must not contain NUL or newline characters",
-  });
+  .refine((value) => {
+    const components = value.split("/");
+    const hasForbiddenCharacter = [...value].some((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint <= 0x20 || codePoint === 0x7f || "~^:?*[\\".includes(character);
+    });
+    return (
+      !value.startsWith("-") &&
+      !value.startsWith("/") &&
+      !value.endsWith("/") &&
+      !value.endsWith(".") &&
+      !value.includes("//") &&
+      !value.includes("..") &&
+      !value.includes("@{") &&
+      value !== "@" &&
+      !hasForbiddenCharacter &&
+      components.every((component) => !component.startsWith(".") && !component.endsWith(".lock"))
+    );
+  }, "must be a valid persisted Git branch name");
 
 export const SnapshotPathV1Schema = z
   .string()
@@ -99,6 +115,22 @@ export const SnapshotContentV1Schema = z.discriminatedUnion("kind", [
   UnsupportedContentV1Schema,
 ]);
 
+type SnapshotContentV1 = z.infer<typeof SnapshotContentV1Schema>;
+
+function gitEntryCategory(content: SnapshotContentV1): string {
+  switch (content.gitMode) {
+    case "100644":
+    case "100755":
+      return "REGULAR";
+    case "120000":
+      return "SYMLINK";
+    case "160000":
+      return "SUBMODULE";
+    default:
+      return `UNSUPPORTED:${content.gitMode}`;
+  }
+}
+
 const PathIdentityShape = {
   path: SnapshotPathV1Schema,
 };
@@ -166,7 +198,7 @@ export const SnapshotManifestV1Schema = z
       repositoryId: prefixedIdentifier("repo"),
       baseCommit: GitObjectIdSchema,
       headCommit: GitObjectIdSchema,
-      branch: GitRefSchema.nullable(),
+      branch: PersistedBranchNameSchema.nullable(),
     }),
     workingTree: z.strictObject({
       hasStagedChanges: z.boolean(),
@@ -221,6 +253,14 @@ export const SnapshotManifestV1Schema = z
     raceCheck: CaptureRaceCheckV1Schema,
   })
   .superRefine((manifest, context) => {
+    if (manifest.source.baseCommit.length !== manifest.source.headCommit.length) {
+      context.addIssue({
+        code: "custom",
+        message: "base and head commits must use the same Git object format",
+        path: ["source", "headCommit"],
+      });
+    }
+
     const manifestPaths = manifest.paths.map((path) => path.path);
     if (new Set(manifestPaths).size !== manifestPaths.length) {
       context.addIssue({
@@ -237,6 +277,25 @@ export const SnapshotManifestV1Schema = z
           message: "previous path must differ from the relocated path",
           path: ["paths", index, "previousPath"],
         });
+      }
+      if (path.changeType === "MODIFIED" || path.changeType === "TYPE_CHANGED") {
+        const beforeCategory = gitEntryCategory(path.before);
+        const afterCategory = gitEntryCategory(path.after);
+        const categoriesChanged = beforeCategory !== afterCategory;
+        if (path.changeType === "TYPE_CHANGED" && !categoriesChanged) {
+          context.addIssue({
+            code: "custom",
+            message: "TYPE_CHANGED must change the Git entry category",
+            path: ["paths", index, "changeType"],
+          });
+        }
+        if (path.changeType === "MODIFIED" && categoriesChanged) {
+          context.addIssue({
+            code: "custom",
+            message: "MODIFIED must preserve the Git entry category",
+            path: ["paths", index, "changeType"],
+          });
+        }
       }
     });
 
