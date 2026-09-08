@@ -53,8 +53,12 @@ npm run check
 ```
 
 Run `npm run schemas:write` after deliberately changing a runtime contract, and
-commit the regenerated JSON Schema artifact with the implementation. Verify the
-local AI context separately with `python3 -B scripts/check-ai-context.py`.
+commit the regenerated JSON Schema artifact with the implementation. These
+artifacts validate portable structural constraints; successful schema
+validation is not contract acceptance. Consumers must also apply the versioned
+semantic invariants enforced by the runtime schemas or an equivalent
+implementation. Verify the local AI context separately with
+`python3 -B scripts/check-ai-context.py`.
 
 ## Contributing
 

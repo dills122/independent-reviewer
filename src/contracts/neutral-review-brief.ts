@@ -1,6 +1,7 @@
 import * as z from "zod";
 
 import { computeCanonicalInputDigestV1 } from "./canonical-input-identity.js";
+import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 import { CanonicalInputsV1Schema } from "./review-request.js";
 import {
   DigestV1Schema,
@@ -215,6 +216,7 @@ export type NeutralReviewBriefV1 = z.infer<typeof NeutralReviewBriefV1Schema>;
 
 export const NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA = {
   $id: "urn:independent-reviewer:schema:neutral-review-brief:v1",
+  $comment: STRUCTURAL_JSON_SCHEMA_COMMENT_V1,
   ...z.toJSONSchema(NeutralReviewBriefV1Schema, {
     target: "draft-2020-12",
     io: "input",

@@ -1,5 +1,7 @@
 import * as z from "zod";
 
+import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
+
 function prefixedIdentifier(prefix: "config" | "flow" | "input"): z.ZodString {
   return z
     .string()
@@ -171,6 +173,7 @@ export type ReviewRequestV1 = z.infer<typeof ReviewRequestV1Schema>;
 
 export const REVIEW_REQUEST_V1_JSON_SCHEMA = {
   $id: "urn:independent-reviewer:schema:review-request:v1",
+  $comment: STRUCTURAL_JSON_SCHEMA_COMMENT_V1,
   ...z.toJSONSchema(ReviewRequestV1Schema, {
     target: "draft-2020-12",
     io: "input",

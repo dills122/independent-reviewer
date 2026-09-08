@@ -110,4 +110,11 @@ describe("neutral review brief identity", () => {
 
     assert.throws(() => finalizeNeutralReviewBriefV1(draft), /snapshot identity/);
   });
+
+  it("rejects custom brief drafts before coercing them", async () => {
+    const draft = await createBriefDraft();
+    Object.setPrototypeOf(draft, { customDraft: true });
+
+    assert.throws(() => finalizeNeutralReviewBriefV1(draft), /plain JSON objects/);
+  });
 });

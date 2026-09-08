@@ -94,7 +94,9 @@ adopted later only with compatibility tests proving identical bytes.
 - Adding or removing identity fields, changing ledger normalization, or changing
   the canonicalization profile requires an explicit identity-profile revision.
 - The serializer is intentionally stricter than `JSON.stringify`; callers must
-  supply validated JSON data rather than class instances or lossy values.
+  supply plain data-property JSON values rather than class instances,
+  accessors, or lossy values. Identity finalizers preflight this representation
+  before schema parsing or object copying.
 - Snapshot capture must digest raw captured file content separately before
   artifact finalization. This ADR does not define Git capture or file-byte
   hashing.

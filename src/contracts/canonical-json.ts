@@ -32,7 +32,10 @@ function serializeString(value: string): string {
 
 function serializeArray(value: readonly unknown[], ancestors: Set<object>): string {
   const ownKeys = Reflect.ownKeys(value);
-  const expectedKeys = new Set(["length", ...value.map((_, index) => String(index))]);
+  const expectedKeys = new Set(["length"]);
+  for (let index = 0; index < value.length; index += 1) {
+    expectedKeys.add(String(index));
+  }
   if (ownKeys.some((key) => typeof key !== "string" || !expectedKeys.has(key))) {
     throw new TypeError("canonical JSON arrays must not contain extra properties");
   }

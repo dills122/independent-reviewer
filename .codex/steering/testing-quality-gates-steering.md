@@ -19,7 +19,8 @@ bounds; normalized snapshot paths; capture-race stability; untracked-path and
 canonical-input ledgers; Git kind/mode compatibility; meaningful relocations;
 blind-brief author-field rejection; unique and source-side-valid evidence
 anchors; JSON Schema drift; RFC 8785 canonicalization; SHA-256 vectors; golden
-artifact digests; identity normalization; and post-finalization tamper
+artifact digests; structural-schema disclosure; fail-closed accessor and custom
+instance handling; identity normalization; and post-finalization tamper
 detection.
 
 ## Expanding runtime gates

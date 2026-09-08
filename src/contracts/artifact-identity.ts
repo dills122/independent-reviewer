@@ -24,6 +24,7 @@ function parseSnapshotIdentityInput(value: unknown): SnapshotManifestIdentityInp
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("snapshot identity input must be an object");
   }
+  canonicalizeJson(value);
   if (Object.hasOwn(value, "snapshotDigest")) {
     throw new TypeError("snapshot identity input must not contain snapshotDigest");
   }
@@ -104,6 +105,7 @@ function parseNeutralBriefIdentityInput(value: unknown): NeutralReviewBriefIdent
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("neutral brief identity input must be an object");
   }
+  canonicalizeJson(value);
   if (Object.hasOwn(value, "briefDigest")) {
     throw new TypeError("neutral brief identity input must not contain briefDigest");
   }

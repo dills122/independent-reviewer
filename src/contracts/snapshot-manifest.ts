@@ -5,6 +5,7 @@ import {
   FlowIdSchema,
   ReviewInstanceV1Schema,
 } from "./review-request.js";
+import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 
 function prefixedIdentifier(prefix: "repo" | "snapshot"): z.ZodString {
   return z
@@ -272,6 +273,7 @@ export type DigestV1 = z.infer<typeof DigestV1Schema>;
 
 export const SNAPSHOT_MANIFEST_V1_JSON_SCHEMA = {
   $id: "urn:independent-reviewer:schema:snapshot-manifest:v1",
+  $comment: STRUCTURAL_JSON_SCHEMA_COMMENT_V1,
   ...z.toJSONSchema(SnapshotManifestV1Schema, {
     target: "draft-2020-12",
     io: "input",

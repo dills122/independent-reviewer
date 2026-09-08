@@ -56,6 +56,22 @@ describe("canonicalizeJson", () => {
 
     assert.throws(() => canonicalizeJson(input), /cyclic/);
   });
+
+  it("rejects array accessors without invoking them", () => {
+    let getterCalls = 0;
+    const input: unknown[] = [];
+    Object.defineProperty(input, 0, {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        return "should not be read";
+      },
+    });
+
+    assert.throws(() => canonicalizeJson(input), /data properties/);
+    assert.equal(getterCalls, 0);
+  });
 });
 
 describe("sha256Utf8", () => {

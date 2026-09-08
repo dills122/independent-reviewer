@@ -17,6 +17,7 @@ export {
   sha256Utf8,
 } from "./canonical-json.js";
 export type { CanonicalJsonValue } from "./canonical-json.js";
+export { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 export {
   InitialEvidenceV1Schema,
   NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,

@@ -77,4 +77,28 @@ describe("snapshot manifest identity", () => {
 
     assert.throws(() => finalizeSnapshotManifestV1(draft));
   });
+
+  it("rejects custom identity drafts before coercing them", async () => {
+    const draft = await readSnapshotDraft();
+    Object.setPrototypeOf(draft, { customDraft: true });
+
+    assert.throws(() => finalizeSnapshotManifestV1(draft), /plain JSON objects/);
+  });
+
+  it("rejects identity-draft accessors without invoking them", async () => {
+    const draft = await readSnapshotDraft();
+    const source = draft.source;
+    let getterCalls = 0;
+    Object.defineProperty(draft, "source", {
+      enumerable: true,
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        return source;
+      },
+    });
+
+    assert.throws(() => finalizeSnapshotManifestV1(draft), /data properties/);
+    assert.equal(getterCalls, 0);
+  });
 });

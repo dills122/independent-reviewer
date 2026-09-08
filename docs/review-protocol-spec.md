@@ -173,6 +173,15 @@ Every artifact carries a `schemaVersion`. Identifiers are opaque strings with a
 type prefix; content identities use a declared digest algorithm and canonical
 serialization.
 
+Committed JSON Schema artifacts define the portable structural layer and are
+useful for callers and provider-constrained output. JSON Schema cannot portably
+express every relational invariant in these contracts, including equality and
+set correspondence across fields. Each artifact therefore declares this limit
+in `$comment`. Schema-only success is never contract acceptance: consumers must
+also run the versioned runtime semantic validator or an equivalent
+implementation with parity fixtures. The TypeScript runtime's Zod schemas are
+the authoritative validator for the initial release.
+
 ### Review request
 
 The caller supplies:
@@ -195,8 +204,9 @@ boundary, including a separately typed optional author packet, cumulative
 working-tree defaults, contextual canonical-input kinds, and review-instance
 bounds. The snapshot and orchestration layers do not exist yet, so structural
 separation is not yet a claim that runtime author withholding has been proven.
-Its committed JSON Schema describes caller input; defaulted fields remain
-optional at the serialized boundary and are materialized during local parsing.
+Its committed structural JSON Schema describes caller input; defaulted fields
+remain optional at the serialized boundary and are materialized during local
+semantic validation.
 
 ### Snapshot manifest
 
