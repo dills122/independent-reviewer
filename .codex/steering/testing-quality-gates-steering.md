@@ -21,7 +21,12 @@ blind-brief author-field rejection; unique and source-side-valid evidence
 anchors; JSON Schema drift; RFC 8785 canonicalization; SHA-256 vectors; golden
 artifact digests; structural-schema disclosure; fail-closed accessor and custom
 instance handling; identity normalization; and post-finalization tamper
-detection.
+detection. Git integration tests additionally use temporary real repositories
+to cover committed, staged, unstaged, renamed, deleted, untracked, excluded,
+and remote-default scope plus content-addressed packet writing, inspection, and
+tamper detection. CLI integration tests prove provider-free `prepare`/`inspect`,
+request/config control-file exclusion, environment-only credential loading,
+stable verdict exits, and composed two-stage review against a mock provider.
 
 ## Expanding runtime gates
 
@@ -30,6 +35,19 @@ Test behavior and trust boundaries: snapshot races, dirty files, rename/delete s
 Verify citations against captured evidence, but do not equate a valid location with a correct finding. Keep known-defect and clean-change evaluation fixtures and measure false positives as well as recall.
 
 Introduce focused deterministic tests as each runtime behavior is implemented.
+
+Final-review tests must prove exact changed-path and canonical-input coverage,
+disposition of every preliminary gap and limitation, reconciliation of every
+indexed author verification claim, and source-coordinate validation against
+the frozen blob. Budget tests must prove insufficient total-token capacity or
+known final conversation-skeleton byte capacity stops the run before its first
+provider call. Failure-path tests must verify the durable
+run-attempt ledger without exposing author content or credentials.
+Rendered-report tests must treat all provider text as untrusted presentation
+data and cover heading, link, backtick, list, and HTML control characters.
+Provider tests must reject fractional or inconsistent usage, bind each attempt
+to a credential-free exact wire/body identity, and prove the preliminary
+retransmission cannot invalidate an already admitted two-call token budget.
 
 ## Committed repository gate
 

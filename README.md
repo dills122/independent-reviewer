@@ -6,11 +6,14 @@ The project expands AI Central's independent-review workflow into an enforceable
 
 ## Status
 
-Implementation has started. The exact-pinned TypeScript 6 and Node.js 24
-runtime now defines strict versioned contracts for review requests, snapshot
-manifests, and blind-stage neutral briefs, plus deterministic JCS/SHA-256
-identity finalization. Snapshot capture, orchestration, provider integration,
-and a user-facing CLI have not been implemented yet.
+The first local release is implemented. The exact-pinned TypeScript 6 and Node.js
+24 runtime captures frozen Git evidence, enforces blind and reconciliation
+stages, validates provider output and frozen evidence coordinates, and writes
+private JSON, presentation-safe Markdown, and append-only run-attempt artifacts.
+It rejects an insufficient conservative token reservation before making a
+provider call and retains that reservation when provider usage is unavailable.
+OpenRouter use remains explicit and metered: callers select the model
+and budgets and provide the API key only through the environment.
 
 Read [Architecture and roadmap](docs/architecture-and-roadmap.md) for component boundaries, contracts, milestones, and acceptance gates.
 The [review protocol specification](docs/review-protocol-spec.md) defines the
@@ -33,13 +36,55 @@ Deterministic snapshot and blind-brief identities are accepted in
 - Validated JSON and Markdown reports with bounded review loops.
 - AI Central skill integration.
 
-## Next step
+## Local CLI
 
-Implement cumulative Git capture behind the snapshot contract, including
-committed, staged, unstaged, renamed, deleted, and eligible untracked content
-plus race detection. Packet construction and inspection follow once capture can
-produce real finalized manifests. The model/provider choice and numerical
-budgets remain gated on the small evaluation described in milestone 4.
+Build, prepare a request, and inspect the resulting packet:
+
+```sh
+npm run build
+node dist/src/cli.js prepare --request ./request.json
+node dist/src/cli.js inspect --packet ./.review-runs/<snapshot-id>
+```
+
+Use `--base <ref>` to override base resolution and `--output <new-directory>`
+to choose the packet directory. `prepare` never overwrites an existing packet.
+It stores the manifest, canonical inputs, optional author packet, and captured
+blobs as separate private files. `inspect --json` prints the validated neutral
+snapshot material but only reports whether a separate author packet exists.
+The request fixture and schema show the current input shape.
+
+Capture defaults to a 512 KiB per-file limit. Secret-like basenames (`.env`,
+`.env.*`, `*.pem`, and `*.key`), oversized files, submodules, and unsupported
+entry kinds are excluded visibly rather than silently transmitted.
+
+Run the complete two-stage review with a request containing a separate author
+packet and a config matching its `reviewConfigRef`:
+
+```sh
+export OPENROUTER_API_KEY='<set outside repository files>'
+node dist/src/cli.js review \
+  --request ./request.json \
+  --config ./review-config.json \
+  --output ./.review-runs/my-review
+```
+
+The review config schema is
+[`schemas/review-run-config-v1.schema.json`](schemas/review-run-config-v1.schema.json).
+The command prints the final report path. The adjacent `run-record.jsonl`
+records prompt/schema and provider-policy versions, stage-input and
+credential-free wire-request digests, exact wire-body digest and byte count,
+timings, validated returned routing and usage data, sanitized failures, and
+terminal state without storing API keys, wire bodies, or model-bound message
+content. Exit `0` means `Ready` or `Ready with
+non-blocking follow-ups`, `2` means `Not ready`, `3` means `Unable to verify`,
+and `4` means the provider submission became transport-uncertain. Other input
+or execution failures use exit `1`. Request and config control files are
+excluded from captured review evidence even when placed inside the worktree.
+
+## Later scope
+
+The GitHub/GitLab adapter, arbitrary local verification workers, provider
+fallback, and broader model evaluation remain deferred until requested.
 
 ## Development context
 

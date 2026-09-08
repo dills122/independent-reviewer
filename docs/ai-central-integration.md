@@ -45,9 +45,10 @@ To validate the source checkout:
 (cd ../ai-central && ./scripts/check.sh)
 ```
 
-## Implementation handoff
+## Runtime integration
 
-The runtime scaffold and `ReviewRequestV1` boundary are implemented. Continue
-with snapshot-manifest and neutral-brief contracts, then build deterministic
-identity and frozen packet collection. Keep proposed CLI commands in the roadmap
-distinct from the setup commands that exist today.
+The engine now exposes a complete local `review --request <path> --config
+<path>` flow. The live AI Central skill keeps the retained reference above
+unchanged, uses the external engine only when that metered disclosure is
+explicitly authorized, and otherwise preserves its existing fresh-task review
+workflow.

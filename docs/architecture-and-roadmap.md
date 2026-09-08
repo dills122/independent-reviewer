@@ -1,6 +1,6 @@
 # Independent Reviewer — architecture and project plan
 
-Status: accepted architecture; implementation is in progress.
+Status: first local release implemented; explicitly authorized live smoke pending.
 
 The staged lifecycle, evidence surface, verification boundary, and efficiency
 requirements are refined in the
@@ -140,37 +140,78 @@ automatically. OpenRouter can return typed errors inside an HTTP `200`, so the
 adapter validates the body and finish reason rather than trusting status
 alone.[^or-errors]
 
-## Delivery plan and acceptance gates
+## Lean delivery plan and acceptance gates
 
-### Milestone 1 — contracts and packet builder
+### Slice 1 — snapshot preparation
 
 Create the standalone repository, schemas, capture policy, CLI `prepare` and `inspect` commands, and fixtures. Gate: reproducible packet identity for unchanged input; correct staged/unstaged/untracked and rename/delete handling; visible exclusions; detected capture races; no author content in the blind payload; no escaping snapshot reads.
 
-Progress: the TypeScript/Node runtime and strict `ReviewRequestV1`,
-`SnapshotManifestV1`, and `NeutralReviewBriefV1` contracts are implemented with
-fixtures, runtime validation, committed JSON Schema artifacts, and deterministic
-JCS/SHA-256 identity finalization. Snapshot capture, packet construction, and
-CLI work remains.
+Progress: complete. The TypeScript/Node runtime has strict request, snapshot,
+and neutral-brief contracts with deterministic JCS/SHA-256 identities. Git
+capture freezes committed and cumulative working-tree changes into
+content-addressed blobs, detects capture races, records exclusions, and exposes
+`prepare` and `inspect` without making a provider call.
 
-### Milestone 2 — external review engine
+### Slice 2 — two-stage external review
 
-Implement the OpenRouter adapter, bounded evidence tools, staged review state machine, and JSON/Markdown output. Gate: a mock-provider end-to-end run proves author withholding and stage persistence; malformed or truncated outputs cannot report Ready; budgets stop runs; live opt-in smoke review succeeds with a configured key/model. Network timeout after submission must be recorded as uncertain because retry may incur duplicate cost.
+Build the neutral brief from the snapshot packet, add one configurable OpenRouter
+adapter, and enforce blind assessment followed by separately delivered author
+explanation. Persist the preliminary and final JSON responses and render the
+final report as Markdown. Gate: a mock-provider end-to-end run proves author
+withholding; malformed output cannot report Ready; basic call/token/time limits
+stop the run; one explicitly enabled live smoke review succeeds.
 
-### Milestone 3 — AI Central integration
+Progress: the offline engine is complete. It builds a digest-bound neutral
+brief from the packet, fails rather than clipping an oversized initial evidence
+set, persists the raw and validated preliminary result before author delivery,
+makes exactly one reconciliation call, validates identities and evidence paths,
+requires exact changed-path/canonical-input coverage and preliminary-concern
+dispositions, validates line/symbol anchors against frozen blobs, and renders
+the complete, presentation-safe reconciliation ledger to Markdown. Final-only
+findings require an emergence rationale, and author-reported commands cannot be
+promoted to runner-confirmed evidence. It conservatively reserves both
+message/schema inputs and outputs before the first submission, uses that same
+token-unit reservation when retransmitting the preliminary result, and retains
+reservations when usage is missing or malformed. It also rejects a known
+author-inclusive final conversation skeleton that exceeds the byte cap before
+making call one, then rechecks the actual preliminary content before call two.
+Its private run record binds
+each attempt to the provider-policy version and credential-free wire/body
+digests and records stage, identity, timing, route, valid usage, errors, and
+lifecycle-terminal events. The OpenRouter
+adapter uses
+strict structured output, an explicit model, no fallback or retry, ZDR-only
+routing, data-collection denial, disabled response caching, and disabled context
+compression.[^or-structured][^or-routing][^or-transforms][^or-response-cache]
+The metered live smoke remains explicitly opt-in until a model and API key are
+supplied through the Slice 3 command.
 
-Update the existing skill to invoke the engine and preserve its author/reviewer responsibilities and loop/pivot rules. Add command reference, report reconciliation instructions, version compatibility checks, and AI Central reuse documentation. Gate: one implementation flow can prepare, review externally, consume findings, and account for a second instance without resetting the maximum. Run AI Central's required `./scripts/check.sh` for its changes.
+### Slice 3 — usable command and AI Central integration
 
-### Milestone 4 — review quality evaluation
+Compose preparation and review behind one practical `review` command, keep
+failure diagnostics readable, and update the existing skill to invoke it while
+preserving the loop and pivot rules. Gate: one implementation flow can review
+externally and consume its findings. Run AI Central's required
+`./scripts/check.sh` for its changes.
 
-Build small changes with known defects, clean changes, misleading author claims, missing plan coverage, insufficient context, and prompt-injection attempts. Measure actionable defect recall, false positives on clean changes, citation validity, claim reconciliation, context omissions, cost, and latency. Gate: establish a recorded baseline and explicit acceptance thresholds before choosing the default model. Avoid treating a persuasive report or one successful API call as quality validation.
+Progress: complete. `review --request <path> --config <path>` composes frozen
+capture with the two-stage OpenRouter run, reads the API key only from
+`OPENROUTER_API_KEY`, prints the local Markdown report path, and distinguishes
+review outcomes and uncertain transport with stable exit codes. Runner request
+and config files are visibly excluded from review evidence so an author packet
+stored inside the worktree cannot leak into the blind stage. The AI Central
+skill now routes explicitly authorized external reviews through this command
+while retaining its original fresh-task workflow as a fallback.
 
-Keep the evaluation task-specific and change one model, reasoning, prompt, or
-context variable at a time. Current provider guidance treats prompt engineering
-as an empirical loop with measurable success criteria.[^openai-evals][^anthropic-evals]
+### Deferred until requested
 
-### Milestone 5 — MR/PR adapter
+- broad model comparisons or a large quality-evaluation framework;
+- isolated or containerized execution of arbitrary repository tests;
+- multiple providers, fallback routing, or distributed resumability; and
+- any GitHub/GitLab bot, webhook service, database, daemon, or web UI.
 
-Choose GitLab or GitHub as the first host. Add webhook/CI ingestion, immutable commit capture, durable job identity, cancellation/supersession, and publication. Gate: duplicate delivery produces one logical review; a moved head prevents stale publication; report anchors map to the reviewed diff; untrusted branches cannot access API or bot credentials; one summary and selected actionable comments publish only under configured authorization. Automated merging is outside this roadmap.
+A few focused known-defect and clean fixtures remain part of Slice 2; they are
+not a separate product milestone.[^openai-evals][^anthropic-evals]
 
 ## Initial product scope
 
@@ -187,22 +228,24 @@ independent-reviewer report --run <id> --format markdown
 
 Exact working-tree and author-packet options follow the capture contract. A failed or incomplete review must produce a distinct non-success exit status and a readable diagnostic artifact.
 
-## Decisions to settle before implementation
+## Decisions to settle before live use
 
-Exact dependency versions; first model and provider policy; concrete token,
-cost, evidence, verification, and duration budgets; repository configuration;
-and the private run-directory default remain open.
+The first smoke-test model and provider policy; representative numerical token
+and cost budgets; repository configuration; and the private run-directory
+default remain open. Runtime and development dependencies are exact-pinned.
 
 The initial scope now includes cumulative working-tree snapshots. The base
 resolves from an explicit value, repository configuration, branch upstream, or
-remote default branch in that order and fails when still ambiguous. The first
-review protocol uses one external reviewer conversation, an immutable blind
-assessment, a separately delivered author packet, at most three author
-ask-backs, and a bounded local named-check executor. Token efficiency is a
+remote default branch in that order and fails when still ambiguous. The shipped
+local engine uses one external reviewer conversation, an immutable blind
+assessment, a separately delivered author packet, and exactly two calls.
+Interactive author ask-backs and a named-check executor remain protocol
+extensions rather than first-release requirements. Token efficiency is a
 first-class correctness constraint; required evidence cannot be silently
 omitted to fit a budget.
 
-No external review request, AI Central edit, or bot publication was performed while preparing this plan.
+No metered external review or bot publication was performed during planning or
+implementation; a live smoke review remains explicit and operator-authorized.
 
 [^or-structured]: OpenRouter, [Structured Outputs](https://openrouter.ai/docs/guides/features/structured-outputs).
 [^or-routing]: OpenRouter, [Provider Routing](https://openrouter.ai/docs/guides/routing/provider-selection).

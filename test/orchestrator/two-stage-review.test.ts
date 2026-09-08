@@ -1,0 +1,732 @@
+import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
+import { describe, it } from "node:test";
+
+import {
+  captureGitSnapshotV1,
+  ProviderCallError,
+  runTwoStageReviewV1,
+  type ReviewProviderV1,
+  type ReviewProviderRequestV1,
+  type ReviewProviderResponseV1,
+  type ReviewRunConfigV1,
+  writeSnapshotPacketV1,
+} from "../../src/index.js";
+
+const execFileAsync = promisify(execFile);
+const mockDigest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
+
+function mockAuditRequest(providerRequest: ReviewProviderRequestV1) {
+  return {
+    providerPolicyVersion: "mock-provider-v1",
+    wireBodyDigest: mockDigest,
+    wireBodyBytes: Buffer.byteLength(JSON.stringify(providerRequest), "utf8"),
+    credentialFreeWireRequestDigest: mockDigest,
+  };
+}
+
+async function git(repositoryPath: string, ...args: string[]): Promise<void> {
+  await execFileAsync("git", ["-C", repositoryPath, ...args], { encoding: "utf8" });
+}
+
+async function arrangePacket(
+  includeExcludedPath = false,
+  authorIntent = "AUTHOR_SECRET: make the requested change.",
+): Promise<{ repositoryPath: string; packetPath: string }> {
+  const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-flow-"));
+  await git(repositoryPath, "init", "--initial-branch=main");
+  await git(repositoryPath, "config", "user.name", "Flow Test");
+  await git(repositoryPath, "config", "user.email", "flow@example.invalid");
+  await git(repositoryPath, "config", "commit.gpgsign", "false");
+  await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+  await git(repositoryPath, "add", ".");
+  await git(repositoryPath, "commit", "-m", "initial");
+  await git(repositoryPath, "switch", "-c", "feature/flow");
+  await writeFile(join(repositoryPath, "reviewed.txt"), "after\n");
+  if (includeExcludedPath) {
+    await writeFile(join(repositoryPath, ".env"), "DO_NOT_SEND=secret\n");
+  }
+
+  const request = {
+    schemaVersion: 1 as const,
+    flowId: "flow_two_stage",
+    reviewInstance: { number: 1, maximum: 3 },
+    repository: {
+      path: repositoryPath,
+      base: "main",
+      workingTree: { mode: "CUMULATIVE" as const, includeUntracked: true },
+    },
+    canonicalInputs: {
+      requirements: [
+        {
+          id: "input_requirement",
+          kind: "REQUIREMENTS" as const,
+          title: "Requirement",
+          content: "Review the changed behavior.",
+          provenance: { type: "INLINE" as const, label: "flow test" },
+        },
+      ],
+      implementationPlan: {
+        id: "input_plan",
+        kind: "IMPLEMENTATION_PLAN" as const,
+        title: "Plan",
+        content: "Change the reviewed file.",
+        provenance: { type: "INLINE" as const, label: "flow test" },
+      },
+      projectGuidance: [],
+    },
+    authorPacket: {
+      schemaVersion: 1 as const,
+      intent: authorIntent,
+      successCriteria: ["The file contains the new value."],
+      planTraceability: [{ planItem: "Change the file.", implementation: "Updated it." }],
+      technicalApproach: "Replace the complete text.",
+      componentWalkthrough: [{ component: "reviewed.txt", changes: "Changed one line." }],
+      decisions: [],
+      invariants: [],
+      claimedVerification: [
+        { command: "npm test", outcome: "PASSED" as const, summary: "Reported by author." },
+      ],
+      risks: [],
+      knownGaps: [],
+      challengePoints: [],
+    },
+    reviewConfigRef: "config_test",
+  };
+  const packetPath = join(repositoryPath, ".review-runs", "packet");
+  await writeSnapshotPacketV1(packetPath, await captureGitSnapshotV1(request), request);
+  return { repositoryPath, packetPath };
+}
+
+const config: ReviewRunConfigV1 = {
+  schemaVersion: 1,
+  configId: "config_test",
+  model: "mock/reviewer",
+  budgets: {
+    maxInitialEvidenceBytes: 32_000,
+    maxConversationBytes: 128_000,
+    maxOutputTokensPerCall: 1_000,
+    maxTotalTokens: 100_000,
+    timeoutMs: 10_000,
+  },
+};
+
+function response(value: unknown, totalTokens = 100): ReviewProviderResponseV1 {
+  return {
+    value,
+    rawContent: JSON.stringify(value),
+    responseId: "mock-response",
+    model: "mock/reviewer",
+    provider: "mock",
+    usage: {
+      promptTokens: totalTokens - 10,
+      completionTokens: 10,
+      totalTokens,
+      cost: null,
+    },
+  };
+}
+
+function responseWithoutUsage(value: unknown): ReviewProviderResponseV1 {
+  return {
+    ...response(value),
+    usage: {
+      promptTokens: null,
+      completionTokens: null,
+      totalTokens: null,
+      cost: null,
+    },
+  };
+}
+
+function canonicalInputCoverage() {
+  return [
+    {
+      canonicalInputId: "input_requirement",
+      status: "ASSESSED" as const,
+      explanation: "The requirement was assessed.",
+    },
+    {
+      canonicalInputId: "input_plan",
+      status: "ASSESSED" as const,
+      explanation: "The implementation plan was assessed.",
+    },
+  ];
+}
+
+function finalCoverage() {
+  return {
+    preliminaryConcernDispositions: [],
+    authorVerificationClaims: [
+      {
+        claimIndex: 0,
+        command: "npm test",
+        claimedOutcome: "PASSED" as const,
+        claimedSummary: "Reported by author.",
+        status: "UNVERIFIED" as const,
+        explanation: "The reviewer did not run the author-reported command.",
+      },
+    ],
+    changedPathCoverage: [
+      {
+        path: "reviewed.txt",
+        status: "INSPECTED" as const,
+        explanation: "The complete changed file was inspected.",
+      },
+    ],
+    canonicalInputCoverage: canonicalInputCoverage(),
+  };
+}
+
+describe("two-stage review orchestrator", () => {
+  it("persists the blind assessment before revealing the author packet", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    const calls: ReviewProviderRequestV1[] = [];
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls.push(providerRequest);
+        if (providerRequest.stage === "PRELIMINARY") {
+          assert.doesNotMatch(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: JSON.parse(providerRequest.messages[1]?.content ?? "{}")
+              .snapshotManifest.snapshotDigest,
+            briefDigest: JSON.parse(providerRequest.messages[1]?.content ?? "{}").briefDigest,
+            summary: "The one-file change is understandable.",
+            inspectedPaths: ["reviewed.txt"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        assert.match(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
+        await readFile(join(packetPath, "review", "preliminary.json"), "utf8");
+        const blindBrief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        return response({
+          schemaVersion: 1,
+          stage: "FINAL",
+          snapshotDigest: blindBrief.snapshotManifest.snapshotDigest,
+          briefDigest: blindBrief.briefDigest,
+          summary: "No blocking issue remains after reconciliation.",
+          findings: [],
+          preliminaryFindingDispositions: [],
+          ...finalCoverage(),
+          authorClaims: [
+            {
+              claim: "The author reported npm test passed.",
+              status: "UNVERIFIED",
+              explanation: "This slice did not run local commands.",
+            },
+          ],
+          limitations: [],
+          verdict: "READY",
+          nextActions: { blockers: [], fastFollows: [] },
+        });
+      },
+    };
+
+    try {
+      const result = await runTwoStageReviewV1(packetPath, config, provider);
+
+      assert.equal(calls.length, 2);
+      assert.equal(result.report.verdict, "READY");
+      assert.match(await readFile(result.markdownPath, "utf8"), /Verdict: Ready/);
+      assert.doesNotMatch(await readFile(result.briefPath, "utf8"), /AUTHOR_SECRET/);
+      const events = (await readFile(result.runRecordPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      assert.deepEqual(
+        events.map((event) => event.type),
+        [
+          "RUN_STARTED",
+          "CALL_STARTED",
+          "CALL_SUCCEEDED",
+          "PRELIMINARY_PERSISTED",
+          "AUTHOR_DELIVERED",
+          "CALL_STARTED",
+          "CALL_SUCCEEDED",
+          "RUN_COMPLETED",
+        ],
+      );
+      assert.deepEqual(
+        events.filter((event) => event.type === "CALL_STARTED").map((event) => event.attemptNumber),
+        [1, 2],
+      );
+      for (const event of events.filter((candidate) => candidate.type === "CALL_STARTED")) {
+        assert.equal(event.providerPolicyVersion, "mock-provider-v1");
+        assert.deepEqual(event.wireBodyDigest, mockDigest);
+        assert.equal(typeof event.wireBodyBytes, "number");
+        assert.deepEqual(event.credentialFreeWireRequestDigest, mockDigest);
+      }
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not reveal author content after malformed preliminary output", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    let calls = 0;
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async () => {
+        calls += 1;
+        return response({ verdict: "READY" });
+      },
+    };
+
+    try {
+      await assert.rejects(() => runTwoStageReviewV1(packetPath, config, provider), /preliminary/i);
+      assert.equal(calls, 1);
+      const candidate = await readFile(
+        join(packetPath, "review", "preliminary-provider-response.json"),
+        "utf8",
+      );
+      assert.match(candidate, /READY/);
+      assert.doesNotMatch(candidate, /AUTHOR_SECRET/);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("persists a durable attempt and terminal record when transport is uncertain", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async () => {
+        throw new ProviderCallError(
+          "TRANSPORT_UNCERTAIN",
+          "The request may have been submitted and was not retried.",
+        );
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () => runTwoStageReviewV1(packetPath, config, provider),
+        (error: unknown) =>
+          error instanceof ProviderCallError && error.code === "TRANSPORT_UNCERTAIN",
+      );
+      const events = (await readFile(join(packetPath, "review", "run-record.jsonl"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+
+      assert.deepEqual(
+        events.map((event) => event.type),
+        ["RUN_STARTED", "CALL_STARTED", "CALL_FAILED", "RUN_FAILED"],
+      );
+      assert.equal(events[1]?.stage, "PRELIMINARY");
+      assert.equal(events[2]?.error.code, "TRANSPORT_UNCERTAIN");
+      assert.equal(events[3]?.terminalState, "TRANSPORT_UNCERTAIN");
+      assert.doesNotMatch(JSON.stringify(events), /AUTHOR_SECRET/);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("retains conservative reservations when either provider response omits usage", async () => {
+    for (const stageWithoutUsage of ["PRELIMINARY", "FINAL"] as const) {
+      const { repositoryPath, packetPath } = await arrangePacket();
+      const provider: ReviewProviderV1 = {
+        auditRequest: mockAuditRequest,
+        complete: async (providerRequest) => {
+          const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+          const value =
+            providerRequest.stage === "PRELIMINARY"
+              ? {
+                  schemaVersion: 1,
+                  stage: "PRELIMINARY",
+                  snapshotDigest: brief.snapshotManifest.snapshotDigest,
+                  briefDigest: brief.briefDigest,
+                  summary: "The change was inspected.",
+                  inspectedPaths: ["reviewed.txt"],
+                  canonicalInputCoverage: canonicalInputCoverage(),
+                  findings: [],
+                  evidenceGaps: [],
+                  limitations: [],
+                  nextAction: "REQUEST_AUTHOR_PACKET",
+                }
+              : {
+                  schemaVersion: 1,
+                  stage: "FINAL",
+                  snapshotDigest: brief.snapshotManifest.snapshotDigest,
+                  briefDigest: brief.briefDigest,
+                  summary: "The change is ready.",
+                  findings: [],
+                  preliminaryFindingDispositions: [],
+                  ...finalCoverage(),
+                  authorClaims: [],
+                  limitations: [],
+                  verdict: "READY",
+                  nextActions: { blockers: [], fastFollows: [] },
+                };
+          return providerRequest.stage === stageWithoutUsage
+            ? responseWithoutUsage(value)
+            : response(value);
+        },
+      };
+
+      try {
+        const result = await runTwoStageReviewV1(packetPath, config, provider);
+        assert.equal(result.report.verdict, "READY");
+      } finally {
+        await rm(repositoryPath, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("keeps the admitted preliminary retransmission reservation stable after call one", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    let calls = 0;
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls += 1;
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        if (providerRequest.stage === "PRELIMINARY") {
+          const preliminaryResponse = response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "é".repeat(13_750),
+            inspectedPaths: ["reviewed.txt"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+          preliminaryResponse.usage = {
+            promptTokens: 1_000,
+            completionTokens: 14_000,
+            totalTokens: 15_000,
+            cost: null,
+          };
+          return preliminaryResponse;
+        }
+        return response({
+          schemaVersion: 1,
+          stage: "FINAL",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "The admitted review completed.",
+          findings: [],
+          preliminaryFindingDispositions: [],
+          ...finalCoverage(),
+          authorClaims: [],
+          limitations: [],
+          verdict: "READY",
+          nextActions: { blockers: [], fastFollows: [] },
+        });
+      },
+    };
+
+    try {
+      const result = await runTwoStageReviewV1(
+        packetPath,
+        {
+          ...config,
+          budgets: {
+            ...config.budgets,
+            maxOutputTokensPerCall: 15_000,
+            maxTotalTokens: 67_000,
+          },
+        },
+        provider,
+      );
+
+      assert.equal(calls, 2);
+      assert.equal(result.report.verdict, "READY");
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("makes no provider call when the total token budget cannot reserve both stages", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    let calls = 0;
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls += 1;
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        return response(
+          {
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "Initial review completed.",
+            inspectedPaths: ["reviewed.txt"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          },
+          150,
+        );
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () =>
+          runTwoStageReviewV1(
+            packetPath,
+            {
+              ...config,
+              budgets: { ...config.budgets, maxOutputTokensPerCall: 100, maxTotalTokens: 200 },
+            },
+            provider,
+          ),
+        /token budget/i,
+      );
+      assert.equal(calls, 0);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("makes no provider call when the known final conversation skeleton exceeds its byte budget", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket(
+      false,
+      `AUTHOR_SECRET: ${"x".repeat(20_000)}`,
+    );
+    let calls = 0;
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls += 1;
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        return response({
+          schemaVersion: 1,
+          stage: "PRELIMINARY",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "Initial review completed.",
+          inspectedPaths: ["reviewed.txt"],
+          canonicalInputCoverage: canonicalInputCoverage(),
+          findings: [],
+          evidenceGaps: [],
+          limitations: [],
+          nextAction: "REQUEST_AUTHOR_PACKET",
+        });
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () =>
+          runTwoStageReviewV1(
+            packetPath,
+            {
+              ...config,
+              budgets: { ...config.budgets, maxConversationBytes: 10_000 },
+            },
+            provider,
+          ),
+        /byte budget/i,
+      );
+      assert.equal(calls, 0);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept Ready when changed evidence was excluded", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket(true);
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        if (providerRequest.stage === "PRELIMINARY") {
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "The visible text change was inspected.",
+            inspectedPaths: ["reviewed.txt"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: ["The excluded path could not be inspected."],
+            limitations: ["A changed path was excluded."],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        return response({
+          schemaVersion: 1,
+          stage: "FINAL",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "The reviewer incorrectly tried to approve incomplete scope.",
+          findings: [],
+          preliminaryFindingDispositions: [],
+          ...finalCoverage(),
+          preliminaryConcernDispositions: [
+            {
+              kind: "EVIDENCE_GAP",
+              preliminaryConcern: "The excluded path could not be inspected.",
+              disposition: "RESOLVED",
+              rationale: "The reviewer incorrectly claimed the gap was resolved.",
+            },
+            {
+              kind: "LIMITATION",
+              preliminaryConcern: "A changed path was excluded.",
+              disposition: "RESOLVED",
+              rationale: "The reviewer incorrectly claimed the limitation was resolved.",
+            },
+          ],
+          authorClaims: [],
+          limitations: [],
+          verdict: "READY",
+          nextActions: { blockers: [], fastFollows: [] },
+        });
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () => runTwoStageReviewV1(packetPath, config, provider),
+        /coverage constraint/i,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects Ready unless final coverage accounts for every changed path", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        if (providerRequest.stage === "PRELIMINARY") {
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "The change was inspected.",
+            inspectedPaths: ["reviewed.txt"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        return response({
+          schemaVersion: 1,
+          stage: "FINAL",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "The reviewer omitted the real path from its coverage ledger.",
+          findings: [],
+          preliminaryFindingDispositions: [],
+          ...finalCoverage(),
+          changedPathCoverage: [
+            {
+              path: "invented.txt",
+              status: "INSPECTED",
+              explanation: "This path was not part of the snapshot.",
+            },
+          ],
+          authorClaims: [],
+          limitations: [],
+          verdict: "READY",
+          nextActions: { blockers: [], fastFollows: [] },
+        });
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () => runTwoStageReviewV1(packetPath, config, provider),
+        /changed-path coverage/i,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects finding coordinates outside the frozen source", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        if (providerRequest.stage === "PRELIMINARY") {
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "The change was inspected.",
+            inspectedPaths: ["reviewed.txt"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        return response({
+          schemaVersion: 1,
+          stage: "FINAL",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "The final finding cites a nonexistent line.",
+          findings: [
+            {
+              id: "finding_bad_line",
+              severity: "P1",
+              title: "Bad coordinate",
+              scenario: "The finding points beyond the frozen file.",
+              impact: "The evidence cannot be verified.",
+              evidence: [
+                {
+                  path: "reviewed.txt",
+                  anchor: "LINE_RANGE",
+                  side: "HEAD",
+                  startLine: 99,
+                  endLine: 99,
+                  detail: "The file contains only one line.",
+                },
+              ],
+              correction: "Use a valid frozen coordinate.",
+              origin: "FINAL_ONLY",
+              emergenceRationale: "The final response introduced this coordinate defect.",
+            },
+          ],
+          preliminaryFindingDispositions: [],
+          ...finalCoverage(),
+          authorClaims: [],
+          limitations: [],
+          verdict: "NOT_READY",
+          nextActions: { blockers: ["Correct the evidence coordinate."], fastFollows: [] },
+        });
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () => runTwoStageReviewV1(packetPath, config, provider),
+        /outside the frozen source/i,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+});

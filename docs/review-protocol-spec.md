@@ -1,6 +1,7 @@
 # Review protocol technical specification
 
-Status: accepted protocol; implementation is in progress.
+Status: accepted protocol; minimal two-call local release implemented, with the
+explicitly listed interactive and verification extensions deferred.
 
 This specification turns the independent-review workflow in
 [`docs/architecture-and-roadmap.md`](architecture-and-roadmap.md) into an
@@ -16,9 +17,11 @@ Build a local review engine that lets an implementation agent submit a frozen
 repository target, neutral task context, and a separate author explanation in
 one invocation. The engine must give a fresh external reviewer the neutral
 material first, durably record its preliminary assessment, and only then expose
-the author explanation. The same reviewer may inspect bounded evidence, request
-configured local verification, ask the author at most three follow-up rounds,
-and return a validated readiness report.
+the author explanation. The first release supplies a complete bounded evidence
+packet and returns a validated readiness report in exactly two calls. Later
+protocol extensions may let the same reviewer request additional bounded
+evidence, configured local verification, and at most three author follow-up
+rounds.
 
 The primary initial user is an engineer or implementation agent requesting a
 senior-maintainer-style review before merging work. The first adapter is a local
@@ -65,7 +68,7 @@ CLI using OpenRouter. Hosting-provider automation is out of scope.
     small task-specific evaluation; choose the least costly configuration that
     meets recorded quality thresholds.
 
-## Success criteria
+## Initial-release success criteria
 
 The first offline end-to-end implementation is complete when fixtures prove
 all of the following without a live model call:
@@ -76,21 +79,24 @@ all of the following without a live model call:
   changes and makes every exclusion or unsupported item visible.
 - The mock provider cannot observe author content before the preliminary
   assessment is validated and persisted.
-- A resumed run cannot leak the author packet into a restarted blind stage.
-- The final report retains the preliminary assessment and accounts for changed,
-  withdrawn, and newly added findings.
-- Author ask-backs stop after three rounds even when a round contains several
-  questions.
-- Evidence and named verification calls obey separate count, byte, time, and
-  token budgets.
-- Verification records distinguish author claims, runner-observed results, and
-  checks that were requested but unavailable.
+- The final report accounts for every changed path, canonical input,
+  preliminary finding, evidence gap, limitation, and indexed author
+  verification claim.
+- Finding coordinates resolve to a valid side plus line range or exact symbol
+  in the frozen snapshot.
+- Conservative reservation of both mandatory calls fits before the first call;
+  insufficient capacity makes no provider request.
+- Attempt records preserve stage/input identity, provider-policy version,
+  credential-free wire-request and exact body digests, body byte count, timing,
+  route and valid usage when returned, sanitized failures, and terminal state.
 - Malformed model output, invalid evidence anchors, incomplete scope, transport
   uncertainty, and exhausted budgets cannot result in `Ready`.
 - All model-bound content can be inspected locally before transmission.
 
 One or two explicitly enabled OpenRouter smoke runs may follow the offline gate.
 They validate transport and provider behavior, not review quality in general.
+Resume/replay, interactive evidence tools, named-check execution, and author
+ask-backs retain the broader rules below but are deferred from this release.
 
 ## Non-goals for the first implementation
 
@@ -199,14 +205,18 @@ The caller supplies:
 Request `base` and `head` values are Git revision expressions to be resolved by
 the snapshot builder; they are not persisted branch-name fields.
 
-The author packet may be absent at preparation time. A run then enters
-`AWAITING_AUTHOR` after preliminary persistence.
+The author packet may be absent during provider-free `prepare`. The current
+two-call `review` command requires it before the blind call and fails preflight
+when it is missing. Entering `AWAITING_AUTHOR` after preliminary persistence is
+part of the deferred interactive/resume extension.
 
-Implementation status: `ReviewRequestV1Schema` currently enforces this request
+Implementation status: `ReviewRequestV1Schema` enforces this request
 boundary, including a separately typed optional author packet, cumulative
 working-tree defaults, contextual canonical-input kinds, and review-instance
-bounds. The snapshot and orchestration layers do not exist yet, so structural
-separation is not yet a claim that runtime author withholding has been proven.
+bounds. Snapshot capture and the two-call orchestrator now preserve that
+separation at runtime; a mock-provider integration test proves that author
+content is absent from the preliminary request and that the validated
+preliminary artifact is durable before the author packet is delivered.
 Its committed structural JSON Schema describes caller input; defaulted fields
 remain optional at the serialized boundary and are materialized during local
 semantic validation.
@@ -240,8 +250,8 @@ persisted boundary for source commits, dirty-state evidence, typed path changes,
 content digests, exclusions, omissions, canonical-input identities, policy
 versions, and stable capture-race evidence. It validates normalized relative
 paths, exact untracked-path accounting, Git kind/mode compatibility, and
-meaningful relocation paths. Git capture and per-content digest construction
-remain separate follow-on work. Base and head object IDs must use the same Git
+meaningful relocation paths. Git capture now implements per-content digest
+construction and cumulative working-tree freezing. Base and head object IDs must use the same Git
 object format, `MODIFIED` preserves the regular-file/symlink/submodule category
 and must change at least one persisted before/after content property, while
 `TYPE_CHANGED` changes the category. Mode-only regular-file changes therefore
@@ -257,7 +267,11 @@ directly for string entries and over the complete RFC 8785 serialization for
 object entries, without locale collation or Unicode normalization.
 Canonical-input digests bind the complete validated input,
 and neutral-brief validation reconciles those digests with its embedded
-canonical content. Raw captured-file digest construction remains deferred.
+canonical content. The initial capture policy stores regular files, symlink
+targets, and binary bytes by SHA-256 with a 512 KiB per-file limit. Secret-like
+filenames, submodules, oversized files, and unsupported kinds remain visible as
+exclusions. Two matching collections are required before a snapshot is marked
+stable.
 
 ### Neutral review brief
 
@@ -289,8 +303,9 @@ head side. Canonical-input reconciliation compares typed
 provenance fields rather than delimiter-joined text. Each initial-evidence
 digest is SHA-256 over the exact UTF-8 content, and source-context content must
 contain exactly the declared logical line count (with CRLF treated as one line
-separator and a terminal separator not creating an extra line). Orchestration
-must still prove that only this artifact is sent before preliminary persistence.
+separator and a terminal separator not creating an extra line). The two-call
+orchestrator sends only this artifact before preliminary persistence; the
+separately stored author packet is appended only afterward.
 A required `briefDigest` now binds the exact ordered blind-stage content, and
 its finalizer refuses an embedded manifest whose snapshot identity does not
 verify.
@@ -316,8 +331,9 @@ The author packet is self-contained and contains:
 - risks, tradeoffs, maintenance costs, deviations, and known gaps; and
 - challenge points for the reviewer.
 
-Its digest is fixed at review-request validation. If the packet changes after
-the blind stage, it becomes a new artifact version and the change is recorded.
+The current release strictly validates and stores it separately from the blind
+brief. A standalone author-packet digest/version belongs with the deferred
+resume/replay work; the packet directory itself remains immutable once written.
 
 ### Preliminary assessment
 
@@ -334,6 +350,13 @@ The preliminary assessment contains:
 It is append-only after persistence. Final reconciliation refers to preliminary
 finding IDs rather than rewriting the record.
 
+Implementation status: the strict `PreliminaryAssessmentV1Schema` binds the
+assessment to the snapshot and neutral-brief digests, requires the author-packet
+transition, requires at least one inspected path and exact canonical-input
+coverage, and validates every source coordinate against frozen content. The raw
+provider candidate and validated preliminary artifact are stored separately
+before author delivery.
+
 ### Final review report
 
 The final report contains:
@@ -346,7 +369,8 @@ The final report contains:
 - final-only findings and why they emerged later;
 - plan and acceptance-criteria coverage;
 - an author-claim ledger with confirmed, contradicted, or unverified status;
-- verification records and their provenance;
+- verification records and their provenance; author-reported commands remain
+  contradicted or unverified until a named runner produces independent evidence;
 - unanswered author questions, evidence gaps, and residual risks;
 - any material-pivot decision gate;
 - one verdict: `Ready`, `Ready with non-blocking follow-ups`, `Not ready`, or
@@ -354,6 +378,19 @@ The final report contains:
 - recommended next actions split into blockers and non-blocking fast follows.
 
 Fast follows cannot contain work required to justify a `Ready` verdict.
+
+Implementation status: the strict `FinalReviewReportV1Schema` and runtime
+semantic checks require exact changed-path, canonical-input, preliminary
+finding/concern, and indexed author-verification ledgers; validate line/symbol
+anchors and artifact identities; and reject a ready verdict with incomplete
+coverage, unresolved concerns, P0/P1 findings, blockers, or limitations. The
+author-verification ledger repeats the stored command, claimed outcome, and
+summary and is checked against its packet index, but cannot mark author-only
+testimony `CONFIRMED`. Every final finding declares whether it came from the
+preliminary assessment; a final-only finding must explain why it emerged after
+the blind stage. The engine stores provider responses and usage, the validated
+JSON report, a presentation-safe fully reconciled Markdown report, and an
+append-only run-attempt ledger.
 
 ## Lifecycle state machine
 
@@ -423,11 +460,15 @@ Strict structured output is a transport aid, not a trust boundary. Syntax,
 schema, lifecycle, semantic, and evidence-anchor validation still occur
 locally.[^or-structured]
 
-The provider adapter records requested and returned model/provider metadata,
-request IDs, token usage, cost when available, timings, and transport failures.
-It also records prompt, tool, and schema versions plus safe router metadata. It
-does not claim metadata the provider did not return or enable request-body debug
-echo in normal operation.[^or-metadata]
+The orchestrator's append-only run record stores requested and returned
+model/provider metadata, request IDs, validated token usage, cost when available,
+timings, transport failures, prompt/schema versions, stage-input digests, the
+provider-policy version, exact serialized body digest and byte count, and a
+credential-free wire-request digest. The adapter builds the audited body with
+the same deterministic function used for transmission. The ledger does not
+persist message content, credentials, or the wire body itself, claim metadata
+the provider did not return, or enable request-body debug echo in normal
+operation.[^or-metadata]
 
 ### Author ask-backs
 
@@ -548,10 +589,23 @@ zero.
    explicit with continuation coordinates.
 8. Use concise schema fields and structured ledgers; generate human-readable
    Markdown locally from validated structured output.
-9. Estimate tokens and cost before the first call. Estimates are advisory, not
-   billing guarantees.
-10. Reconcile each reservation against provider-reported usage and cost when
-    available.
+9. Conservatively reserve both mandatory calls before the first call. The
+   current model-independent bound includes messages and structured-output
+   schemas, treats each serialized UTF-8 byte as a possible token, adds
+   message-framing margin, and reserves the preliminary maximum once as
+   generated output and once, in the same token units, as second-call input.
+   The post-preliminary check retains that admitted retransmission reservation
+   rather than reinterpreting the actual output as a UTF-8-byte token bound.
+   This is a token-admission bound, not a dollar billing guarantee. Missing,
+   partial, fractional, or internally inconsistent provider usage retains the
+   conservative reservation rather than becoming zero or aborting a valid run.
+   Before call one, both the blind messages and the known final-message skeleton
+   containing the held-back author packet must also fit `maxConversationBytes`.
+   The actual preliminary content is checked against the same byte cap before
+   call two.
+10. Reconcile each reservation against complete, non-negative integer provider
+    usage with a consistent prompt-plus-completion total, and record cost when
+    available. The OpenRouter adapter rejects malformed usage envelopes.
 
 For small targets, the initial brief may contain the entire textual diff. For a
 target that exceeds the initial-context budget, the engine must either use the
@@ -613,24 +667,27 @@ Capture reads Git metadata and file content, validates the boundary afterward,
 and retries a bounded number of times or fails on a race. Review-time evidence
 always comes from the frozen snapshot, never the live checkout.
 
-## Proposed CLI boundary
+## CLI boundary
 
 The initial command families remain:
 
 ```text
 independent-reviewer prepare --request <path> [--base <ref>]
 independent-reviewer inspect --packet <path>
-independent-reviewer review --packet <path> --config <path>
-independent-reviewer report --run <id> --format json|markdown
+independent-reviewer review --request <path> --config <path> [--base <ref>] [--output <path>]
 ```
 
-`prepare` performs no provider call. `inspect` shows the full local packet and
-the exact initial transmission plan separately. `review` resumes or advances
-the persisted state machine. `report` renders only validated persisted data.
-
-Exact convenience flags can be added after the request, packet, and run-record
-schemas are accepted. A single `review --repo .` workflow may compose these
-commands later without weakening their boundaries.
+`prepare` performs no provider call. It now writes packet metadata, the
+manifest, canonical inputs, optional author packet, and content-addressed blobs
+as separate private files. `inspect` verifies the manifest and every referenced blob before showing
+the neutral snapshot; it does not print the separately stored author packet.
+Small-change transmission-plan construction fails visibly when the complete
+initial evidence exceeds its configured byte budget. `review` validates the
+request and config, excludes those runner-control files from captured evidence,
+creates the packet, runs both provider stages, and prints the rendered report
+path. It reads `OPENROUTER_API_KEY` only from the environment. Exit `0` is a
+ready outcome, `2` is `Not ready`, `3` is `Unable to verify`, `4` is
+transport-uncertain, and other failures use `1`.
 
 ## Logical module boundaries
 
@@ -713,31 +770,31 @@ outcomes. Exact numeric values belong in the CLI contract.
 
 ## Persistence and privacy
 
-Runs are stored under a configured private directory excluded from Git. Each run
-keeps request, manifest, transmission ledger, preliminary candidate and valid
-record, author packet versions, provider exchanges, verification records, final
-candidate, validation errors, and validated report as separate artifacts.
+Runs are stored under a configured private directory excluded from Git. The
+current release keeps the packet inputs, preliminary/final provider candidates,
+validated preliminary/final records, Markdown report, and an append-only
+run-attempt ledger as separate artifacts. Later resume and verification work
+will add the broader transmission, verification, and error artifacts described
+by the full protocol.
 
 Persistence is append-oriented. Sensitive proprietary content is not placed in
 the repository by default. Retention and deletion policy remain configuration
 decisions before live use.
 
-## Implementation sequence
+## Implementation sequence and status
 
-1. Define and fixture-test versioned request, manifest, packet, preliminary,
-   author, report, run-record, and error schemas.
-2. Implement canonical serialization, digesting, base resolution, and cumulative
-   working-tree capture.
-3. Implement inspection, transmission-plan generation, and bounded evidence
-   reads against the frozen snapshot.
-4. Implement the persisted orchestrator against a mock provider, including
-   author withholding, preliminary validation, three ask-backs, budgets, and
-   resume behavior.
-5. Implement a fixture-only named verification executor and provenance records.
-6. Add the OpenRouter adapter behind the same provider interface and run an
-   explicitly enabled smoke review.
-7. Add convenient CLI composition and update the AI Central workflow only after
-   the protocol version is stable enough to consume.
+1. Complete: versioned request, manifest, packet, preliminary, author, report,
+   and review-configuration contracts with generated schemas.
+2. Complete: canonical identities, base resolution, cumulative working-tree
+   capture, packet inspection, and bounded initial evidence.
+3. Complete: persisted exactly-two-call orchestrator against a mock provider,
+   including author withholding, conservative token admission, coverage and
+   source-anchor validation, full Markdown reconciliation, and run-attempt
+   records.
+4. Complete offline: OpenRouter adapter, composed CLI, and AI Central workflow
+   integration. The explicitly authorized free/low-cost live smoke is pending.
+5. Deferred: resumability, interactive evidence calls, named verification,
+   author ask-backs, and hosting adapters.
 
 ## Boundaries
 
@@ -768,17 +825,15 @@ Never:
 - hide required content to fit a budget; or
 - let the reviewer fix code, publish output, or expand its own review limits.
 
-## Open decisions before implementation
+## Open decisions before live use
 
-1. Inspect and pin exact schema, CLI, quality, and OpenRouter transport package
-   versions for the accepted TypeScript 6 and Node.js 24 LTS runtime.
-2. Choose the first explicit model, reasoning level, provider-routing/data-
+1. Choose the first explicit model, reasoning level, provider-routing/data-
    policy configuration, and numerical token, cost, evidence, verification,
    retry, and duration budgets using one representative repository change and
    the minimal evaluation categories in milestone 4.[^openai-evals][^anthropic-evals]
-3. Decide whether measured prompt-cache savings justify enabling it under the
+2. Decide whether measured prompt-cache savings justify enabling it under the
    selected privacy and provider-routing policy.
-4. Define the first repository configuration format and private run-directory
+3. Define the first repository configuration format and private run-directory
    default.
 
 [^or-client]: OpenRouter, [Client SDKs](https://openrouter.ai/docs/client-sdks/overview).

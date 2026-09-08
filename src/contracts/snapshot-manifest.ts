@@ -216,6 +216,7 @@ export const SnapshotManifestV1Schema = z
           "PATH_POLICY",
           "SIZE_LIMIT",
           "GENERATED_POLICY",
+          "RUNNER_CONTROL",
           "USER_EXCLUDED",
           "UNSUPPORTED_KIND",
         ]),
