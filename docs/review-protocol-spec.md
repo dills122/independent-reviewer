@@ -682,6 +682,7 @@ The initial command families remain:
 independent-reviewer prepare --request <path> [--base <ref>]
 independent-reviewer inspect --packet <path>
 independent-reviewer review --request <path> --config <path> [--base <ref>] [--output <path>]
+independent-reviewer resume-final --packet <path> --config <path>
 ```
 
 `prepare` performs no provider call. It now writes packet metadata, the
@@ -692,7 +693,13 @@ Small-change transmission-plan construction fails visibly when the complete
 initial evidence exceeds its configured byte budget. `review` validates the
 request and config, excludes those runner-control files from captured evidence,
 creates the packet, runs both provider stages, and prints the rendered report
-path. It reads `OPENROUTER_API_KEY` only from the environment. Exit `0` is a
+path. `resume-final` permits one explicit retry only when the persisted run
+proves that the preliminary result was valid and the final call received a
+definite provider HTTP 429. It reuses the exact config, model, packet, raw
+preliminary response, and author packet; it refuses completed, already-resumed,
+invalid-output, or transport-uncertain runs. An atomic private claim prevents
+concurrent processes from purchasing the same one-shot retry. Both live commands read
+`OPENROUTER_API_KEY` only from the environment. Exit `0` is a
 ready outcome, `2` is `Not ready`, `3` is `Unable to verify`, `4` is
 transport-uncertain, and other failures use `1`.
 
@@ -798,10 +805,11 @@ decisions before live use.
    including author withholding, conservative token admission, coverage and
    source-anchor validation, full Markdown reconciliation, and run-attempt
    records.
-4. Complete offline: OpenRouter adapter, composed CLI, and AI Central workflow
-   integration. The explicitly authorized free/low-cost live smoke is pending.
-5. Deferred: resumability, interactive evidence calls, named verification,
-   author ask-backs, and hosting adapters.
+4. Complete offline: OpenRouter adapter, composed CLI, bounded same-model
+   provider fallback, one-shot final-stage resume, and AI Central workflow
+   integration. The explicitly authorized low-cost live smoke is pending.
+5. Deferred: broader/distributed resumability, interactive evidence calls,
+   named verification, author ask-backs, and hosting adapters.
 
 ## Boundaries
 

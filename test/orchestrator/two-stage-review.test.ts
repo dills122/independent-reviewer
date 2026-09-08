@@ -9,11 +9,12 @@ import { describe, it } from "node:test";
 import {
   captureGitSnapshotV1,
   ProviderCallError,
+  resumeFinalReviewV1,
   runTwoStageReviewV1,
   type ReviewProviderV1,
   type ReviewProviderRequestV1,
   type ReviewProviderResponseV1,
-  type ReviewRunConfigV1,
+  type ReviewRunConfigV2,
   writeSnapshotPacketV1,
 } from "../../src/index.js";
 
@@ -111,10 +112,14 @@ async function arrangePacket(
   return { repositoryPath, packetPath };
 }
 
-const config: ReviewRunConfigV1 = {
-  schemaVersion: 1,
+const config: ReviewRunConfigV2 = {
+  schemaVersion: 2,
   configId: "config_test",
   model: "mock/reviewer",
+  providerRouting: {
+    order: ["provider-a/fp4", "provider-b/bf16"],
+    maxPrice: { prompt: 0.03, completion: 0.14, request: 0 },
+  },
   budgets: {
     maxInitialEvidenceBytes: 32_000,
     maxConversationBytes: 128_000,
@@ -352,6 +357,210 @@ describe("two-stage review orchestrator", () => {
       assert.equal(events[2]?.error.code, "TRANSPORT_UNCERTAIN");
       assert.equal(events[3]?.terminalState, "TRANSPORT_UNCERTAIN");
       assert.doesNotMatch(JSON.stringify(events), /AUTHOR_SECRET/);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes only the failed final stage once after a definite provider 429", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    const firstProvider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        if (providerRequest.stage === "PRELIMINARY") {
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "The change was inspected before the final provider failure.",
+            inspectedPaths: ["reviewed.txt"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        throw new ProviderCallError("PROVIDER_ERROR", "OpenRouter rate limit exceeded.", {
+          diagnostic: {
+            httpStatus: 429,
+            providerErrorCode: "429",
+            providerMessage: "Rate limit exceeded",
+            errorType: "rate_limit_exceeded",
+            providerCode: "rate_limited",
+            providerName: "Mock Provider",
+            model: "mock/reviewer",
+            responseId: null,
+            retryAfter: null,
+          },
+        });
+      },
+    };
+
+    try {
+      await assert.rejects(() => runTwoStageReviewV1(packetPath, config, firstProvider), /rate/i);
+      const persistedPreliminary = await readFile(
+        join(packetPath, "review", "preliminary.json"),
+        "utf8",
+      );
+      const resumedCalls: ReviewProviderRequestV1[] = [];
+      const resumedProvider: ReviewProviderV1 = {
+        auditRequest: mockAuditRequest,
+        complete: async (providerRequest) => {
+          resumedCalls.push(providerRequest);
+          const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+          return response({
+            schemaVersion: 1,
+            stage: "FINAL",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "The persisted preliminary assessment was reconciled.",
+            findings: [],
+            preliminaryFindingDispositions: [],
+            ...finalCoverage(),
+            authorClaims: [],
+            limitations: [],
+            verdict: "READY",
+            nextActions: { blockers: [], fastFollows: [] },
+          });
+        },
+      };
+
+      await assert.rejects(
+        () =>
+          resumeFinalReviewV1(
+            packetPath,
+            {
+              ...config,
+              providerRouting: {
+                ...config.providerRouting,
+                maxPrice: { ...config.providerRouting.maxPrice, completion: 0.15 },
+              },
+            },
+            resumedProvider,
+          ),
+        /configuration must exactly match/i,
+      );
+      assert.equal(resumedCalls.length, 0);
+
+      const result = await resumeFinalReviewV1(packetPath, config, resumedProvider);
+
+      assert.equal(result.report.verdict, "READY");
+      assert.equal(resumedCalls.length, 1);
+      assert.equal(resumedCalls[0]?.stage, "FINAL");
+      assert.match(JSON.stringify(resumedCalls[0]), /AUTHOR_SECRET/);
+      assert.equal(
+        await readFile(join(packetPath, "review", "preliminary.json"), "utf8"),
+        persistedPreliminary,
+      );
+      const resumeClaim = JSON.parse(
+        await readFile(join(packetPath, "review", "final-resume-claim.json"), "utf8"),
+      );
+      assert.deepEqual(
+        {
+          schemaVersion: resumeClaim.schemaVersion,
+          stage: resumeClaim.stage,
+          failedAttemptNumber: resumeClaim.failedAttemptNumber,
+          claimedAttemptNumber: resumeClaim.claimedAttemptNumber,
+        },
+        {
+          schemaVersion: 1,
+          stage: "FINAL",
+          failedAttemptNumber: 2,
+          claimedAttemptNumber: 3,
+        },
+      );
+      assert.equal(resumeClaim.configDigest.algorithm, "SHA256");
+      assert.match(resumeClaim.configDigest.value, /^[a-f0-9]{64}$/);
+      const events = (await readFile(result.runRecordPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      assert.deepEqual(
+        events.map((event) => event.type),
+        [
+          "RUN_STARTED",
+          "CALL_STARTED",
+          "CALL_SUCCEEDED",
+          "PRELIMINARY_PERSISTED",
+          "AUTHOR_DELIVERED",
+          "CALL_STARTED",
+          "CALL_FAILED",
+          "RUN_FAILED",
+          "RUN_RESUMED",
+          "CALL_STARTED",
+          "CALL_SUCCEEDED",
+          "RUN_COMPLETED",
+        ],
+      );
+      assert.deepEqual(
+        events.filter((event) => event.type === "CALL_STARTED").map((event) => event.attemptNumber),
+        [1, 2, 3],
+      );
+
+      let repeatCalls = 0;
+      await assert.rejects(
+        () =>
+          resumeFinalReviewV1(packetPath, config, {
+            auditRequest: mockAuditRequest,
+            complete: async () => {
+              repeatCalls += 1;
+              throw new Error("must not be called");
+            },
+          }),
+        /already (?:been )?resumed|completed/i,
+      );
+      assert.equal(repeatCalls, 0);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not resume a transport-uncertain final submission", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        if (providerRequest.stage === "PRELIMINARY") {
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "The change was inspected before transport became uncertain.",
+            inspectedPaths: ["reviewed.txt"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        throw new ProviderCallError(
+          "TRANSPORT_UNCERTAIN",
+          "The final request may have been submitted.",
+        );
+      },
+    };
+
+    try {
+      await assert.rejects(() => runTwoStageReviewV1(packetPath, config, provider));
+      let resumeCalls = 0;
+      await assert.rejects(
+        () =>
+          resumeFinalReviewV1(packetPath, config, {
+            auditRequest: mockAuditRequest,
+            complete: async () => {
+              resumeCalls += 1;
+              throw new Error("must not be called");
+            },
+          }),
+        /transport.*uncertain/i,
+      );
+      assert.equal(resumeCalls, 0);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }

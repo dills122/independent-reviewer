@@ -18,24 +18,33 @@ const request = {
   },
 };
 
+const providerRouting = {
+  order: ["provider-a/fp4", "provider-b/bf16"],
+  maxPrice: { prompt: 0.03, completion: 0.14, request: 0 },
+};
+
 describe("OpenRouterProviderV1", () => {
   it("uses strict structured output and explicit privacy and routing controls", async () => {
     let capturedInput: RequestInfo | URL | undefined;
     let capturedInit: RequestInit | undefined;
-    const provider = new OpenRouterProviderV1("secret-key", async (input, init) => {
-      capturedInput = input;
-      capturedInit = init;
-      return new Response(
-        JSON.stringify({
-          id: "generation-1",
-          model: "vendor/model",
-          provider: "Mock Provider",
-          choices: [{ finish_reason: "stop", message: { content: '{"ok":true}' } }],
-          usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25, cost: 0.001 },
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
-    });
+    const provider = new OpenRouterProviderV1(
+      "secret-key",
+      providerRouting,
+      async (input, init) => {
+        capturedInput = input;
+        capturedInit = init;
+        return new Response(
+          JSON.stringify({
+            id: "generation-1",
+            model: "vendor/model",
+            provider: "Mock Provider",
+            choices: [{ finish_reason: "stop", message: { content: '{"ok":true}' } }],
+            usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25, cost: 0.001 },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    );
 
     const result = await provider.complete(request);
 
@@ -45,8 +54,11 @@ describe("OpenRouterProviderV1", () => {
     assert.equal(headers.get("x-openrouter-cache"), "false");
     const body = JSON.parse(String(capturedInit?.body)) as Record<string, unknown>;
     assert.deepEqual(body.provider, {
-      allow_fallbacks: false,
+      order: ["provider-a/fp4", "provider-b/bf16"],
+      only: ["provider-a/fp4", "provider-b/bf16"],
+      allow_fallbacks: true,
       data_collection: "deny",
+      max_price: { prompt: 0.03, completion: 0.14, request: 0 },
       require_parameters: true,
       zdr: true,
     });
@@ -56,7 +68,7 @@ describe("OpenRouterProviderV1", () => {
     assert.equal(result.provider, "Mock Provider");
 
     const audit = provider.auditRequest(request);
-    assert.equal(audit.providerPolicyVersion, "openrouter-chat-completions-v1");
+    assert.equal(audit.providerPolicyVersion, "openrouter-chat-completions-v2");
     assert.deepEqual(audit.wireBodyDigest, sha256Utf8(String(capturedInit?.body)));
     assert.equal(audit.wireBodyBytes, Buffer.byteLength(String(capturedInit?.body), "utf8"));
     assert.notDeepEqual(
@@ -67,7 +79,7 @@ describe("OpenRouterProviderV1", () => {
   });
 
   it("preserves bounded, credential-free diagnostics for an embedded provider error", async () => {
-    const provider = new OpenRouterProviderV1("secret-key", async () =>
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
       Response.json(
         {
           id: "generation-error-1",
@@ -120,7 +132,7 @@ describe("OpenRouterProviderV1", () => {
   });
 
   it("recognizes provider errors nested in a non-streaming completion choice", async () => {
-    const provider = new OpenRouterProviderV1("secret-key", async () =>
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
       Response.json({
         id: "generation-error-2",
         model: "vendor/model",
@@ -152,7 +164,7 @@ describe("OpenRouterProviderV1", () => {
   });
 
   it("treats a fetch failure after submission as transport-uncertain", async () => {
-    const provider = new OpenRouterProviderV1("secret-key", async () => {
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () => {
       throw new TypeError("connection lost");
     });
 
@@ -168,7 +180,7 @@ describe("OpenRouterProviderV1", () => {
       { prompt_tokens: 20.5, completion_tokens: 5, total_tokens: 25.5 },
       { prompt_tokens: 20, completion_tokens: 5, total_tokens: 0 },
     ]) {
-      const provider = new OpenRouterProviderV1("secret-key", async () =>
+      const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
         Response.json({
           choices: [{ finish_reason: "stop", message: { content: '{"ok":true}' } }],
           usage,
@@ -180,5 +192,22 @@ describe("OpenRouterProviderV1", () => {
         (error: unknown) => error instanceof ProviderCallError && error.code === "INVALID_RESPONSE",
       );
     }
+  });
+
+  it("rejects a response from a different model", async () => {
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+      Response.json({
+        model: "vendor/different-model",
+        choices: [{ finish_reason: "stop", message: { content: '{"ok":true}' } }],
+      }),
+    );
+
+    await assert.rejects(
+      () => provider.complete(request),
+      (error: unknown) =>
+        error instanceof ProviderCallError &&
+        error.code === "INVALID_RESPONSE" &&
+        /different model/i.test(error.message),
+    );
   });
 });

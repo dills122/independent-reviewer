@@ -25,6 +25,10 @@ The supporting
 [prompt, call, and token-efficiency research spike](../research/2026-09-07-prompt-call-and-token-efficiency-spike.md)
 evaluated prompt structure, API shape, progressive evidence, caching, routing,
 accounting, retries, malformed output, and minimal evaluation practices.
+The later
+[provider failover and cost-control spike](../research/2026-09-08-openrouter-provider-failover-and-cost-spike.md)
+used live smoke ledgers to refine the same-model routing and final-stage retry
+policy.
 
 ## Decision
 
@@ -83,10 +87,11 @@ after a representative-change evaluation.
 
 ### Make routing and caching explicit
 
-Use one explicit model and provider policy initially, require requested
-parameters, disable automatic fallback, and record safe router metadata. Any
-future provider or model fallback is a declared policy change and records the
-actual route.[^openrouter-routing][^openrouter-metadata]
+Use one explicit model and a small configured provider allowlist, require
+requested parameters, enable provider fallback only within that allowlist, cap
+eligible provider prices, and record the actual route. Model fallback remains
+disabled: every stage and retry in one review instance uses the same requested
+model.[^openrouter-routing][^openrouter-metadata]
 
 Response caching remains disabled for live reviews because it stores and
 replays a complete answer and is unavailable with account-level ZDR.[^openrouter-response-cache]
@@ -101,12 +106,15 @@ reservation, and audit records. It inspects typed errors, response bodies, and
 finish reasons because an error can arrive inside HTTP `200` after processing
 has begun.[^openrouter-errors]
 
-Clear pre-generation transient rejection may receive a bounded retry that
-honors `Retry-After`. A timeout or connection loss after possible submission
-enters `TRANSPORT_UNCERTAIN` and is not retried automatically. Invalid complete
-model output is preserved and may receive at most one budgeted repair request
-with exact validation errors. Truncation, refusal, exhausted budget, or
-unresolved invalid output cannot become `Ready`.
+OpenRouter may fail over a clear provider rejection inside the same request. If
+all allowed providers return a definite final-stage HTTP 429, an operator may
+explicitly resume that final stage once from the persisted preliminary result
+and identical run configuration. The blind stage is not repeated. A timeout or
+connection loss after possible submission enters `TRANSPORT_UNCERTAIN` and is
+never resumed automatically. Invalid complete model output is preserved and
+may receive at most one separately designed budgeted repair request with exact
+validation errors. Truncation, refusal, exhausted budget, or unresolved invalid
+output cannot become `Ready`.
 
 ### Tune empirically
 
