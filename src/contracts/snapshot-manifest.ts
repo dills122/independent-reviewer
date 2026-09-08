@@ -49,13 +49,36 @@ export const DigestV1Schema = z.strictObject({
 });
 
 const GitModeSchema = z.string().regex(/^[0-7]{6}$/, "must be a six-digit Git mode");
+const RegularFileModeSchema = z.enum(["100644", "100755"]);
 
-const CapturedContentV1Schema = z.strictObject({
-  kind: z.enum(["TEXT", "BINARY", "SYMLINK", "SUBMODULE"]),
+const CapturedContentBaseShape = {
   digest: DigestV1Schema,
   byteLength: z.int().nonnegative(),
-  gitMode: GitModeSchema,
   isGenerated: z.boolean(),
+};
+
+const TextContentV1Schema = z.strictObject({
+  kind: z.literal("TEXT"),
+  ...CapturedContentBaseShape,
+  gitMode: RegularFileModeSchema,
+});
+
+const BinaryContentV1Schema = z.strictObject({
+  kind: z.literal("BINARY"),
+  ...CapturedContentBaseShape,
+  gitMode: RegularFileModeSchema,
+});
+
+const SymlinkContentV1Schema = z.strictObject({
+  kind: z.literal("SYMLINK"),
+  ...CapturedContentBaseShape,
+  gitMode: z.literal("120000"),
+});
+
+const SubmoduleContentV1Schema = z.strictObject({
+  kind: z.literal("SUBMODULE"),
+  ...CapturedContentBaseShape,
+  gitMode: z.literal("160000"),
 });
 
 const UnsupportedContentV1Schema = z.strictObject({
@@ -68,7 +91,10 @@ const UnsupportedContentV1Schema = z.strictObject({
 });
 
 export const SnapshotContentV1Schema = z.discriminatedUnion("kind", [
-  CapturedContentV1Schema,
+  TextContentV1Schema,
+  BinaryContentV1Schema,
+  SymlinkContentV1Schema,
+  SubmoduleContentV1Schema,
   UnsupportedContentV1Schema,
 ]);
 
@@ -202,6 +228,16 @@ export const SnapshotManifestV1Schema = z
         path: ["paths"],
       });
     }
+
+    manifest.paths.forEach((path, index) => {
+      if ("previousPath" in path && path.previousPath === path.path) {
+        context.addIssue({
+          code: "custom",
+          message: "previous path must differ from the relocated path",
+          path: ["paths", index, "previousPath"],
+        });
+      }
+    });
 
     const canonicalInputIds = manifest.canonicalInputs.map((input) => input.id);
     if (new Set(canonicalInputIds).size !== canonicalInputIds.length) {

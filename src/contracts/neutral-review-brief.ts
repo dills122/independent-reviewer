@@ -56,6 +56,31 @@ export const InitialEvidenceV1Schema = z.discriminatedUnion("type", [
   SourceContextEvidenceV1Schema,
 ]);
 
+type SnapshotPathEntryV1 = z.infer<typeof SnapshotManifestV1Schema>["paths"][number];
+
+function sourcePathExists(
+  entry: SnapshotPathEntryV1,
+  path: string,
+  side: "BASE" | "HEAD",
+): boolean {
+  switch (entry.changeType) {
+    case "ADDED":
+    case "UNTRACKED":
+      return side === "HEAD" && entry.path === path;
+    case "DELETED":
+      return side === "BASE" && entry.path === path;
+    case "MODIFIED":
+    case "TYPE_CHANGED":
+      return entry.path === path;
+    case "RENAMED":
+      return side === "BASE" ? entry.previousPath === path : entry.path === path;
+    case "COPIED":
+      return side === "BASE"
+        ? entry.previousPath === path
+        : entry.path === path || entry.previousPath === path;
+  }
+}
+
 export const NeutralReviewBriefV1Schema = z
   .strictObject({
     schemaVersion: z.literal(1),
@@ -148,6 +173,14 @@ export const NeutralReviewBriefV1Schema = z
         "previousPath" in entry ? [entry.path, entry.previousPath] : [entry.path],
       ),
     );
+    const evidenceIds = brief.initialEvidence.map((evidence) => evidence.evidenceId);
+    if (new Set(evidenceIds).size !== evidenceIds.length) {
+      context.addIssue({
+        code: "custom",
+        message: "initial evidence identifiers must be unique",
+        path: ["initialEvidence"],
+      });
+    }
     brief.initialEvidence.forEach((evidence, index) => {
       if (!manifestPaths.has(evidence.path)) {
         context.addIssue({
@@ -161,6 +194,18 @@ export const NeutralReviewBriefV1Schema = z
           code: "custom",
           message: "must be greater than or equal to startLine",
           path: ["initialEvidence", index, "endLine"],
+        });
+      }
+      if (
+        evidence.type === "SOURCE_CONTEXT" &&
+        !brief.snapshotManifest.paths.some((entry) =>
+          sourcePathExists(entry, evidence.path, evidence.side),
+        )
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "must identify a path that exists on the declared source side",
+          path: ["initialEvidence", index, "side"],
         });
       }
     });

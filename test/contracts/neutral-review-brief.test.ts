@@ -194,6 +194,59 @@ describe("NeutralReviewBriefV1Schema", () => {
     assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, false);
   });
 
+  it("rejects duplicate initial-evidence identifiers", async () => {
+    const brief = (await createValidBrief()) as {
+      initialEvidence: Array<{ evidenceId: string }>;
+    };
+    const first = brief.initialEvidence[0];
+    const second = brief.initialEvidence[1];
+    assert.ok(first && second);
+    second.evidenceId = first.evidenceId;
+
+    assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, false);
+  });
+
+  it("rejects source context for a side where the path does not exist", async () => {
+    const invalidAnchors = [
+      { changeType: "UNTRACKED", path: "test/new-contract.test.ts", side: "BASE" },
+      { changeType: "RENAMED", path: "docs/current-name.md", side: "BASE" },
+      { changeType: "RENAMED", path: "docs/old-name.md", side: "HEAD" },
+    ] as const;
+
+    for (const anchor of invalidAnchors) {
+      const brief = (await createValidBrief()) as {
+        initialEvidence: Array<{ type: string; path: string; side?: string }>;
+      };
+      const context = brief.initialEvidence.find((evidence) => evidence.type === "SOURCE_CONTEXT");
+      assert.ok(context);
+      context.path = anchor.path;
+      context.side = anchor.side;
+
+      assert.equal(
+        NeutralReviewBriefV1Schema.safeParse(brief).success,
+        false,
+        `${anchor.changeType} ${anchor.path} must not exist on ${anchor.side}`,
+      );
+    }
+  });
+
+  it("allows HEAD context for the retained source of a copied path", async () => {
+    const brief = (await createValidBrief()) as {
+      snapshotManifest: {
+        paths: Array<{ changeType: string; previousPath?: string }>;
+      };
+      initialEvidence: Array<{ type: string; path: string; side?: string }>;
+    };
+    const renamed = brief.snapshotManifest.paths.find((path) => path.changeType === "RENAMED");
+    const context = brief.initialEvidence.find((evidence) => evidence.type === "SOURCE_CONTEXT");
+    assert.ok(renamed?.previousPath && context);
+    renamed.changeType = "COPIED";
+    context.path = renamed.previousPath;
+    context.side = "HEAD";
+
+    assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, true);
+  });
+
   it("rejects an inverted source-context line range", async () => {
     const brief = (await createValidBrief()) as {
       initialEvidence: Array<{ type: string; startLine?: number; endLine?: number }>;

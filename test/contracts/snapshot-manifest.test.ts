@@ -43,6 +43,42 @@ describe("SnapshotManifestV1Schema", () => {
     assert.equal(SnapshotManifestV1Schema.safeParse(fixture).success, false);
   });
 
+  it("rejects content kinds paired with incompatible Git modes", async () => {
+    const incompatiblePairs = [
+      { kind: "TEXT", gitMode: "120000" },
+      { kind: "BINARY", gitMode: "160000" },
+      { kind: "SYMLINK", gitMode: "100644" },
+      { kind: "SUBMODULE", gitMode: "100755" },
+    ];
+
+    for (const pair of incompatiblePairs) {
+      const fixture = structuredClone(await readFixture()) as {
+        paths: Array<{ after: null | { kind: string; gitMode: string } }>;
+      };
+      const modified = fixture.paths.find((path) => path.after);
+      assert.ok(modified?.after);
+      modified.after.kind = pair.kind;
+      modified.after.gitMode = pair.gitMode;
+
+      assert.equal(
+        SnapshotManifestV1Schema.safeParse(fixture).success,
+        false,
+        `${pair.kind} must reject ${pair.gitMode}`,
+      );
+    }
+  });
+
+  it("rejects a relocation whose old and new paths are identical", async () => {
+    const fixture = structuredClone(await readFixture()) as {
+      paths: Array<{ changeType: string; path: string; previousPath?: string }>;
+    };
+    const renamed = fixture.paths.find((path) => path.changeType === "RENAMED");
+    assert.ok(renamed);
+    renamed.previousPath = renamed.path;
+
+    assert.equal(SnapshotManifestV1Schema.safeParse(fixture).success, false);
+  });
+
   it("rejects a manifest whose capture state changed", async () => {
     const fixture = structuredClone(await readFixture()) as {
       raceCheck: { afterStateDigest: { value: string } };

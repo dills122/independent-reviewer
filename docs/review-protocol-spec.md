@@ -220,8 +220,9 @@ Implementation status: `SnapshotManifestV1Schema` now defines the strict
 persisted boundary for source commits, dirty-state evidence, typed path changes,
 content digests, exclusions, omissions, canonical-input identities, policy
 versions, and stable capture-race evidence. It validates normalized relative
-paths and exact untracked-path accounting. Git capture and per-content digest
-construction remain separate follow-on work. The identity finalizer now
+paths, exact untracked-path accounting, Git kind/mode compatibility, and
+meaningful relocation paths. Git capture and per-content digest construction
+remain separate follow-on work. The identity finalizer now
 validates digest-free manifest material, normalizes set-like ledgers, and
 computes a reproducible JCS/SHA-256 logical digest. Opaque run metadata and
 capture-attempt count do not alter that digest; changes to captured source or
@@ -250,10 +251,12 @@ blind-stage boundary containing canonical-source-attributed objectives and
 criteria, canonical inputs, one complete snapshot manifest, bounded initial
 evidence, visible coverage constraints, and capability identifiers. Runtime
 validation rejects undeclared author fields, canonical-input identity mismatch,
-evidence outside the manifest, and invalid source ranges. Orchestration must
-still prove that only this artifact is sent before preliminary persistence. A
-required `briefDigest` now binds the exact ordered blind-stage content, and its
-finalizer refuses an embedded manifest whose snapshot identity does not verify.
+duplicate evidence identifiers, evidence outside the manifest, source context
+for a path/side that does not exist, and invalid source ranges. Orchestration
+must still prove that only this artifact is sent before preliminary persistence.
+A required `briefDigest` now binds the exact ordered blind-stage content, and
+its finalizer refuses an embedded manifest whose snapshot identity does not
+verify.
 
 The artifact identity profile uses RFC 8785 JCS over UTF-8 followed by SHA-256,
 with versioned domain separation. The field projections, normalization rules,
