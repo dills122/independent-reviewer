@@ -240,8 +240,8 @@ persisted boundary for source commits, dirty-state evidence, typed path changes,
 content digests, exclusions, omissions, canonical-input identities, policy
 versions, and stable capture-race evidence. It validates normalized relative
 paths, exact untracked-path accounting, Git kind/mode compatibility, and
-meaningful relocation paths. Git capture and per-content digest construction
-remain separate follow-on work. Base and head object IDs must use the same Git
+meaningful relocation paths. Git capture now implements per-content digest
+construction and cumulative working-tree freezing. Base and head object IDs must use the same Git
 object format, `MODIFIED` preserves the regular-file/symlink/submodule category
 and must change at least one persisted before/after content property, while
 `TYPE_CHANGED` changes the category. Mode-only regular-file changes therefore
@@ -257,7 +257,11 @@ directly for string entries and over the complete RFC 8785 serialization for
 object entries, without locale collation or Unicode normalization.
 Canonical-input digests bind the complete validated input,
 and neutral-brief validation reconciles those digests with its embedded
-canonical content. Raw captured-file digest construction remains deferred.
+canonical content. The initial capture policy stores regular files, symlink
+targets, and binary bytes by SHA-256 with a 512 KiB per-file limit. Secret-like
+filenames, submodules, oversized files, and unsupported kinds remain visible as
+exclusions. Two matching collections are required before a snapshot is marked
+stable.
 
 ### Neutral review brief
 
@@ -624,9 +628,12 @@ independent-reviewer review --packet <path> --config <path>
 independent-reviewer report --run <id> --format json|markdown
 ```
 
-`prepare` performs no provider call. `inspect` shows the full local packet and
-the exact initial transmission plan separately. `review` resumes or advances
-the persisted state machine. `report` renders only validated persisted data.
+`prepare` performs no provider call. It now writes the manifest, canonical
+inputs, optional author packet, and content-addressed blobs as separate private
+files. `inspect` verifies the manifest and every referenced blob before showing
+the neutral snapshot; it does not print the separately stored author packet.
+Initial transmission-plan construction remains part of the next slice.
+`review` and `report` remain proposed commands for the provider flow.
 
 Exact convenience flags can be added after the request, packet, and run-record
 schemas are accepted. A single `review --repo .` workflow may compose these

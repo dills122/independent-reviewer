@@ -140,37 +140,44 @@ automatically. OpenRouter can return typed errors inside an HTTP `200`, so the
 adapter validates the body and finish reason rather than trusting status
 alone.[^or-errors]
 
-## Delivery plan and acceptance gates
+## Lean delivery plan and acceptance gates
 
-### Milestone 1 — contracts and packet builder
+### Slice 1 — snapshot preparation
 
 Create the standalone repository, schemas, capture policy, CLI `prepare` and `inspect` commands, and fixtures. Gate: reproducible packet identity for unchanged input; correct staged/unstaged/untracked and rename/delete handling; visible exclusions; detected capture races; no author content in the blind payload; no escaping snapshot reads.
 
-Progress: the TypeScript/Node runtime and strict `ReviewRequestV1`,
-`SnapshotManifestV1`, and `NeutralReviewBriefV1` contracts are implemented with
-fixtures, runtime validation, committed JSON Schema artifacts, and deterministic
-JCS/SHA-256 identity finalization. Snapshot capture, packet construction, and
-CLI work remains.
+Progress: complete. The TypeScript/Node runtime has strict request, snapshot,
+and neutral-brief contracts with deterministic JCS/SHA-256 identities. Git
+capture freezes committed and cumulative working-tree changes into
+content-addressed blobs, detects capture races, records exclusions, and exposes
+`prepare` and `inspect` without making a provider call.
 
-### Milestone 2 — external review engine
+### Slice 2 — two-stage external review
 
-Implement the OpenRouter adapter, bounded evidence tools, staged review state machine, and JSON/Markdown output. Gate: a mock-provider end-to-end run proves author withholding and stage persistence; malformed or truncated outputs cannot report Ready; budgets stop runs; live opt-in smoke review succeeds with a configured key/model. Network timeout after submission must be recorded as uncertain because retry may incur duplicate cost.
+Build the neutral brief from the snapshot packet, add one configurable OpenRouter
+adapter, and enforce blind assessment followed by separately delivered author
+explanation. Persist the preliminary and final JSON responses and render the
+final report as Markdown. Gate: a mock-provider end-to-end run proves author
+withholding; malformed output cannot report Ready; basic call/token/time limits
+stop the run; one explicitly enabled live smoke review succeeds.
 
-### Milestone 3 — AI Central integration
+### Slice 3 — usable command and AI Central integration
 
-Update the existing skill to invoke the engine and preserve its author/reviewer responsibilities and loop/pivot rules. Add command reference, report reconciliation instructions, version compatibility checks, and AI Central reuse documentation. Gate: one implementation flow can prepare, review externally, consume findings, and account for a second instance without resetting the maximum. Run AI Central's required `./scripts/check.sh` for its changes.
+Compose preparation and review behind one practical `review` command, keep
+failure diagnostics readable, and update the existing skill to invoke it while
+preserving the loop and pivot rules. Gate: one implementation flow can review
+externally and consume its findings. Run AI Central's required
+`./scripts/check.sh` for its changes.
 
-### Milestone 4 — review quality evaluation
+### Deferred until requested
 
-Build small changes with known defects, clean changes, misleading author claims, missing plan coverage, insufficient context, and prompt-injection attempts. Measure actionable defect recall, false positives on clean changes, citation validity, claim reconciliation, context omissions, cost, and latency. Gate: establish a recorded baseline and explicit acceptance thresholds before choosing the default model. Avoid treating a persuasive report or one successful API call as quality validation.
+- broad model comparisons or a large quality-evaluation framework;
+- isolated or containerized execution of arbitrary repository tests;
+- multiple providers, fallback routing, or distributed resumability; and
+- any GitHub/GitLab bot, webhook service, database, daemon, or web UI.
 
-Keep the evaluation task-specific and change one model, reasoning, prompt, or
-context variable at a time. Current provider guidance treats prompt engineering
-as an empirical loop with measurable success criteria.[^openai-evals][^anthropic-evals]
-
-### Milestone 5 — MR/PR adapter
-
-Choose GitLab or GitHub as the first host. Add webhook/CI ingestion, immutable commit capture, durable job identity, cancellation/supersession, and publication. Gate: duplicate delivery produces one logical review; a moved head prevents stale publication; report anchors map to the reviewed diff; untrusted branches cannot access API or bot credentials; one summary and selected actionable comments publish only under configured authorization. Automated merging is outside this roadmap.
+A few focused known-defect and clean fixtures remain part of Slice 2; they are
+not a separate product milestone.[^openai-evals][^anthropic-evals]
 
 ## Initial product scope
 

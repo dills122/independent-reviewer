@@ -31,14 +31,14 @@ async function createRepository(): Promise<string> {
   return repositoryPath;
 }
 
-function reviewRequest(repositoryPath: string, base = "main"): ReviewRequestV1 {
+function reviewRequest(repositoryPath: string, base?: string): ReviewRequestV1 {
   return {
     schemaVersion: 1,
     flowId: "flow_git_capture_test",
     reviewInstance: { number: 1, maximum: 3 },
     repository: {
       path: repositoryPath,
-      base,
+      ...(base ? { base } : {}),
       workingTree: { mode: "CUMULATIVE", includeUntracked: true },
     },
     canonicalInputs: {
@@ -77,7 +77,8 @@ describe("captureGitSnapshotV1", () => {
       await git(repositoryPath, "add", ".");
       await git(repositoryPath, "commit", "-m", "change files");
 
-      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath));
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const repeated = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
       const byPath = new Map(captured.manifest.paths.map((entry) => [entry.path, entry]));
 
       assert.equal(captured.manifest.source.baseCommit, baseCommit);
@@ -94,6 +95,7 @@ describe("captureGitSnapshotV1", () => {
       assert.equal(captured.manifest.workingTree.hasUnstagedChanges, false);
       assert.equal(captured.manifest.workingTree.includedUntrackedPaths.length, 0);
       assert.equal(captured.blobs.size, 5);
+      assert.equal(captured.manifest.snapshotDigest.value, repeated.manifest.snapshotDigest.value);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
@@ -108,7 +110,7 @@ describe("captureGitSnapshotV1", () => {
       await writeFile(join(repositoryPath, "modified.txt"), "unstaged after staged\n");
       await writeFile(join(repositoryPath, "new.txt"), "untracked\n");
 
-      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath));
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
       const modified = captured.manifest.paths.find((entry) => entry.path === "modified.txt");
       const untracked = captured.manifest.paths.find((entry) => entry.path === "new.txt");
 
@@ -135,7 +137,7 @@ describe("captureGitSnapshotV1", () => {
       await writeFile(join(repositoryPath, ".env.production"), "API_KEY=do-not-store\n");
       await writeFile(join(repositoryPath, "large.txt"), "x".repeat(33));
 
-      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath), {
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"), {
         maxFileBytes: 32,
       });
 
@@ -163,13 +165,55 @@ describe("captureGitSnapshotV1", () => {
     const firstRepository = await createRepository();
     const secondRepository = await createRepository();
     try {
-      const first = await captureGitSnapshotV1(reviewRequest(firstRepository));
-      const second = await captureGitSnapshotV1(reviewRequest(secondRepository));
+      const first = await captureGitSnapshotV1(reviewRequest(firstRepository, "main"));
+      const second = await captureGitSnapshotV1(reviewRequest(secondRepository, "main"));
 
       assert.notEqual(first.manifest.source.repositoryId, second.manifest.source.repositoryId);
     } finally {
       await rm(firstRepository, { recursive: true, force: true });
       await rm(secondRepository, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the remote default when the current upstream is the feature branch", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      const mainCommit = await git(repositoryPath, "rev-parse", "main");
+      await git(repositoryPath, "remote", "add", "origin", repositoryPath);
+      await git(repositoryPath, "update-ref", "refs/remotes/origin/main", mainCommit);
+      await git(
+        repositoryPath,
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        "refs/remotes/origin/main",
+      );
+      await git(repositoryPath, "switch", "-c", "feature/default-base");
+      await writeFile(join(repositoryPath, "modified.txt"), "feature change\n");
+      await git(repositoryPath, "add", ".");
+      await git(repositoryPath, "commit", "-m", "feature change");
+      const featureCommit = await git(repositoryPath, "rev-parse", "HEAD");
+      await git(
+        repositoryPath,
+        "update-ref",
+        "refs/remotes/origin/feature/default-base",
+        featureCommit,
+      );
+      await git(
+        repositoryPath,
+        "branch",
+        "--set-upstream-to=origin/feature/default-base",
+        "feature/default-base",
+      );
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath));
+
+      assert.equal(captured.manifest.source.baseCommit, mainCommit);
+      assert.equal(
+        captured.manifest.paths.some((entry) => entry.path === "modified.txt"),
+        true,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
     }
   });
 });

@@ -21,7 +21,11 @@ blind-brief author-field rejection; unique and source-side-valid evidence
 anchors; JSON Schema drift; RFC 8785 canonicalization; SHA-256 vectors; golden
 artifact digests; structural-schema disclosure; fail-closed accessor and custom
 instance handling; identity normalization; and post-finalization tamper
-detection.
+detection. Git integration tests additionally use temporary real repositories
+to cover committed, staged, unstaged, renamed, deleted, untracked, excluded,
+and remote-default scope plus content-addressed packet writing, inspection, and
+tamper detection. The CLI test proves provider-free `prepare`/`inspect`
+composition.
 
 ## Expanding runtime gates
 

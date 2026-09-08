@@ -6,11 +6,12 @@ The project expands AI Central's independent-review workflow into an enforceable
 
 ## Status
 
-Implementation has started. The exact-pinned TypeScript 6 and Node.js 24
-runtime now defines strict versioned contracts for review requests, snapshot
-manifests, and blind-stage neutral briefs, plus deterministic JCS/SHA-256
-identity finalization. Snapshot capture, orchestration, provider integration,
-and a user-facing CLI have not been implemented yet.
+The first slice is implemented. The exact-pinned TypeScript 6 and Node.js 24
+runtime defines strict versioned contracts and deterministic JCS/SHA-256
+identities. The local CLI can now freeze committed, staged, unstaged, renamed,
+deleted, and eligible untracked Git content into a private content-addressed
+snapshot packet, then validate and inspect it without a provider call.
+Two-stage orchestration and OpenRouter integration remain unimplemented.
 
 Read [Architecture and roadmap](docs/architecture-and-roadmap.md) for component boundaries, contracts, milestones, and acceptance gates.
 The [review protocol specification](docs/review-protocol-spec.md) defines the
@@ -33,13 +34,32 @@ Deterministic snapshot and blind-brief identities are accepted in
 - Validated JSON and Markdown reports with bounded review loops.
 - AI Central skill integration.
 
+## Snapshot CLI
+
+Build, prepare a request, and inspect the resulting packet:
+
+```sh
+npm run build
+node dist/src/cli.js prepare --request ./request.json
+node dist/src/cli.js inspect --packet ./.review-runs/<snapshot-id>
+```
+
+Use `--base <ref>` to override base resolution and `--output <new-directory>`
+to choose the packet directory. `prepare` never overwrites an existing packet.
+It stores the manifest, canonical inputs, optional author packet, and captured
+blobs as separate private files. `inspect --json` prints the validated neutral
+snapshot material but only reports whether a separate author packet exists.
+The request fixture and schema show the current input shape.
+
+Capture defaults to a 512 KiB per-file limit. Secret-like basenames (`.env`,
+`.env.*`, `*.pem`, and `*.key`), oversized files, submodules, and unsupported
+entry kinds are excluded visibly rather than silently transmitted.
+
 ## Next step
 
-Implement cumulative Git capture behind the snapshot contract, including
-committed, staged, unstaged, renamed, deleted, and eligible untracked content
-plus race detection. Packet construction and inspection follow once capture can
-produce real finalized manifests. The model/provider choice and numerical
-budgets remain gated on the small evaluation described in milestone 4.
+Implement the small two-stage OpenRouter flow: construct the neutral brief,
+persist a blind preliminary assessment, then send the separately stored author
+packet and validate the final Ready/Not Ready report.
 
 ## Development context
 
