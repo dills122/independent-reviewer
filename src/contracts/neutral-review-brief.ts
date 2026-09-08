@@ -6,6 +6,7 @@ import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 import { PersistedCanonicalInputsV1Schema } from "./review-request.js";
 import {
   DigestV1Schema,
+  type SnapshotContentV1,
   SnapshotManifestV1Schema,
   SnapshotPathV1Schema,
 } from "./snapshot-manifest.js";
@@ -94,26 +95,33 @@ function sameProvenance(
 
 type SnapshotPathEntryV1 = z.infer<typeof SnapshotManifestV1Schema>["paths"][number];
 
-function sourcePathExists(
+function sourceContentAt(
   entry: SnapshotPathEntryV1,
   path: string,
   side: "BASE" | "HEAD",
-): boolean {
+): SnapshotContentV1 | undefined {
   switch (entry.changeType) {
     case "ADDED":
     case "UNTRACKED":
-      return side === "HEAD" && entry.path === path;
+      return side === "HEAD" && entry.path === path ? entry.after : undefined;
     case "DELETED":
-      return side === "BASE" && entry.path === path;
+      return side === "BASE" && entry.path === path ? entry.before : undefined;
     case "MODIFIED":
     case "TYPE_CHANGED":
-      return entry.path === path;
+      if (entry.path !== path) {
+        return undefined;
+      }
+      return side === "BASE" ? entry.before : entry.after;
     case "RENAMED":
-      return side === "BASE" ? entry.previousPath === path : entry.path === path;
+      if (side === "BASE" && entry.previousPath === path) {
+        return entry.before;
+      }
+      return side === "HEAD" && entry.path === path ? entry.after : undefined;
     case "COPIED":
-      return side === "BASE"
-        ? entry.previousPath === path
-        : entry.path === path || entry.previousPath === path;
+      if (entry.previousPath === path) {
+        return entry.before;
+      }
+      return side === "HEAD" && entry.path === path ? entry.after : undefined;
   }
 }
 
@@ -250,17 +258,23 @@ export const NeutralReviewBriefV1Schema = z
           path: ["initialEvidence", index, "content"],
         });
       }
-      if (
-        evidence.type === "SOURCE_CONTEXT" &&
-        !brief.snapshotManifest.paths.some((entry) =>
-          sourcePathExists(entry, evidence.path, evidence.side),
-        )
-      ) {
-        context.addIssue({
-          code: "custom",
-          message: "must identify a path that exists on the declared source side",
-          path: ["initialEvidence", index, "side"],
-        });
+      if (evidence.type === "SOURCE_CONTEXT") {
+        const sourceContent = brief.snapshotManifest.paths
+          .map((entry) => sourceContentAt(entry, evidence.path, evidence.side))
+          .find((content) => content !== undefined);
+        if (sourceContent === undefined) {
+          context.addIssue({
+            code: "custom",
+            message: "must identify a path that exists on the declared source side",
+            path: ["initialEvidence", index, "side"],
+          });
+        } else if (sourceContent.kind !== "TEXT") {
+          context.addIssue({
+            code: "custom",
+            message: "SOURCE_CONTEXT requires text content on the declared source side",
+            path: ["initialEvidence", index, "type"],
+          });
+        }
       }
     });
   });

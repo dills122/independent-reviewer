@@ -1,5 +1,6 @@
 import * as z from "zod";
 
+import { canonicalizeJson } from "./canonical-json.js";
 import {
   CanonicalInputProvenanceV1Schema,
   FlowIdSchema,
@@ -115,7 +116,7 @@ export const SnapshotContentV1Schema = z.discriminatedUnion("kind", [
   UnsupportedContentV1Schema,
 ]);
 
-type SnapshotContentV1 = z.infer<typeof SnapshotContentV1Schema>;
+export type SnapshotContentV1 = z.infer<typeof SnapshotContentV1Schema>;
 
 function gitEntryCategory(content: SnapshotContentV1): string {
   switch (content.gitMode) {
@@ -293,6 +294,16 @@ export const SnapshotManifestV1Schema = z
           context.addIssue({
             code: "custom",
             message: "MODIFIED must preserve the Git entry category",
+            path: ["paths", index, "changeType"],
+          });
+        }
+        if (
+          path.changeType === "MODIFIED" &&
+          canonicalizeJson(path.before) === canonicalizeJson(path.after)
+        ) {
+          context.addIssue({
+            code: "custom",
+            message: "MODIFIED must change at least one persisted content property",
             path: ["paths", index, "changeType"],
           });
         }

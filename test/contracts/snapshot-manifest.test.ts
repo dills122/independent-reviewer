@@ -94,6 +94,33 @@ describe("SnapshotManifestV1Schema", () => {
     assert.equal(SnapshotManifestV1Schema.safeParse(fixture).success, false);
   });
 
+  it("rejects a MODIFIED entry whose before and after states are identical", async () => {
+    const fixture = structuredClone(await readFixture()) as {
+      paths: Array<{ changeType: string; before: unknown; after: unknown }>;
+    };
+    const modified = fixture.paths.find((path) => path.changeType === "MODIFIED");
+    assert.ok(modified);
+    modified.after = structuredClone(modified.before);
+
+    assert.equal(SnapshotManifestV1Schema.safeParse(fixture).success, false);
+  });
+
+  it("accepts a MODIFIED entry containing only a regular-file mode change", async () => {
+    const fixture = structuredClone(await readFixture()) as {
+      paths: Array<{
+        changeType: string;
+        before: null | { gitMode: string };
+        after: null | { gitMode: string };
+      }>;
+    };
+    const modified = fixture.paths.find((path) => path.changeType === "MODIFIED");
+    assert.ok(modified?.before && modified.after);
+    modified.after = structuredClone(modified.before);
+    modified.after.gitMode = "100755";
+
+    assert.equal(SnapshotManifestV1Schema.safeParse(fixture).success, true);
+  });
+
   it("requires base and head commits to use the same Git object format", async () => {
     const fixture = structuredClone(await readFixture()) as {
       source: { headCommit: string };

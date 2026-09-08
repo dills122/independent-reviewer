@@ -312,6 +312,90 @@ describe("NeutralReviewBriefV1Schema", () => {
     assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, true);
   });
 
+  it("allows text context on each valid rename and copy side", async () => {
+    const validAnchors = [
+      { changeType: "RENAMED", path: "docs/old-name.md", side: "BASE" },
+      { changeType: "RENAMED", path: "docs/current-name.md", side: "HEAD" },
+      { changeType: "COPIED", path: "docs/old-name.md", side: "BASE" },
+      { changeType: "COPIED", path: "docs/old-name.md", side: "HEAD" },
+      { changeType: "COPIED", path: "docs/current-name.md", side: "HEAD" },
+    ] as const;
+
+    for (const anchor of validAnchors) {
+      const brief = (await createValidBrief()) as {
+        snapshotManifest: { paths: Array<{ changeType: string }> };
+        initialEvidence: Array<{ type: string; path: string; side?: string }>;
+      };
+      const relocated = brief.snapshotManifest.paths.find((path) => path.changeType === "RENAMED");
+      const context = brief.initialEvidence.find((evidence) => evidence.type === "SOURCE_CONTEXT");
+      assert.ok(relocated && context);
+      relocated.changeType = anchor.changeType;
+      context.path = anchor.path;
+      context.side = anchor.side;
+
+      assert.equal(
+        NeutralReviewBriefV1Schema.safeParse(brief).success,
+        true,
+        `${anchor.changeType} ${anchor.path} must exist on ${anchor.side}`,
+      );
+    }
+  });
+
+  it("rejects source context for every non-text content kind", async () => {
+    const nonTextContents = [
+      {
+        kind: "BINARY",
+        digest: { algorithm: "SHA256", value: "a".repeat(64) },
+        byteLength: 10,
+        gitMode: "100644",
+        isGenerated: false,
+      },
+      {
+        kind: "SYMLINK",
+        digest: { algorithm: "SHA256", value: "a".repeat(64) },
+        byteLength: 10,
+        gitMode: "120000",
+        isGenerated: false,
+      },
+      {
+        kind: "SUBMODULE",
+        digest: { algorithm: "SHA256", value: "a".repeat(64) },
+        byteLength: 10,
+        gitMode: "160000",
+        isGenerated: false,
+      },
+      {
+        kind: "UNSUPPORTED",
+        gitMode: "040000",
+        isGenerated: false,
+        reason: "Tree content is not directly reviewable.",
+      },
+    ];
+
+    for (const content of nonTextContents) {
+      const brief = (await createValidBrief()) as {
+        snapshotManifest: {
+          paths: Array<{ changeType: string; path: string; after?: unknown }>;
+        };
+        initialEvidence: Array<{ type: string; path: string; side?: string }>;
+      };
+      const untracked = brief.snapshotManifest.paths.find(
+        (path) => path.changeType === "UNTRACKED",
+      );
+      const context = brief.initialEvidence.find((evidence) => evidence.type === "SOURCE_CONTEXT");
+      assert.ok(untracked && context);
+      untracked.after = content;
+      context.path = untracked.path;
+      context.side = "HEAD";
+
+      assert.equal(
+        NeutralReviewBriefV1Schema.safeParse(brief).success,
+        false,
+        `SOURCE_CONTEXT must reject ${content.kind}`,
+      );
+    }
+  });
+
   it("rejects an inverted source-context line range", async () => {
     const brief = (await createValidBrief()) as {
       initialEvidence: Array<{ type: string; startLine?: number; endLine?: number }>;

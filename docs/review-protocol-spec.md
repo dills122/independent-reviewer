@@ -242,10 +242,13 @@ versions, and stable capture-race evidence. It validates normalized relative
 paths, exact untracked-path accounting, Git kind/mode compatibility, and
 meaningful relocation paths. Git capture and per-content digest construction
 remain separate follow-on work. Base and head object IDs must use the same Git
-object format, `MODIFIED` preserves the regular-file/symlink/submodule category,
-and `TYPE_CHANGED` changes it. A persisted branch is either `null` or a concrete
-name satisfying Git's reference-format restrictions; revision expressions such
-as `bad..name` are rejected.[^git-check-ref-format] The identity finalizer now
+object format, `MODIFIED` preserves the regular-file/symlink/submodule category
+and must change at least one persisted before/after content property, while
+`TYPE_CHANGED` changes the category. Mode-only regular-file changes therefore
+remain valid `MODIFIED` entries, but identical states do not. A persisted branch
+is either `null` or a concrete name satisfying Git's reference-format
+restrictions; revision expressions such as `bad..name` are
+rejected.[^git-check-ref-format] The identity finalizer now
 validates digest-free manifest material, normalizes set-like ledgers, and
 computes a reproducible JCS/SHA-256 logical digest. Opaque run metadata and
 capture-attempt count do not alter that digest; changes to captured source or
@@ -275,8 +278,11 @@ criteria, canonical inputs, one complete snapshot manifest, bounded initial
 evidence, visible coverage constraints, and capability identifiers. Runtime
 validation rejects undeclared author fields, canonical-input identity mismatch,
 duplicate evidence identifiers, evidence outside the manifest, source context
-for a path/side that does not exist, invalid source ranges, and duplicate
-verification-check identifiers. Canonical-input reconciliation compares typed
+for a path/side that does not exist or whose captured content is not `TEXT`,
+invalid source ranges, and duplicate verification-check identifiers. For
+renames, base context resolves through the previous path and head context
+through the destination; copies additionally retain the previous path on the
+head side. Canonical-input reconciliation compares typed
 provenance fields rather than delimiter-joined text. Each initial-evidence
 digest is SHA-256 over the exact UTF-8 content, and source-context content must
 contain exactly the declared logical line count (with CRLF treated as one line
