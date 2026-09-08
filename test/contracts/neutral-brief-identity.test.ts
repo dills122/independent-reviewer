@@ -102,6 +102,31 @@ describe("neutral review brief identity", () => {
     assert.equal(verifyNeutralReviewBriefIdentityV1(brief), false);
   });
 
+  it("rejects a persisted brief with an omitted project-guidance ledger", async () => {
+    const draft = (await createBriefDraft()) as {
+      canonicalInputs: { projectGuidance?: unknown[] };
+      snapshotManifest: { canonicalInputs: Array<{ kind: string }> };
+    };
+    draft.canonicalInputs.projectGuidance = [];
+    const { snapshotDigest: _snapshotDigest, ...snapshotDraft } = draft.snapshotManifest as {
+      snapshotDigest: unknown;
+      canonicalInputs: Array<{ kind: string }>;
+    };
+    snapshotDraft.canonicalInputs = snapshotDraft.canonicalInputs.filter(
+      (input) => input.kind !== "PROJECT_GUIDANCE",
+    );
+    draft.snapshotManifest = finalizeSnapshotManifestV1(
+      snapshotDraft,
+    ) as typeof draft.snapshotManifest;
+
+    const brief = finalizeNeutralReviewBriefV1(draft) as unknown as {
+      canonicalInputs: { projectGuidance?: unknown[] };
+    };
+    delete brief.canonicalInputs.projectGuidance;
+
+    assert.equal(verifyNeutralReviewBriefIdentityV1(brief), false);
+  });
+
   it("rejects an invalid embedded snapshot identity", async () => {
     const draft = (await createBriefDraft()) as {
       snapshotManifest: { source: { branch: string | null } };

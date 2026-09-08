@@ -59,6 +59,11 @@ runtime contract, and return a finalized artifact. Verification APIs validate
 the contract and recompute the digest. Merely parsing a digest field is not an
 identity verification.
 
+Caller-input defaults are materialized before an artifact crosses the
+persisted boundary. Persisted schemas and verification APIs require every
+identity-bound field explicitly; they never restore omitted fields while
+checking a stored artifact.
+
 ## Alternatives considered
 
 ### Plain `JSON.stringify`
@@ -100,6 +105,8 @@ adopted later only with compatibility tests proving identical bytes.
 - Snapshot capture must digest raw captured file content separately before
   artifact finalization. This ADR does not define Git capture or file-byte
   hashing.
+- Request JSON Schema describes caller input, while snapshot and neutral-brief
+  JSON Schemas describe fully materialized output.
 
 [^jcs]: RFC Editor, [RFC 8785 — JSON Canonicalization Scheme](https://www.rfc-editor.org/rfc/rfc8785.html).
 [^node-crypto]: Node.js, [`crypto.createHash`, `hash.update`, and `hash.digest`](https://nodejs.org/docs/latest-v24.x/api/crypto.html#cryptocreatehashalgorithm-options).

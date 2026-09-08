@@ -208,6 +208,12 @@ Its committed structural JSON Schema describes caller input; defaulted fields
 remain optional at the serialized boundary and are materialized during local
 semantic validation.
 
+Persisted contracts do not apply caller defaults. A finalized snapshot must
+carry `reviewInstance.maximum`, and a finalized neutral brief must carry an
+explicit `canonicalInputs.projectGuidance` ledger even when it is empty. Their
+committed JSON Schemas describe materialized output, and identity verification
+rejects incomplete artifacts instead of normalizing them.
+
 ### Snapshot manifest
 
 The snapshot manifest records:

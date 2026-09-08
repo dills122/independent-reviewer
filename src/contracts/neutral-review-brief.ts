@@ -2,7 +2,7 @@ import * as z from "zod";
 
 import { computeCanonicalInputDigestV1 } from "./canonical-input-identity.js";
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
-import { CanonicalInputsV1Schema } from "./review-request.js";
+import { PersistedCanonicalInputsV1Schema } from "./review-request.js";
 import {
   DigestV1Schema,
   SnapshotManifestV1Schema,
@@ -89,7 +89,7 @@ export const NeutralReviewBriefV1Schema = z
     briefDigest: DigestV1Schema,
     objective: CanonicalStatementV1Schema,
     successCriteria: z.array(CanonicalStatementV1Schema).min(1),
-    canonicalInputs: CanonicalInputsV1Schema,
+    canonicalInputs: PersistedCanonicalInputsV1Schema,
     snapshotManifest: SnapshotManifestV1Schema,
     initialEvidence: z.array(InitialEvidenceV1Schema),
     coverageConstraints: z.array(
@@ -219,6 +219,6 @@ export const NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA = {
   $comment: STRUCTURAL_JSON_SCHEMA_COMMENT_V1,
   ...z.toJSONSchema(NeutralReviewBriefV1Schema, {
     target: "draft-2020-12",
-    io: "input",
+    io: "output",
   }),
 };

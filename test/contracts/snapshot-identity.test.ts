@@ -72,6 +72,15 @@ describe("snapshot manifest identity", () => {
     assert.equal(verifySnapshotManifestIdentityV1(manifest), false);
   });
 
+  it("rejects a persisted manifest with an omitted review-instance maximum", async () => {
+    const manifest = finalizeSnapshotManifestV1(await readSnapshotDraft()) as unknown as {
+      reviewInstance: { maximum?: number };
+    };
+    delete manifest.reviewInstance.maximum;
+
+    assert.equal(verifySnapshotManifestIdentityV1(manifest), false);
+  });
+
   it("rejects invalid draft material before hashing", async () => {
     const draft = { ...(await readSnapshotDraft()), unexpected: true };
 

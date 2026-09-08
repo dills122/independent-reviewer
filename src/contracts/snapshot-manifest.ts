@@ -3,7 +3,7 @@ import * as z from "zod";
 import {
   CanonicalInputProvenanceV1Schema,
   FlowIdSchema,
-  ReviewInstanceV1Schema,
+  PersistedReviewInstanceV1Schema,
 } from "./review-request.js";
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 
@@ -161,7 +161,7 @@ export const SnapshotManifestV1Schema = z
     schemaVersion: z.literal(1),
     snapshotId: prefixedIdentifier("snapshot"),
     flowId: FlowIdSchema,
-    reviewInstance: ReviewInstanceV1Schema,
+    reviewInstance: PersistedReviewInstanceV1Schema,
     source: z.strictObject({
       repositoryId: prefixedIdentifier("repo"),
       baseCommit: GitObjectIdSchema,
@@ -276,6 +276,6 @@ export const SNAPSHOT_MANIFEST_V1_JSON_SCHEMA = {
   $comment: STRUCTURAL_JSON_SCHEMA_COMMENT_V1,
   ...z.toJSONSchema(SnapshotManifestV1Schema, {
     target: "draft-2020-12",
-    io: "input",
+    io: "output",
   }),
 };

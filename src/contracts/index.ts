@@ -31,6 +31,8 @@ export {
   CanonicalInputV1Schema,
   FlowIdSchema,
   ImplementationPlanInputV1Schema,
+  PersistedCanonicalInputsV1Schema,
+  PersistedReviewInstanceV1Schema,
   ProjectGuidanceInputV1Schema,
   REVIEW_REQUEST_V1_JSON_SCHEMA,
   RequirementsInputV1Schema,

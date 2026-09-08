@@ -267,4 +267,12 @@ describe("NeutralReviewBriefV1Schema", () => {
 
     assert.deepEqual(JSON.parse(contents), NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA);
   });
+
+  it("exports a materialized artifact schema with an explicit guidance ledger", () => {
+    const schema = NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA as {
+      properties?: { canonicalInputs?: { required?: string[] } };
+    };
+
+    assert.ok(schema.properties?.canonicalInputs?.required?.includes("projectGuidance"));
+  });
 });

@@ -113,4 +113,12 @@ describe("SnapshotManifestV1Schema", () => {
 
     assert.deepEqual(JSON.parse(contents), SNAPSHOT_MANIFEST_V1_JSON_SCHEMA);
   });
+
+  it("exports a materialized artifact schema with an explicit instance maximum", () => {
+    const schema = SNAPSHOT_MANIFEST_V1_JSON_SCHEMA as {
+      properties?: { reviewInstance?: { required?: string[] } };
+    };
+
+    assert.ok(schema.properties?.reviewInstance?.required?.includes("maximum"));
+  });
 });
