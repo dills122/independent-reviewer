@@ -49,4 +49,4 @@ export {
   SnapshotPathEntryV1Schema,
   SnapshotPathV1Schema,
 } from "./snapshot-manifest.js";
-export type { DigestV1, SnapshotManifestV1 } from "./snapshot-manifest.js";
+export type { DigestV1, SnapshotContentV1, SnapshotManifestV1 } from "./snapshot-manifest.js";
