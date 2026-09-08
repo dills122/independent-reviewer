@@ -14,10 +14,16 @@ const PLACEHOLDER_DIGEST: DigestV1 = {
   value: "0".repeat(64),
 };
 
-function compareCanonical(left: unknown, right: unknown): number {
+/** Ascending lexicographic comparison of ECMAScript UTF-16 code units. */
+function compareUtf16(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** Orders a set entry by its complete RFC 8785 canonical JSON serialization. */
+function compareCanonicalJsonUtf16(left: unknown, right: unknown): number {
   const serializedLeft = canonicalizeJson(left);
   const serializedRight = canonicalizeJson(right);
-  return serializedLeft < serializedRight ? -1 : serializedLeft > serializedRight ? 1 : 0;
+  return compareUtf16(serializedLeft, serializedRight);
 }
 
 function addOwnField(
@@ -67,12 +73,14 @@ function snapshotIdentityPayload(input: SnapshotManifestIdentityInputV1): unknow
       ...logicalSnapshot,
       workingTree: {
         ...logicalSnapshot.workingTree,
-        includedUntrackedPaths: [...logicalSnapshot.workingTree.includedUntrackedPaths].sort(),
+        includedUntrackedPaths: [...logicalSnapshot.workingTree.includedUntrackedPaths].sort(
+          compareUtf16,
+        ),
       },
-      paths: [...logicalSnapshot.paths].sort(compareCanonical),
-      exclusions: [...logicalSnapshot.exclusions].sort(compareCanonical),
-      omissions: [...logicalSnapshot.omissions].sort(compareCanonical),
-      canonicalInputs: [...logicalSnapshot.canonicalInputs].sort(compareCanonical),
+      paths: [...logicalSnapshot.paths].sort(compareCanonicalJsonUtf16),
+      exclusions: [...logicalSnapshot.exclusions].sort(compareCanonicalJsonUtf16),
+      omissions: [...logicalSnapshot.omissions].sort(compareCanonicalJsonUtf16),
+      canonicalInputs: [...logicalSnapshot.canonicalInputs].sort(compareCanonicalJsonUtf16),
       captureState: {
         status: raceCheck.status,
         beforeStateDigest: raceCheck.beforeStateDigest,
@@ -90,7 +98,7 @@ function computeParsedSnapshotDigest(input: SnapshotManifestIdentityInputV1): Di
  * Computes the logical snapshot digest after strict input validation.
  *
  * Opaque artifact/run IDs and capture-attempt count are excluded. Set-like
- * ledgers are sorted before RFC 8785 canonicalization.
+ * ledgers are sorted by the identity profile before RFC 8785 canonicalization.
  */
 export function computeSnapshotManifestDigestV1(value: unknown): DigestV1 {
   return computeParsedSnapshotDigest(parseSnapshotIdentityInput(value));

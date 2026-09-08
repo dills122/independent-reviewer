@@ -50,6 +50,26 @@ describe("snapshot manifest identity", () => {
     );
   });
 
+  it("uses UTF-16 ordering for set-like ledger entries", async () => {
+    const draft = (await readSnapshotDraft()) as {
+      exclusions: Array<{
+        path: string;
+        reason: "USER_EXCLUDED";
+        detail: string;
+      }>;
+    };
+    draft.exclusions = [
+      { path: "\u{e000}.txt", reason: "USER_EXCLUDED", detail: "unicode ordering vector" },
+      { path: "\u{1f600}.txt", reason: "USER_EXCLUDED", detail: "unicode ordering vector" },
+    ];
+    const reversed = structuredClone(draft);
+    reversed.exclusions.reverse();
+
+    const expected = "b74c3d3bcb6512857e8a0cd383a54531baf9e6f07a5049e8a6dd9cc517cf2159";
+    assert.equal(finalizeSnapshotManifestV1(draft).snapshotDigest.value, expected);
+    assert.equal(finalizeSnapshotManifestV1(reversed).snapshotDigest.value, expected);
+  });
+
   it("changes when captured content identity changes", async () => {
     const draft = await readSnapshotDraft();
     const changed = structuredClone(draft) as {

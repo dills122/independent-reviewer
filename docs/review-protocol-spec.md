@@ -252,7 +252,10 @@ rejected.[^git-check-ref-format] The identity finalizer now
 validates digest-free manifest material, normalizes set-like ledgers, and
 computes a reproducible JCS/SHA-256 logical digest. Opaque run metadata and
 capture-attempt count do not alter that digest; changes to captured source or
-content identity do. Canonical-input digests bind the complete validated input,
+content identity do. Set-like ledgers use ascending ECMAScript UTF-16 ordering:
+directly for string entries and over the complete RFC 8785 serialization for
+object entries, without locale collation or Unicode normalization.
+Canonical-input digests bind the complete validated input,
 and neutral-brief validation reconciles those digests with its embedded
 canonical content. Raw captured-file digest construction remains deferred.
 

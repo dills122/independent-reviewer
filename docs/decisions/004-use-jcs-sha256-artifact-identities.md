@@ -49,7 +49,11 @@ separation:
   opaque snapshot, flow, and review-instance IDs, the self-referential digest,
   and capture-attempt count. It includes the stable capture-state digests.
   Set-like path, exclusion, omission, canonical-input, and untracked-path
-  ledgers are sorted before canonicalization.
+  ledgers are sorted before canonicalization. String-only ledgers use ascending
+  lexicographic ECMAScript UTF-16 code-unit order. Object-entry ledgers use that
+  same order over each entry's complete RFC 8785 canonical JSON serialization.
+  Implementations must not substitute locale collation, Unicode scalar-value or
+  UTF-8 byte ordering, or Unicode normalization.
 - Neutral-brief identity represents the exact ordered blind-stage artifact. It
   excludes only the opaque brief ID and self-referential brief digest. It
   includes the complete embedded manifest, canonical inputs, evidence order,
@@ -99,7 +103,9 @@ adopted later only with compatibility tests proving identical bytes.
 ## Consequences
 
 - Identity behavior is language-neutral at the persisted boundary and pinned
-  by RFC vectors plus golden snapshot and neutral-brief digests.
+  by RFC vectors plus golden snapshot and neutral-brief digests. The snapshot
+  vectors include U+1F600 and U+E000 entries, whose UTF-16 ordering differs from
+  Unicode scalar-value and UTF-8 ordering.
 - Array order remains meaningful unless an artifact-specific projection
   explicitly declares the array a set-like ledger.
 - Adding or removing identity fields, changing ledger normalization, or changing
