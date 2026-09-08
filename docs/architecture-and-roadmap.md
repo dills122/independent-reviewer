@@ -119,9 +119,9 @@ empty model turn. See
 
 Use schema-constrained output when supported and validate responses locally
 regardless.[^or-structured] Set `require_parameters: true` so routing does not
-silently ignore requested capabilities. Prefer an explicit provider policy and
-disable fallback for initial reproducibility; a later declared provider
-allowlist must record the actual route.[^or-routing]
+silently ignore requested capabilities. Use a configured two-endpoint provider
+allowlist with same-model fallback and a hard provider price ceiling. Record the
+actual route; model fallback remains disabled.[^or-routing]
 
 Explicitly disable provider context compression because it can remove or
 truncate messages from the middle.[^or-transforms] Disable response caching for
@@ -177,14 +177,16 @@ token-unit reservation when retransmitting the preliminary result, and retains
 reservations when usage is missing or malformed. It also rejects a known
 author-inclusive final conversation skeleton that exceeds the byte cap before
 making call one, then rechecks the actual preliminary content before call two.
-Its private run record binds
-each attempt to the provider-policy version and credential-free wire/body
-digests and records stage, identity, timing, route, valid usage, errors, and
-lifecycle-terminal events. The OpenRouter
-adapter uses
-strict structured output, an explicit model, no fallback or retry, ZDR-only
-routing, data-collection denial, disabled response caching, and disabled context
-compression. Provider failures retain bounded, API-key-redacted diagnostics for
+Its private run record binds each attempt to the provider-policy version and
+credential-free wire/body digests and records stage, identity, timing, route,
+valid usage, errors, and lifecycle-terminal events. The OpenRouter adapter uses
+strict structured output, an explicit model, same-model fallback inside a
+configured provider allowlist, hard price ceilings, ZDR-only routing,
+data-collection denial, disabled response caching, and disabled context
+compression. A definite final-stage provider 429 may be resumed once explicitly
+from the persisted preliminary assessment and exact original run configuration;
+uncertain transport and model changes are rejected. Provider failures retain
+bounded, API-key-redacted diagnostics for
 the typed error, selected route identifiers, and retry guidance without storing
 the unfiltered response body.[^or-structured][^or-routing][^or-transforms][^or-response-cache][^or-errors]
 The metered live smoke remains explicitly opt-in until a model and API key are
@@ -211,7 +213,7 @@ while retaining its original fresh-task workflow as a fallback.
 
 - broad model comparisons or a large quality-evaluation framework;
 - isolated or containerized execution of arbitrary repository tests;
-- multiple providers, fallback routing, or distributed resumability; and
+- broader provider pools, model fallback, or distributed resumability; and
 - any GitHub/GitLab bot, webhook service, database, daemon, or web UI.
 
 A few focused known-defect and clean fixtures remain part of Slice 2; they are
@@ -234,9 +236,11 @@ Exact working-tree and author-packet options follow the capture contract. A fail
 
 ## Decisions to settle before live use
 
-The first smoke-test model and provider policy; representative numerical token
-and cost budgets; repository configuration; and the private run-directory
-default remain open. Runtime and development dependencies are exact-pinned.
+Production model/provider selection, representative numerical token and cost
+budgets, repository configuration, and the private run-directory default remain
+open. The first smoke uses the accepted bounded policy from the
+[provider failover research spike](research/2026-09-08-openrouter-provider-failover-and-cost-spike.md).
+Runtime and development dependencies are exact-pinned.
 
 The initial scope now includes cumulative working-tree snapshots. The base
 resolves from an explicit value, repository configuration, branch upstream, or

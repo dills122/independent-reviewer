@@ -48,7 +48,8 @@ To validate the source checkout:
 ## Runtime integration
 
 The engine now exposes a complete local `review --request <path> --config
-<path>` flow. The live AI Central skill keeps the retained reference above
-unchanged, uses the external engine only when that metered disclosure is
-explicitly authorized, and otherwise preserves its existing fresh-task review
-workflow.
+<path>` flow plus `resume-final --packet <path> --config <path>` for one explicit
+retry after a definite final-stage provider 429. The live AI Central skill keeps
+the retained reference above unchanged, uses the external engine only when that
+metered disclosure is explicitly authorized, and otherwise preserves its
+existing fresh-task review workflow.
