@@ -40,6 +40,9 @@ used, so this decision adds no runtime dependency.[^node-crypto]
 Every artifact payload includes a versioned identity-profile URN for domain
 separation:
 
+- Canonical-input identity binds the complete validated input, including its
+  ID, kind, title, content, and provenance. A neutral brief must reconcile each
+  embedded input with the corresponding digest in its snapshot manifest.
 - Snapshot identity represents logical frozen review content. It excludes the
   opaque snapshot, flow, and review-instance IDs, the self-referential digest,
   and capture-attempt count. It includes the stable capture-state digests.
@@ -92,8 +95,9 @@ adopted later only with compatibility tests proving identical bytes.
   the canonicalization profile requires an explicit identity-profile revision.
 - The serializer is intentionally stricter than `JSON.stringify`; callers must
   supply validated JSON data rather than class instances or lossy values.
-- Snapshot capture must digest raw captured content separately before artifact
-  finalization. This ADR does not define Git capture or file-byte hashing.
+- Snapshot capture must digest raw captured file content separately before
+  artifact finalization. This ADR does not define Git capture or file-byte
+  hashing.
 
 [^jcs]: RFC Editor, [RFC 8785 — JSON Canonicalization Scheme](https://www.rfc-editor.org/rfc/rfc8785.html).
 [^node-crypto]: Node.js, [`crypto.createHash`, `hash.update`, and `hash.digest`](https://nodejs.org/docs/latest-v24.x/api/crypto.html#cryptocreatehashalgorithm-options).

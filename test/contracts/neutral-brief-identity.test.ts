@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  computeCanonicalInputDigestV1,
   finalizeNeutralReviewBriefV1,
   finalizeSnapshotManifestV1,
   verifyNeutralReviewBriefIdentityV1,
@@ -28,13 +29,10 @@ async function createBriefDraft(): Promise<Record<string, unknown>> {
   ];
   const snapshot = await readFixture("snapshot-manifest.valid.json");
   const { snapshotDigest: _snapshotDigest, ...snapshotDraft } = snapshot;
-  snapshotDraft.canonicalInputs = allCanonicalInputs.map((input, index) => ({
+  snapshotDraft.canonicalInputs = allCanonicalInputs.map((input) => ({
     id: input.id,
     kind: input.kind,
-    digest: {
-      algorithm: "SHA256",
-      value: String(index + 4).repeat(64),
-    },
+    digest: computeCanonicalInputDigestV1(input),
     provenance: input.provenance,
   }));
 
@@ -69,7 +67,7 @@ describe("neutral review brief identity", () => {
     assert.equal(brief.briefDigest.algorithm, "SHA256");
     assert.equal(
       brief.briefDigest.value,
-      "55917588015c09eaa366edf92418547b8943602096bdea4ce084c621f75ea952",
+      "5c39a00631e45822789154efc7fc2b0d5ab189b1d5d2b0d86a7f36e43e0e745f",
     );
     assert.equal(verifyNeutralReviewBriefIdentityV1(brief), true);
   });

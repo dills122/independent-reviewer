@@ -225,7 +225,9 @@ construction remain separate follow-on work. The identity finalizer now
 validates digest-free manifest material, normalizes set-like ledgers, and
 computes a reproducible JCS/SHA-256 logical digest. Opaque run metadata and
 capture-attempt count do not alter that digest; changes to captured source or
-content identity do.
+content identity do. Canonical-input digests bind the complete validated input,
+and neutral-brief validation reconciles those digests with its embedded
+canonical content. Raw captured-file digest construction remains deferred.
 
 ### Neutral review brief
 

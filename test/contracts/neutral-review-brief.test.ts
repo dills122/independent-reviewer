@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  computeCanonicalInputDigestV1,
   NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,
   NeutralReviewBriefV1Schema,
 } from "../../src/index.js";
@@ -18,6 +19,18 @@ async function readFixture(name: string): Promise<Record<string, unknown>> {
 async function createValidBrief(): Promise<Record<string, unknown>> {
   const snapshotManifest = await readFixture("snapshot-manifest.valid.json");
   const request = await readFixture("review-request.valid.json");
+  const canonicalInputs = request.canonicalInputs as {
+    requirements: Array<Record<string, unknown>>;
+    implementationPlan: Record<string, unknown>;
+    projectGuidance: Array<Record<string, unknown>>;
+  };
+  const canonicalInputById = new Map(
+    [
+      ...canonicalInputs.requirements,
+      canonicalInputs.implementationPlan,
+      ...canonicalInputs.projectGuidance,
+    ].map((input) => [input.id, input]),
+  );
 
   return {
     schemaVersion: 1,
@@ -36,17 +49,14 @@ async function createValidBrief(): Promise<Record<string, unknown>> {
         canonicalInputIds: ["input_review_protocol"],
       },
     ],
-    canonicalInputs: request.canonicalInputs,
+    canonicalInputs,
     snapshotManifest: {
       ...snapshotManifest,
       canonicalInputs: [
         {
           id: "input_review_protocol",
           kind: "REQUIREMENTS",
-          digest: {
-            algorithm: "SHA256",
-            value: "2".repeat(64),
-          },
+          digest: computeCanonicalInputDigestV1(canonicalInputById.get("input_review_protocol")),
           provenance: {
             type: "REPOSITORY_FILE",
             path: "docs/review-protocol-spec.md",
@@ -56,10 +66,9 @@ async function createValidBrief(): Promise<Record<string, unknown>> {
         {
           id: "input_architecture_roadmap",
           kind: "IMPLEMENTATION_PLAN",
-          digest: {
-            algorithm: "SHA256",
-            value: "5".repeat(64),
-          },
+          digest: computeCanonicalInputDigestV1(
+            canonicalInputById.get("input_architecture_roadmap"),
+          ),
           provenance: {
             type: "REPOSITORY_FILE",
             path: "docs/architecture-and-roadmap.md",
@@ -69,10 +78,9 @@ async function createValidBrief(): Promise<Record<string, unknown>> {
         {
           id: "input_repository_steering",
           kind: "PROJECT_GUIDANCE",
-          digest: {
-            algorithm: "SHA256",
-            value: "6".repeat(64),
-          },
+          digest: computeCanonicalInputDigestV1(
+            canonicalInputById.get("input_repository_steering"),
+          ),
           provenance: {
             type: "REPOSITORY_FILE",
             path: ".codex/steering/repository-steering.md",
@@ -158,6 +166,19 @@ describe("NeutralReviewBriefV1Schema", () => {
     const requirement = brief.snapshotManifest.canonicalInputs[0];
     assert.ok(requirement);
     requirement.provenance.path = "docs/different-source.md";
+
+    assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, false);
+  });
+
+  it("rejects canonical content that does not match its manifest digest", async () => {
+    const brief = (await createValidBrief()) as {
+      canonicalInputs: {
+        requirements: Array<{ content: string }>;
+      };
+    };
+    const requirement = brief.canonicalInputs.requirements[0];
+    assert.ok(requirement);
+    requirement.content = "Changed requirements under a stale manifest digest.";
 
     assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, false);
   });

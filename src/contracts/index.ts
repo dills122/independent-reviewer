@@ -10,6 +10,7 @@ export type {
   NeutralReviewBriefIdentityInputV1,
   SnapshotManifestIdentityInputV1,
 } from "./artifact-identity.js";
+export { computeCanonicalInputDigestV1 } from "./canonical-input-identity.js";
 export {
   canonicalizeJson,
   digestCanonicalJson,
@@ -35,7 +36,7 @@ export {
   ReviewInstanceV1Schema,
   ReviewRequestV1Schema,
 } from "./review-request.js";
-export type { AuthorPacketV1, ReviewRequestV1 } from "./review-request.js";
+export type { AuthorPacketV1, CanonicalInputV1, ReviewRequestV1 } from "./review-request.js";
 export {
   DigestV1Schema,
   SNAPSHOT_MANIFEST_V1_JSON_SCHEMA,

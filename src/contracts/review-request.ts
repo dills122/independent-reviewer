@@ -166,6 +166,7 @@ export const ReviewRequestV1Schema = z.strictObject({
 });
 
 export type AuthorPacketV1 = z.infer<typeof AuthorPacketV1Schema>;
+export type CanonicalInputV1 = z.infer<typeof CanonicalInputV1Schema>;
 export type ReviewRequestV1 = z.infer<typeof ReviewRequestV1Schema>;
 
 export const REVIEW_REQUEST_V1_JSON_SCHEMA = {

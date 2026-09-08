@@ -1,5 +1,6 @@
 import * as z from "zod";
 
+import { computeCanonicalInputDigestV1 } from "./canonical-input-identity.js";
 import { CanonicalInputsV1Schema } from "./review-request.js";
 import {
   DigestV1Schema,
@@ -120,10 +121,16 @@ export const NeutralReviewBriefV1Schema = z
         ? `${provenance.type}:${provenance.path}:${provenance.revision ?? ""}`
         : `${provenance.type}:${provenance.label}`;
     const expectedIdentities = canonicalInputs
-      .map((input) => `${input.kind}:${input.id}:${provenanceIdentity(input.provenance)}`)
+      .map(
+        (input) =>
+          `${input.kind}:${input.id}:${provenanceIdentity(input.provenance)}:${computeCanonicalInputDigestV1(input).value}`,
+      )
       .sort();
     const manifestIdentities = brief.snapshotManifest.canonicalInputs
-      .map((input) => `${input.kind}:${input.id}:${provenanceIdentity(input.provenance)}`)
+      .map(
+        (input) =>
+          `${input.kind}:${input.id}:${provenanceIdentity(input.provenance)}:${input.digest.value}`,
+      )
       .sort();
     if (
       expectedIdentities.length !== manifestIdentities.length ||
