@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, readFile, readlink, realpath } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 
 import {
   computeCanonicalInputDigestV1,
@@ -34,6 +34,7 @@ export class SnapshotCaptureError extends Error {
 
 export interface CaptureGitSnapshotOptionsV1 {
   base?: string;
+  excludedFileSystemPaths?: string[];
   maxAttempts?: number;
   maxFileBytes?: number;
 }
@@ -309,6 +310,7 @@ async function collectState(
   captureWorkingTree: boolean,
   includeUntracked: boolean,
   maxFileBytes: number,
+  excludedPaths: ReadonlySet<string>,
 ): Promise<CollectedState> {
   const observedHeadCommit = captureWorkingTree
     ? await gitText(repositoryPath, ["rev-parse", "--verify", "HEAD^{commit}"])
@@ -340,6 +342,15 @@ async function collectState(
 
   for (const spec of specs) {
     const relevantPaths = spec.previousPath ? [spec.previousPath, spec.path] : [spec.path];
+    const callerExcludedPath = relevantPaths.find((path) => excludedPaths.has(path));
+    if (callerExcludedPath) {
+      exclusions.push({
+        path: callerExcludedPath,
+        reason: "RUNNER_CONTROL",
+        detail: "Excluded by the caller control-file policy.",
+      });
+      continue;
+    }
     const secretPath = relevantPaths.find(isSecretPath);
     if (secretPath) {
       exclusions.push({
@@ -564,6 +575,34 @@ export async function captureGitSnapshotV1(
   if (!Number.isInteger(maxFileBytes) || maxFileBytes < 1) {
     throw new RangeError("maxFileBytes must be a positive integer");
   }
+  const excludedPaths = new Set(
+    (
+      await Promise.all(
+        (options.excludedFileSystemPaths ?? []).map(async (absolutePath) => {
+          if (!isAbsolute(absolutePath)) {
+            throw new TypeError("excludedFileSystemPaths entries must be absolute paths");
+          }
+          try {
+            return await realpath(absolutePath);
+          } catch {
+            return absolutePath;
+          }
+        }),
+      )
+    ).flatMap((absolutePath) => {
+      const repositoryRelativePath = relative(repositoryPath, absolutePath);
+      if (
+        repositoryRelativePath === "" ||
+        repositoryRelativePath === ".." ||
+        repositoryRelativePath.startsWith("../") ||
+        repositoryRelativePath.startsWith("..\\") ||
+        isAbsolute(repositoryRelativePath)
+      ) {
+        return [];
+      }
+      return [validateSnapshotPath(repositoryRelativePath)];
+    }),
+  );
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const first = await collectState(
@@ -573,6 +612,7 @@ export async function captureGitSnapshotV1(
       captureWorkingTree,
       request.repository.workingTree.includeUntracked,
       maxFileBytes,
+      excludedPaths,
     );
     const second = await collectState(
       repositoryPath,
@@ -581,6 +621,7 @@ export async function captureGitSnapshotV1(
       captureWorkingTree,
       request.repository.workingTree.includeUntracked,
       maxFileBytes,
+      excludedPaths,
     );
     if (first.stateDigest.value !== second.stateDigest.value) {
       continue;

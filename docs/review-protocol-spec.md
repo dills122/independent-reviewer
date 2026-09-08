@@ -632,28 +632,27 @@ Capture reads Git metadata and file content, validates the boundary afterward,
 and retries a bounded number of times or fails on a race. Review-time evidence
 always comes from the frozen snapshot, never the live checkout.
 
-## Proposed CLI boundary
+## CLI boundary
 
 The initial command families remain:
 
 ```text
 independent-reviewer prepare --request <path> [--base <ref>]
 independent-reviewer inspect --packet <path>
-independent-reviewer review --packet <path> --config <path>
-independent-reviewer report --run <id> --format json|markdown
+independent-reviewer review --request <path> --config <path> [--base <ref>] [--output <path>]
 ```
 
 `prepare` performs no provider call. It now writes packet metadata, the
 manifest, canonical inputs, optional author packet, and content-addressed blobs
 as separate private files. `inspect` verifies the manifest and every referenced blob before showing
 the neutral snapshot; it does not print the separately stored author packet.
-Small-change transmission-plan construction is implemented and fails visibly
-when the complete initial evidence exceeds its configured byte budget. `review`
-and `report` remain proposed commands for the final CLI-integration slice.
-
-Exact convenience flags can be added after the request, packet, and run-record
-schemas are accepted. A single `review --repo .` workflow may compose these
-commands later without weakening their boundaries.
+Small-change transmission-plan construction fails visibly when the complete
+initial evidence exceeds its configured byte budget. `review` validates the
+request and config, excludes those runner-control files from captured evidence,
+creates the packet, runs both provider stages, and prints the rendered report
+path. It reads `OPENROUTER_API_KEY` only from the environment. Exit `0` is a
+ready outcome, `2` is `Not ready`, `3` is `Unable to verify`, `4` is
+transport-uncertain, and other failures use `1`.
 
 ## Logical module boundaries
 

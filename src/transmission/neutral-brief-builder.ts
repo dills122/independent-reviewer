@@ -81,11 +81,13 @@ export async function buildNeutralReviewBriefV1(
   }
 
   const coverageConstraints = [
-    ...packet.manifest.exclusions.map((exclusion) => ({
-      type: "EXCLUDED_PATH" as const,
-      detail: `${exclusion.reason}: ${exclusion.detail}`,
-      paths: [exclusion.path],
-    })),
+    ...packet.manifest.exclusions
+      .filter((exclusion) => exclusion.reason !== "RUNNER_CONTROL")
+      .map((exclusion) => ({
+        type: "EXCLUDED_PATH" as const,
+        detail: `${exclusion.reason}: ${exclusion.detail}`,
+        paths: [exclusion.path],
+      })),
     ...packet.manifest.omissions.map((omission) => ({
       type: "OMITTED_CONTENT" as const,
       detail: `${omission.scope}: ${omission.reason}: ${omission.detail}`,

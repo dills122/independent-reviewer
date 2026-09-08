@@ -24,8 +24,9 @@ instance handling; identity normalization; and post-finalization tamper
 detection. Git integration tests additionally use temporary real repositories
 to cover committed, staged, unstaged, renamed, deleted, untracked, excluded,
 and remote-default scope plus content-addressed packet writing, inspection, and
-tamper detection. The CLI test proves provider-free `prepare`/`inspect`
-composition.
+tamper detection. CLI integration tests prove provider-free `prepare`/`inspect`,
+request/config control-file exclusion, environment-only credential loading,
+stable verdict exits, and composed two-stage review against a mock provider.
 
 ## Expanding runtime gates
 

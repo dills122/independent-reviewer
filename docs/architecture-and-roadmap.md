@@ -180,6 +180,15 @@ preserving the loop and pivot rules. Gate: one implementation flow can review
 externally and consume its findings. Run AI Central's required
 `./scripts/check.sh` for its changes.
 
+Progress: complete. `review --request <path> --config <path>` composes frozen
+capture with the two-stage OpenRouter run, reads the API key only from
+`OPENROUTER_API_KEY`, prints the local Markdown report path, and distinguishes
+review outcomes and uncertain transport with stable exit codes. Runner request
+and config files are visibly excluded from review evidence so an author packet
+stored inside the worktree cannot leak into the blind stage. The AI Central
+skill now routes explicitly authorized external reviews through this command
+while retaining its original fresh-task workflow as a fallback.
+
 ### Deferred until requested
 
 - broad model comparisons or a large quality-evaluation framework;
@@ -213,14 +222,16 @@ and the private run-directory default remain open.
 
 The initial scope now includes cumulative working-tree snapshots. The base
 resolves from an explicit value, repository configuration, branch upstream, or
-remote default branch in that order and fails when still ambiguous. The first
-review protocol uses one external reviewer conversation, an immutable blind
-assessment, a separately delivered author packet, at most three author
-ask-backs, and a bounded local named-check executor. Token efficiency is a
+remote default branch in that order and fails when still ambiguous. The shipped
+local engine uses one external reviewer conversation, an immutable blind
+assessment, a separately delivered author packet, and exactly two calls.
+Interactive author ask-backs and a named-check executor remain protocol
+extensions rather than first-release requirements. Token efficiency is a
 first-class correctness constraint; required evidence cannot be silently
 omitted to fit a budget.
 
-No external review request, AI Central edit, or bot publication was performed while preparing this plan.
+No metered external review or bot publication was performed during planning or
+implementation; a live smoke review remains explicit and operator-authorized.
 
 [^or-structured]: OpenRouter, [Structured Outputs](https://openrouter.ai/docs/guides/features/structured-outputs).
 [^or-routing]: OpenRouter, [Provider Routing](https://openrouter.ai/docs/guides/routing/provider-selection).

@@ -6,12 +6,11 @@ The project expands AI Central's independent-review workflow into an enforceable
 
 ## Status
 
-The first slice is implemented. The exact-pinned TypeScript 6 and Node.js 24
-runtime defines strict versioned contracts and deterministic JCS/SHA-256
-identities. The local CLI can now freeze committed, staged, unstaged, renamed,
-deleted, and eligible untracked Git content into a private content-addressed
-snapshot packet, then validate and inspect it without a provider call.
-Two-stage orchestration and OpenRouter integration remain unimplemented.
+The first local release is implemented. The exact-pinned TypeScript 6 and Node.js
+24 runtime captures frozen Git evidence, enforces blind and reconciliation
+stages, validates provider output, and writes private JSON and Markdown review
+artifacts. OpenRouter use remains explicit and metered: callers select the model
+and budgets and provide the API key only through the environment.
 
 Read [Architecture and roadmap](docs/architecture-and-roadmap.md) for component boundaries, contracts, milestones, and acceptance gates.
 The [review protocol specification](docs/review-protocol-spec.md) defines the
@@ -34,7 +33,7 @@ Deterministic snapshot and blind-brief identities are accepted in
 - Validated JSON and Markdown reports with bounded review loops.
 - AI Central skill integration.
 
-## Snapshot CLI
+## Local CLI
 
 Build, prepare a request, and inspect the resulting packet:
 
@@ -55,11 +54,29 @@ Capture defaults to a 512 KiB per-file limit. Secret-like basenames (`.env`,
 `.env.*`, `*.pem`, and `*.key`), oversized files, submodules, and unsupported
 entry kinds are excluded visibly rather than silently transmitted.
 
-## Next step
+Run the complete two-stage review with a request containing a separate author
+packet and a config matching its `reviewConfigRef`:
 
-Implement the small two-stage OpenRouter flow: construct the neutral brief,
-persist a blind preliminary assessment, then send the separately stored author
-packet and validate the final Ready/Not Ready report.
+```sh
+export OPENROUTER_API_KEY='<set outside repository files>'
+node dist/src/cli.js review \
+  --request ./request.json \
+  --config ./review-config.json \
+  --output ./.review-runs/my-review
+```
+
+The review config schema is
+[`schemas/review-run-config-v1.schema.json`](schemas/review-run-config-v1.schema.json).
+The command prints the final report path. Exit `0` means `Ready` or `Ready with
+non-blocking follow-ups`, `2` means `Not ready`, `3` means `Unable to verify`,
+and `4` means the provider submission became transport-uncertain. Other input
+or execution failures use exit `1`. Request and config control files are
+excluded from captured review evidence even when placed inside the worktree.
+
+## Later scope
+
+The GitHub/GitLab adapter, arbitrary local verification workers, provider
+fallback, and broader model evaluation remain deferred until requested.
 
 ## Development context
 
