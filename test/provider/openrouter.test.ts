@@ -66,14 +66,88 @@ describe("OpenRouterProviderV1", () => {
     );
   });
 
-  it("rejects an error embedded in an HTTP 200 response", async () => {
+  it("preserves bounded, credential-free diagnostics for an embedded provider error", async () => {
     const provider = new OpenRouterProviderV1("secret-key", async () =>
-      Response.json({ error: { code: 429, message: "Rate limited" } }),
+      Response.json(
+        {
+          id: "generation-error-1",
+          model: "vendor/model",
+          provider: "Mock Provider",
+          error: {
+            code: 429,
+            message: `Rate limited for secret-key ${"x".repeat(600)}`,
+            metadata: {
+              error_type: "rate_limit_exceeded",
+              provider_code: "rate_limited",
+              ignored_untrusted_field: "must not be persisted",
+            },
+          },
+        },
+        { headers: { "retry-after": "45" } },
+      ),
     );
 
     await assert.rejects(
       () => provider.complete(request),
-      (error: unknown) => error instanceof ProviderCallError && error.code === "PROVIDER_ERROR",
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.code, "PROVIDER_ERROR");
+        assert.doesNotMatch(error.message, /secret-key/);
+        assert.match(error.message, /rate_limit_exceeded/);
+        assert.deepEqual(
+          { ...error.diagnostic, providerMessage: null },
+          {
+            httpStatus: 200,
+            providerErrorCode: "429",
+            providerMessage: null,
+            errorType: "rate_limit_exceeded",
+            providerCode: "rate_limited",
+            providerName: "Mock Provider",
+            model: "vendor/model",
+            responseId: "generation-error-1",
+            retryAfter: "45",
+          },
+        );
+        const providerMessage = error.diagnostic?.providerMessage;
+        assert.ok(providerMessage);
+        assert.match(providerMessage, /^Rate limited for \[REDACTED\] x+/);
+        assert.match(providerMessage, /\.\.\.$/);
+        assert.ok(providerMessage.length <= 500);
+        assert.doesNotMatch(JSON.stringify(error.diagnostic), /ignored_untrusted_field/);
+        return true;
+      },
+    );
+  });
+
+  it("recognizes provider errors nested in a non-streaming completion choice", async () => {
+    const provider = new OpenRouterProviderV1("secret-key", async () =>
+      Response.json({
+        id: "generation-error-2",
+        model: "vendor/model",
+        provider: "Mock Provider",
+        choices: [
+          {
+            finish_reason: "error",
+            message: { content: "partial output" },
+            error: {
+              code: 502,
+              message: "Provider disconnected",
+              metadata: { error_type: "provider_unavailable" },
+            },
+          },
+        ],
+      }),
+    );
+
+    await assert.rejects(
+      () => provider.complete(request),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.diagnostic?.providerErrorCode, "502");
+        assert.equal(error.diagnostic?.errorType, "provider_unavailable");
+        assert.equal(error.diagnostic?.responseId, "generation-error-2");
+        return true;
+      },
     );
   });
 

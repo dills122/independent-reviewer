@@ -468,7 +468,11 @@ credential-free wire-request digest. The adapter builds the audited body with
 the same deterministic function used for transmission. The ledger does not
 persist message content, credentials, or the wire body itself, claim metadata
 the provider did not return, or enable request-body debug echo in normal
-operation.[^or-metadata]
+operation. Failed OpenRouter calls retain only an allowlisted diagnostic:
+HTTP/provider codes, canonical error type, bounded provider message, returned
+provider/model/response identifiers, and `Retry-After` when present. The active
+API key is redacted from those fields before they reach the CLI or ledger; all
+other error metadata is discarded.[^or-metadata][^or-errors]
 
 ### Author ask-backs
 

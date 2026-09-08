@@ -182,7 +182,9 @@ lifecycle-terminal events. The OpenRouter
 adapter uses
 strict structured output, an explicit model, no fallback or retry, ZDR-only
 routing, data-collection denial, disabled response caching, and disabled context
-compression.[^or-structured][^or-routing][^or-transforms][^or-response-cache]
+compression. Provider failures retain bounded, API-key-redacted diagnostics for
+the typed error, selected route identifiers, and retry guidance without storing
+the unfiltered response body.[^or-structured][^or-routing][^or-transforms][^or-response-cache][^or-errors]
 The metered live smoke remains explicitly opt-in until a model and API key are
 supplied through the Slice 3 command.
 

@@ -1,9 +1,12 @@
 export * from "./contracts/index.js";
 export { runTwoStageReviewV1 } from "./orchestrator/two-stage-review.js";
 export type { TwoStageReviewResultV1 } from "./orchestrator/two-stage-review.js";
-export { OpenRouterProviderV1, ProviderCallError } from "./provider/openrouter.js";
-export type { ProviderCallErrorCode } from "./provider/openrouter.js";
+export { OpenRouterProviderV1 } from "./provider/openrouter.js";
+export { ProviderCallError } from "./provider/review-provider.js";
 export type {
+  ProviderCallErrorCode,
+  ProviderCallErrorOptions,
+  ProviderErrorDiagnosticV1,
   ReviewMessageV1,
   ReviewProviderRequestV1,
   ReviewProviderRequestAuditV1,
