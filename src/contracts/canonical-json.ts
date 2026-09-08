@@ -112,6 +112,37 @@ function serializeValue(value: unknown, ancestors: Set<object>): string {
   }
 }
 
+function copyWithNullObjectPrototypes(value: CanonicalJsonValue): CanonicalJsonValue {
+  if (Array.isArray(value)) {
+    const result: CanonicalJsonValue[] = [];
+    for (let index = 0; index < value.length; index += 1) {
+      const item = value[index];
+      if (item === undefined) {
+        throw new TypeError("canonical JSON arrays must not be sparse");
+      }
+      result.push(copyWithNullObjectPrototypes(item));
+    }
+    return result;
+  }
+  if (value !== null && typeof value === "object") {
+    const result = Object.create(null) as Record<string, CanonicalJsonValue>;
+    for (const key of Object.keys(value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (!descriptor || !("value" in descriptor)) {
+        throw new TypeError("parsed canonical JSON must contain data properties only");
+      }
+      Object.defineProperty(result, key, {
+        configurable: true,
+        enumerable: true,
+        value: copyWithNullObjectPrototypes(descriptor.value),
+        writable: true,
+      });
+    }
+    return result;
+  }
+  return value;
+}
+
 /**
  * Serializes I-JSON-compatible data according to RFC 8785 JCS.
  *
@@ -120,6 +151,17 @@ function serializeValue(value: unknown, ancestors: Set<object>): string {
  */
 export function canonicalizeJson(value: unknown): string {
   return serializeValue(value, new Set());
+}
+
+/**
+ * Copies accepted JSON data into fresh arrays and null-prototype objects.
+ *
+ * The copy prevents schema readers from resolving missing fields through a
+ * polluted prototype after canonical validation has inspected only own data.
+ */
+export function cloneCanonicalJson(value: unknown): CanonicalJsonValue {
+  const parsed = JSON.parse(canonicalizeJson(value)) as CanonicalJsonValue;
+  return copyWithNullObjectPrototypes(parsed);
 }
 
 /**

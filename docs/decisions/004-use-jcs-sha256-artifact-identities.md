@@ -107,7 +107,9 @@ adopted later only with compatibility tests proving identical bytes.
 - The serializer is intentionally stricter than `JSON.stringify`; callers must
   supply plain data-property JSON values rather than class instances,
   accessors, or lossy values. Identity finalizers preflight this representation
-  before schema parsing or object copying.
+  and copy it into fresh null-prototype objects before schema parsing. Missing
+  fields therefore cannot resolve through inherited data or accessors on a
+  polluted `Object.prototype`; verification applies the same boundary.
 - Snapshot capture must digest raw captured file content separately before
   artifact finalization. This ADR does not define Git capture or file-byte
   hashing.

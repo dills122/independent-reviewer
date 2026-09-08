@@ -290,6 +290,8 @@ The artifact identity profile uses RFC 8785 JCS over UTF-8 followed by SHA-256,
 with versioned domain separation. The field projections, normalization rules,
 failure behavior, and alternatives are recorded in
 [ADR-004](decisions/004-use-jcs-sha256-artifact-identities.md).
+Identity APIs validate an own-data canonical copy with null object prototypes,
+so inherited fields cannot complete an artifact or execute prototype accessors.
 
 ### Author packet
 

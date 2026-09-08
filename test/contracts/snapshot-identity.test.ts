@@ -128,4 +128,62 @@ describe("snapshot manifest identity", () => {
     assert.equal(verifySnapshotManifestIdentityV1(manifestProxy), false);
     assert.equal(getTrapCalls, 0);
   });
+
+  it("rejects an inherited required field without invoking its accessor", async () => {
+    const draft = (await readSnapshotDraft()) as {
+      source: { branch?: string | null };
+    };
+    delete draft.source.branch;
+    let getterCalls = 0;
+    const previousDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "branch");
+    Object.defineProperty(Object.prototype, "branch", {
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        return null;
+      },
+    });
+
+    try {
+      assert.throws(() => finalizeSnapshotManifestV1(draft));
+      assert.equal(getterCalls, 0);
+    } finally {
+      if (previousDescriptor) {
+        Object.defineProperty(Object.prototype, "branch", previousDescriptor);
+      } else {
+        delete (Object.prototype as { branch?: unknown }).branch;
+      }
+    }
+  });
+
+  it("rejects an incomplete persisted artifact without invoking an inherited accessor", async () => {
+    const draft = (await readSnapshotDraft()) as {
+      source: { branch: string | null };
+    };
+    draft.source.branch = null;
+    const manifest = finalizeSnapshotManifestV1(draft) as unknown as {
+      source: { branch?: string | null };
+    };
+    delete manifest.source.branch;
+    let getterCalls = 0;
+    const previousDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "branch");
+    Object.defineProperty(Object.prototype, "branch", {
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        return null;
+      },
+    });
+
+    try {
+      assert.equal(verifySnapshotManifestIdentityV1(manifest), false);
+      assert.equal(getterCalls, 0);
+    } finally {
+      if (previousDescriptor) {
+        Object.defineProperty(Object.prototype, "branch", previousDescriptor);
+      } else {
+        delete (Object.prototype as { branch?: unknown }).branch;
+      }
+    }
+  });
 });

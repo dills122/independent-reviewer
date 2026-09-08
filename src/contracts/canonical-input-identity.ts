@@ -1,4 +1,4 @@
-import { canonicalizeJson, digestCanonicalJson } from "./canonical-json.js";
+import { cloneCanonicalJson, digestCanonicalJson } from "./canonical-json.js";
 import { type CanonicalInputV1, CanonicalInputV1Schema } from "./review-request.js";
 import type { DigestV1 } from "./snapshot-manifest.js";
 
@@ -9,8 +9,7 @@ import type { DigestV1 } from "./snapshot-manifest.js";
  * and ID cannot drift independently of the manifest ledger.
  */
 export function computeCanonicalInputDigestV1(value: unknown): DigestV1 {
-  canonicalizeJson(value);
-  const input: CanonicalInputV1 = CanonicalInputV1Schema.parse(value);
+  const input: CanonicalInputV1 = CanonicalInputV1Schema.parse(cloneCanonicalJson(value));
   return digestCanonicalJson({
     identityProfile: "urn:independent-reviewer:identity:canonical-input:v1",
     canonicalInput: input,

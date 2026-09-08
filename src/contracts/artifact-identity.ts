@@ -1,4 +1,4 @@
-import { canonicalizeJson, digestCanonicalJson } from "./canonical-json.js";
+import { canonicalizeJson, cloneCanonicalJson, digestCanonicalJson } from "./canonical-json.js";
 import { type NeutralReviewBriefV1, NeutralReviewBriefV1Schema } from "./neutral-review-brief.js";
 import {
   type DigestV1,
@@ -20,19 +20,34 @@ function compareCanonical(left: unknown, right: unknown): number {
   return serializedLeft < serializedRight ? -1 : serializedLeft > serializedRight ? 1 : 0;
 }
 
+function addOwnField(
+  value: object,
+  key: "briefDigest" | "snapshotDigest",
+  fieldValue: DigestV1,
+): Record<string, unknown> {
+  const result = Object.create(null) as Record<string, unknown>;
+  Object.assign(result, value);
+  Object.defineProperty(result, key, {
+    configurable: true,
+    enumerable: true,
+    value: fieldValue,
+    writable: true,
+  });
+  return result;
+}
+
 function parseSnapshotIdentityInput(value: unknown): SnapshotManifestIdentityInputV1 {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  const canonicalValue = cloneCanonicalJson(value);
+  if (!canonicalValue || typeof canonicalValue !== "object" || Array.isArray(canonicalValue)) {
     throw new TypeError("snapshot identity input must be an object");
   }
-  canonicalizeJson(value);
-  if (Object.hasOwn(value, "snapshotDigest")) {
+  if (Object.hasOwn(canonicalValue, "snapshotDigest")) {
     throw new TypeError("snapshot identity input must not contain snapshotDigest");
   }
 
-  const parsed = SnapshotManifestV1Schema.parse({
-    ...value,
-    snapshotDigest: PLACEHOLDER_DIGEST,
-  });
+  const parsed = SnapshotManifestV1Schema.parse(
+    addOwnField(canonicalValue, "snapshotDigest", PLACEHOLDER_DIGEST),
+  );
   const { snapshotDigest: _snapshotDigest, ...identityInput } = parsed;
   return identityInput;
 }
@@ -84,20 +99,23 @@ export function computeSnapshotManifestDigestV1(value: unknown): DigestV1 {
 /** Validates draft material, computes its digest, and returns a complete manifest. */
 export function finalizeSnapshotManifestV1(value: unknown): SnapshotManifestV1 {
   const identityInput = parseSnapshotIdentityInput(value);
-  return SnapshotManifestV1Schema.parse({
-    ...identityInput,
-    snapshotDigest: computeParsedSnapshotDigest(identityInput),
-  });
+  const candidate = addOwnField(
+    cloneCanonicalJson(identityInput) as object,
+    "snapshotDigest",
+    computeParsedSnapshotDigest(identityInput),
+  );
+  return SnapshotManifestV1Schema.parse(candidate);
 }
 
 /** Returns true only for a schema-valid manifest whose logical digest matches. */
 export function verifySnapshotManifestIdentityV1(value: unknown): value is SnapshotManifestV1 {
+  let canonicalValue: unknown;
   try {
-    canonicalizeJson(value);
+    canonicalValue = cloneCanonicalJson(value);
   } catch {
     return false;
   }
-  const parsed = SnapshotManifestV1Schema.safeParse(value);
+  const parsed = SnapshotManifestV1Schema.safeParse(canonicalValue);
   if (!parsed.success) {
     return false;
   }
@@ -107,18 +125,17 @@ export function verifySnapshotManifestIdentityV1(value: unknown): value is Snaps
 }
 
 function parseNeutralBriefIdentityInput(value: unknown): NeutralReviewBriefIdentityInputV1 {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  const canonicalValue = cloneCanonicalJson(value);
+  if (!canonicalValue || typeof canonicalValue !== "object" || Array.isArray(canonicalValue)) {
     throw new TypeError("neutral brief identity input must be an object");
   }
-  canonicalizeJson(value);
-  if (Object.hasOwn(value, "briefDigest")) {
+  if (Object.hasOwn(canonicalValue, "briefDigest")) {
     throw new TypeError("neutral brief identity input must not contain briefDigest");
   }
 
-  const parsed = NeutralReviewBriefV1Schema.parse({
-    ...value,
-    briefDigest: PLACEHOLDER_DIGEST,
-  });
+  const parsed = NeutralReviewBriefV1Schema.parse(
+    addOwnField(canonicalValue, "briefDigest", PLACEHOLDER_DIGEST),
+  );
   const { briefDigest: _briefDigest, ...identityInput } = parsed;
   return identityInput;
 }
@@ -150,20 +167,23 @@ export function finalizeNeutralReviewBriefV1(value: unknown): NeutralReviewBrief
   if (!verifySnapshotManifestIdentityV1(identityInput.snapshotManifest)) {
     throw new TypeError("neutral brief contains an invalid snapshot identity");
   }
-  return NeutralReviewBriefV1Schema.parse({
-    ...identityInput,
-    briefDigest: computeParsedNeutralBriefDigest(identityInput),
-  });
+  const candidate = addOwnField(
+    cloneCanonicalJson(identityInput) as object,
+    "briefDigest",
+    computeParsedNeutralBriefDigest(identityInput),
+  );
+  return NeutralReviewBriefV1Schema.parse(candidate);
 }
 
 /** Returns true only when both the brief and its embedded snapshot identities match. */
 export function verifyNeutralReviewBriefIdentityV1(value: unknown): value is NeutralReviewBriefV1 {
+  let canonicalValue: unknown;
   try {
-    canonicalizeJson(value);
+    canonicalValue = cloneCanonicalJson(value);
   } catch {
     return false;
   }
-  const parsed = NeutralReviewBriefV1Schema.safeParse(value);
+  const parsed = NeutralReviewBriefV1Schema.safeParse(canonicalValue);
   if (!parsed.success || !verifySnapshotManifestIdentityV1(parsed.data.snapshotManifest)) {
     return false;
   }
