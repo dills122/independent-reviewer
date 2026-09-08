@@ -458,7 +458,10 @@ TypeScript Responses surface is currently beta.[^or-client][^or-responses]
 
 Strict structured output is a transport aid, not a trust boundary. Syntax,
 schema, lifecycle, semantic, and evidence-anchor validation still occur
-locally.[^or-structured]
+locally. Before each stage, the orchestrator specializes the versioned structural
+schema with an enum of paths from the frozen snapshot for every finding-evidence
+path. The specialized schema is included in token admission and the audited wire
+digest; local side, existence, and anchor validation remains authoritative.[^or-structured]
 
 The orchestrator's append-only run record stores requested and returned
 model/provider metadata, request IDs, validated token usage, cost when available,

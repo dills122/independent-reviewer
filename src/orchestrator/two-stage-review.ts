@@ -147,11 +147,18 @@ function requiredTwoStageTokenReservation(
   blindMessages: ReviewMessageV1[],
   authorMessage: string,
   maxOutputTokensPerCall: number,
+  preliminaryResponseSchema: unknown,
+  finalResponseSchema: unknown,
 ): number {
   return (
-    conservativeInputTokenUpperBound(blindMessages, PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA) +
+    conservativeInputTokenUpperBound(blindMessages, preliminaryResponseSchema) +
     maxOutputTokensPerCall +
-    finalInputTokenReservation(blindMessages, authorMessage, maxOutputTokensPerCall) +
+    finalInputTokenReservation(
+      blindMessages,
+      authorMessage,
+      maxOutputTokensPerCall,
+      finalResponseSchema,
+    ) +
     maxOutputTokensPerCall
   );
 }
@@ -160,6 +167,7 @@ function finalInputTokenReservation(
   blindMessages: ReviewMessageV1[],
   authorMessage: string,
   preliminaryOutputReservation: number,
+  finalResponseSchema: unknown,
 ): number {
   const messagesWithoutPreliminaryContent: ReviewMessageV1[] = [
     ...blindMessages,
@@ -167,10 +175,8 @@ function finalInputTokenReservation(
     { role: "user", content: authorMessage },
   ];
   return (
-    conservativeInputTokenUpperBound(
-      messagesWithoutPreliminaryContent,
-      FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
-    ) + preliminaryOutputReservation
+    conservativeInputTokenUpperBound(messagesWithoutPreliminaryContent, finalResponseSchema) +
+    preliminaryOutputReservation
   );
 }
 
@@ -180,6 +186,50 @@ function allowedPaths(brief: NeutralReviewBriefV1): Set<string> {
       "previousPath" in entry ? [entry.path, entry.previousPath] : [entry.path],
     ),
   );
+}
+
+function constrainFindingEvidencePaths(schema: unknown, paths: string[]): unknown {
+  const constrained = structuredClone(schema);
+  let constrainedFields = 0;
+
+  function visit(value: unknown): void {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item);
+      }
+      return;
+    }
+    if (value === null || typeof value !== "object") {
+      return;
+    }
+    const object = value as Record<string, unknown>;
+    const propertiesValue = object.properties;
+    if (propertiesValue && typeof propertiesValue === "object") {
+      const properties = propertiesValue as Record<string, unknown>;
+      const anchor = properties.anchor;
+      const path = properties.path;
+      if (
+        anchor &&
+        typeof anchor === "object" &&
+        ((anchor as Record<string, unknown>).const === "LINE_RANGE" ||
+          (anchor as Record<string, unknown>).const === "SYMBOL") &&
+        path &&
+        typeof path === "object"
+      ) {
+        properties.path = { ...(path as Record<string, unknown>), enum: paths };
+        constrainedFields += 1;
+      }
+    }
+    for (const child of Object.values(object)) {
+      visit(child);
+    }
+  }
+
+  visit(constrained);
+  if (constrainedFields !== 2) {
+    throw new Error("Provider response schema did not expose both evidence path variants.");
+  }
+  return constrained;
 }
 
 type SnapshotPathEntryV1 = NeutralReviewBriefV1["snapshotManifest"]["paths"][number];
@@ -504,6 +554,15 @@ export async function runTwoStageReviewV1(
       { role: "system", content: REVIEW_POLICY_V1 },
       { role: "user", content: JSON.stringify(brief) },
     ];
+    const snapshotPaths = [...allowedPaths(brief)].sort();
+    const preliminaryResponseSchema = constrainFindingEvidencePaths(
+      PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
+      snapshotPaths,
+    );
+    const finalResponseSchema = constrainFindingEvidencePaths(
+      FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
+      snapshotPaths,
+    );
     assertConversationBudget(blindMessages, config.budgets.maxConversationBytes);
     const authorMessage = JSON.stringify({
       schemaVersion: 1,
@@ -521,6 +580,8 @@ export async function runTwoStageReviewV1(
       blindMessages,
       authorMessage,
       config.budgets.maxOutputTokensPerCall,
+      preliminaryResponseSchema,
+      finalResponseSchema,
     );
     if (requiredTokens > config.budgets.maxTotalTokens) {
       throw new Error(
@@ -535,7 +596,7 @@ export async function runTwoStageReviewV1(
       messages: blindMessages,
       responseSchema: {
         name: "preliminary_assessment_v1",
-        schema: PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
+        schema: preliminaryResponseSchema,
       },
     });
     await writeFile(
@@ -552,7 +613,7 @@ export async function runTwoStageReviewV1(
 
     const firstCallTokens =
       chargedTokens(preliminaryResponse) ??
-      conservativeInputTokenUpperBound(blindMessages, PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA) +
+      conservativeInputTokenUpperBound(blindMessages, preliminaryResponseSchema) +
         config.budgets.maxOutputTokensPerCall;
 
     const finalMessages: ReviewMessageV1[] = [
@@ -565,6 +626,7 @@ export async function runTwoStageReviewV1(
       blindMessages,
       authorMessage,
       config.budgets.maxOutputTokensPerCall,
+      finalResponseSchema,
     );
     if (
       firstCallTokens + finalInputTokens + config.budgets.maxOutputTokensPerCall >
@@ -584,7 +646,7 @@ export async function runTwoStageReviewV1(
       messages: finalMessages,
       responseSchema: {
         name: "final_review_report_v1",
-        schema: FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
+        schema: finalResponseSchema,
       },
     });
     await writeFile(

@@ -20,6 +20,15 @@ import {
 const execFileAsync = promisify(execFile);
 const mockDigest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
 
+function valueAtPath(value: unknown, path: Array<string | number>): unknown {
+  let current = value;
+  for (const segment of path) {
+    assert.ok(current !== null && typeof current === "object");
+    current = (current as Record<string | number, unknown>)[segment];
+  }
+  return current;
+}
+
 function mockAuditRequest(providerRequest: ReviewProviderRequestV1) {
   return {
     providerPolicyVersion: "mock-provider-v1",
@@ -266,6 +275,21 @@ describe("two-stage review orchestrator", () => {
         assert.deepEqual(event.wireBodyDigest, mockDigest);
         assert.equal(typeof event.wireBodyBytes, "number");
         assert.deepEqual(event.credentialFreeWireRequestDigest, mockDigest);
+      }
+      for (const call of calls) {
+        const evidenceVariants = valueAtPath(call.responseSchema.schema, [
+          "properties",
+          "findings",
+          "items",
+          "properties",
+          "evidence",
+          "items",
+          "anyOf",
+        ]);
+        assert.ok(Array.isArray(evidenceVariants));
+        for (const variant of evidenceVariants) {
+          assert.deepEqual(valueAtPath(variant, ["properties", "path", "enum"]), ["reviewed.txt"]);
+        }
       }
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
