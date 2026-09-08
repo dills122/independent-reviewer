@@ -6,10 +6,11 @@ The project expands AI Central's independent-review workflow into an enforceable
 
 ## Status
 
-Implementation has started. The repository now has an exact-pinned TypeScript 6
-and Node.js 24 runtime scaffold plus the first versioned boundary contract,
-`ReviewRequestV1`. Snapshot capture, orchestration, provider integration, and a
-user-facing CLI have not been implemented yet.
+Implementation has started. The exact-pinned TypeScript 6 and Node.js 24
+runtime now defines strict versioned contracts for review requests, snapshot
+manifests, and blind-stage neutral briefs, plus deterministic JCS/SHA-256
+identity finalization. Snapshot capture, orchestration, provider integration,
+and a user-facing CLI have not been implemented yet.
 
 Read [Architecture and roadmap](docs/architecture-and-roadmap.md) for component boundaries, contracts, milestones, and acceptance gates.
 The [review protocol specification](docs/review-protocol-spec.md) defines the
@@ -21,6 +22,8 @@ The versioned prompt, call-budget, caching, and failure policy is accepted in
 [ADR-003](docs/decisions/003-use-versioned-budgeted-model-call-protocol.md),
 with the full source trail retained in the
 [prompt and token-efficiency research spike](docs/research/2026-09-07-prompt-call-and-token-efficiency-spike.md).
+Deterministic snapshot and blind-brief identities are accepted in
+[ADR-004](docs/decisions/004-use-jcs-sha256-artifact-identities.md).
 
 ## Proposed first release
 
@@ -32,10 +35,11 @@ with the full source trail retained in the
 
 ## Next step
 
-Extend the versioned contract suite with snapshot-manifest and neutral-brief
-artifacts, then implement deterministic identity and packet construction. The
-model/provider choice and numerical budgets remain gated on the small evaluation
-described in milestone 4.
+Implement cumulative Git capture behind the snapshot contract, including
+committed, staged, unstaged, renamed, deleted, and eligible untracked content
+plus race detection. Packet construction and inspection follow once capture can
+produce real finalized manifests. The model/provider choice and numerical
+budgets remain gated on the small evaluation described in milestone 4.
 
 ## Development context
 
@@ -49,8 +53,12 @@ npm run check
 ```
 
 Run `npm run schemas:write` after deliberately changing a runtime contract, and
-commit the regenerated JSON Schema artifact with the implementation. Verify the
-local AI context separately with `python3 -B scripts/check-ai-context.py`.
+commit the regenerated JSON Schema artifact with the implementation. These
+artifacts validate portable structural constraints; successful schema
+validation is not contract acceptance. Consumers must also apply the versioned
+semantic invariants enforced by the runtime schemas or an equivalent
+implementation. Verify the local AI context separately with
+`python3 -B scripts/check-ai-context.py`.
 
 ## Contributing
 

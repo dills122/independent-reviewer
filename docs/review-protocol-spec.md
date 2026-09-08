@@ -173,6 +173,15 @@ Every artifact carries a `schemaVersion`. Identifiers are opaque strings with a
 type prefix; content identities use a declared digest algorithm and canonical
 serialization.
 
+Committed JSON Schema artifacts define the portable structural layer and are
+useful for callers and provider-constrained output. JSON Schema cannot portably
+express every relational invariant in these contracts, including equality and
+set correspondence across fields. Each artifact therefore declares this limit
+in `$comment`. Schema-only success is never contract acceptance: consumers must
+also run the versioned runtime semantic validator or an equivalent
+implementation with parity fixtures. The TypeScript runtime's Zod schemas are
+the authoritative validator for the initial release.
+
 ### Review request
 
 The caller supplies:
@@ -187,6 +196,9 @@ The caller supplies:
 - review configuration reference; and
 - flow identity, review-instance number, and maximum instances.
 
+Request `base` and `head` values are Git revision expressions to be resolved by
+the snapshot builder; they are not persisted branch-name fields.
+
 The author packet may be absent at preparation time. A run then enters
 `AWAITING_AUTHOR` after preliminary persistence.
 
@@ -195,8 +207,15 @@ boundary, including a separately typed optional author packet, cumulative
 working-tree defaults, contextual canonical-input kinds, and review-instance
 bounds. The snapshot and orchestration layers do not exist yet, so structural
 separation is not yet a claim that runtime author withholding has been proven.
-Its committed JSON Schema describes caller input; defaulted fields remain
-optional at the serialized boundary and are materialized during local parsing.
+Its committed structural JSON Schema describes caller input; defaulted fields
+remain optional at the serialized boundary and are materialized during local
+semantic validation.
+
+Persisted contracts do not apply caller defaults. A finalized snapshot must
+carry `reviewInstance.maximum`, and a finalized neutral brief must carry an
+explicit `canonicalInputs.projectGuidance` ledger even when it is empty. Their
+committed JSON Schemas describe materialized output, and identity verification
+rejects incomplete artifacts instead of normalizing them.
 
 ### Snapshot manifest
 
@@ -216,6 +235,30 @@ The snapshot manifest records:
 Snapshot identity excludes wall-clock timestamps and local storage paths so
 unchanged logical inputs remain reproducible.
 
+Implementation status: `SnapshotManifestV1Schema` now defines the strict
+persisted boundary for source commits, dirty-state evidence, typed path changes,
+content digests, exclusions, omissions, canonical-input identities, policy
+versions, and stable capture-race evidence. It validates normalized relative
+paths, exact untracked-path accounting, Git kind/mode compatibility, and
+meaningful relocation paths. Git capture and per-content digest construction
+remain separate follow-on work. Base and head object IDs must use the same Git
+object format, `MODIFIED` preserves the regular-file/symlink/submodule category
+and must change at least one persisted before/after content property, while
+`TYPE_CHANGED` changes the category. Mode-only regular-file changes therefore
+remain valid `MODIFIED` entries, but identical states do not. A persisted branch
+is either `null` or a concrete name satisfying Git's reference-format
+restrictions; revision expressions such as `bad..name` are
+rejected.[^git-check-ref-format] The identity finalizer now
+validates digest-free manifest material, normalizes set-like ledgers, and
+computes a reproducible JCS/SHA-256 logical digest. Opaque run metadata and
+capture-attempt count do not alter that digest; changes to captured source or
+content identity do. Set-like ledgers use ascending ECMAScript UTF-16 ordering:
+directly for string entries and over the complete RFC 8785 serialization for
+object entries, without locale collation or Unicode normalization.
+Canonical-input digests bind the complete validated input,
+and neutral-brief validation reconciles those digests with its embedded
+canonical content. Raw captured-file digest construction remains deferred.
+
 ### Neutral review brief
 
 The brief contains only information permitted before preliminary persistence:
@@ -231,6 +274,33 @@ The brief contains only information permitted before preliminary persistence:
 It must not contain author rationale, retrospective implementation narration,
 claimed design intent that is not canonical, prior reviewer verdicts, or the
 implementation conversation.
+
+Implementation status: `NeutralReviewBriefV1Schema` now provides a strict
+blind-stage boundary containing canonical-source-attributed objectives and
+criteria, canonical inputs, one complete snapshot manifest, bounded initial
+evidence, visible coverage constraints, and capability identifiers. Runtime
+validation rejects undeclared author fields, canonical-input identity mismatch,
+duplicate evidence identifiers, evidence outside the manifest, source context
+for a path/side that does not exist or whose captured content is not `TEXT`,
+invalid source ranges, and duplicate verification-check identifiers. For
+renames, base context resolves through the previous path and head context
+through the destination; copies additionally retain the previous path on the
+head side. Canonical-input reconciliation compares typed
+provenance fields rather than delimiter-joined text. Each initial-evidence
+digest is SHA-256 over the exact UTF-8 content, and source-context content must
+contain exactly the declared logical line count (with CRLF treated as one line
+separator and a terminal separator not creating an extra line). Orchestration
+must still prove that only this artifact is sent before preliminary persistence.
+A required `briefDigest` now binds the exact ordered blind-stage content, and
+its finalizer refuses an embedded manifest whose snapshot identity does not
+verify.
+
+The artifact identity profile uses RFC 8785 JCS over UTF-8 followed by SHA-256,
+with versioned domain separation. The field projections, normalization rules,
+failure behavior, and alternatives are recorded in
+[ADR-004](decisions/004-use-jcs-sha256-artifact-identities.md).
+Identity APIs validate an own-data canonical copy with null object prototypes,
+so inherited fields cannot complete an artifact or execute prototype accessors.
 
 ### Author packet
 
@@ -727,3 +797,4 @@ Never:
 [^or-healing]: OpenRouter, [Response Healing](https://openrouter.ai/docs/guides/features/plugins/response-healing).
 [^openai-evals]: OpenAI, [Evaluation Best Practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices).
 [^anthropic-evals]: Anthropic, [Define Success Criteria and Build Evaluations](https://platform.claude.com/docs/en/test-and-evaluate/develop-tests).
+[^git-check-ref-format]: Git, [`git-check-ref-format`](https://git-scm.com/docs/git-check-ref-format).

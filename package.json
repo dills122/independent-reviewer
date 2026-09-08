@@ -8,7 +8,9 @@
       "types": "./dist/src/index.d.ts",
       "import": "./dist/src/index.js"
     },
-    "./schemas/review-request-v1": "./schemas/review-request-v1.schema.json"
+    "./schemas/neutral-review-brief-v1": "./schemas/neutral-review-brief-v1.schema.json",
+    "./schemas/review-request-v1": "./schemas/review-request-v1.schema.json",
+    "./schemas/snapshot-manifest-v1": "./schemas/snapshot-manifest-v1.schema.json"
   },
   "files": [
     "dist/src",

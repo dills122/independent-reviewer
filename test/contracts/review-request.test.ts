@@ -3,7 +3,12 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
 
-import { REVIEW_REQUEST_V1_JSON_SCHEMA, ReviewRequestV1Schema } from "../../src/index.js";
+import {
+  NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,
+  REVIEW_REQUEST_V1_JSON_SCHEMA,
+  ReviewRequestV1Schema,
+  SNAPSHOT_MANIFEST_V1_JSON_SCHEMA,
+} from "../../src/index.js";
 
 async function readFixture(name: string): Promise<unknown> {
   const contents = await readFile(resolve("test", "fixtures", name), "utf8");
@@ -76,6 +81,20 @@ describe("ReviewRequestV1Schema", () => {
     assert.equal(result.success, false);
   });
 
+  it("rejects duplicate canonical-input identifiers", async () => {
+    const fixture = structuredClone(await readFixture("review-request.valid.json")) as {
+      canonicalInputs: {
+        requirements: Array<{ id: string }>;
+        implementationPlan: { id: string };
+      };
+    };
+    const requirement = fixture.canonicalInputs.requirements[0];
+    assert.ok(requirement);
+    fixture.canonicalInputs.implementationPlan.id = requirement.id;
+
+    assert.equal(ReviewRequestV1Schema.safeParse(fixture).success, false);
+  });
+
   it("exports a strict draft 2020-12 JSON Schema", () => {
     assert.equal(
       REVIEW_REQUEST_V1_JSON_SCHEMA.$id,
@@ -103,6 +122,19 @@ describe("ReviewRequestV1Schema", () => {
     assert.ok(Array.isArray(canonicalInputsRequired));
     assert.equal(repositoryRequired.includes("workingTree"), false);
     assert.equal(canonicalInputsRequired.includes("projectGuidance"), false);
+  });
+
+  it("marks exported JSON Schemas as structural rather than semantic validators", () => {
+    for (const schema of [
+      REVIEW_REQUEST_V1_JSON_SCHEMA,
+      SNAPSHOT_MANIFEST_V1_JSON_SCHEMA,
+      NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,
+    ]) {
+      const comment = (schema as Record<string, unknown>).$comment;
+      assert.equal(typeof comment, "string");
+      assert.match(String(comment), /structural constraints only/i);
+      assert.match(String(comment), /semantic validation/i);
+    }
   });
 
   it("matches the committed JSON Schema artifact", async () => {
