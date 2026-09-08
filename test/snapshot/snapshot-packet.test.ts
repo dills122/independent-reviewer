@@ -81,6 +81,7 @@ describe("snapshot packet store", () => {
       assert.deepEqual(inspected.manifest, captured.manifest);
       assert.deepEqual(inspected.canonicalInputs, request.canonicalInputs);
       assert.equal(inspected.authorPacket, undefined);
+      assert.equal(inspected.reviewConfigRef, "config_test");
       assert.equal(inspected.blobCount, 2);
       assert.equal(
         (await readFile(join(packetPath, "snapshot-manifest.json"), "utf8")).endsWith("\n"),

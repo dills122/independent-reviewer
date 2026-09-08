@@ -2,12 +2,15 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+import * as z from "zod";
+
 import {
   AuthorPacketV1Schema,
   canonicalizeJson,
   computeCanonicalInputDigestV1,
   PersistedCanonicalInputsV1Schema,
   ReviewRequestV1Schema,
+  DigestV1Schema,
   SnapshotManifestV1Schema,
   verifySnapshotManifestIdentityV1,
   type AuthorPacketV1,
@@ -19,14 +22,25 @@ import type { CapturedGitSnapshotV1 } from "./git-capture.js";
 const MANIFEST_FILE = "snapshot-manifest.json";
 const CANONICAL_INPUTS_FILE = "canonical-inputs.json";
 const AUTHOR_PACKET_FILE = "author-packet.json";
+const PACKET_METADATA_FILE = "packet-metadata.json";
 const BLOBS_DIRECTORY = "blobs";
 
 export interface InspectedSnapshotPacketV1 {
   manifest: SnapshotManifestV1;
   canonicalInputs: ReviewRequestV1["canonicalInputs"];
   authorPacket?: AuthorPacketV1;
+  reviewConfigRef: string;
   blobCount: number;
 }
+
+const PacketMetadataV1Schema = z.strictObject({
+  schemaVersion: z.literal(1),
+  reviewConfigRef: z
+    .string()
+    .min(8)
+    .max(128)
+    .regex(/^config_[A-Za-z0-9][A-Za-z0-9_-]*$/),
+});
 
 function jsonDocument(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
@@ -115,6 +129,11 @@ export async function writeSnapshotPacketV1(
     flag: "wx",
     mode: 0o600,
   });
+  await writeFile(
+    join(packetPath, PACKET_METADATA_FILE),
+    jsonDocument({ schemaVersion: 1, reviewConfigRef: request.reviewConfigRef }),
+    { flag: "wx", mode: 0o600 },
+  );
   if (request.authorPacket) {
     await writeFile(join(packetPath, AUTHOR_PACKET_FILE), jsonDocument(request.authorPacket), {
       flag: "wx",
@@ -161,6 +180,9 @@ export async function inspectSnapshotPacketV1(
   const canonicalInputs = PersistedCanonicalInputsV1Schema.parse(
     JSON.parse(await readFile(join(packetPath, CANONICAL_INPUTS_FILE), "utf8")),
   );
+  const packetMetadata = PacketMetadataV1Schema.parse(
+    JSON.parse(await readFile(join(packetPath, PACKET_METADATA_FILE), "utf8")),
+  );
   assertCanonicalInputsMatch(manifest, canonicalInputs);
   const records = contentRecords(manifest);
   await Promise.all(
@@ -176,6 +198,20 @@ export async function inspectSnapshotPacketV1(
     manifest,
     canonicalInputs,
     ...(authorPacket ? { authorPacket } : {}),
+    reviewConfigRef: packetMetadata.reviewConfigRef,
     blobCount: records.length,
   };
+}
+
+/** Reads one digest-addressed blob and verifies it before returning bytes. */
+export async function readSnapshotBlobV1(
+  packetPath: string,
+  digestValue: unknown,
+): Promise<Uint8Array> {
+  const digest = DigestV1Schema.parse(digestValue);
+  const bytes = await readFile(join(packetPath, BLOBS_DIRECTORY, digest.value));
+  if (digestBytes(bytes) !== digest.value) {
+    throw new Error(`Captured blob ${digest.value} failed digest verification.`);
+  }
+  return bytes;
 }

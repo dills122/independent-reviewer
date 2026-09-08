@@ -161,6 +161,17 @@ final report as Markdown. Gate: a mock-provider end-to-end run proves author
 withholding; malformed output cannot report Ready; basic call/token/time limits
 stop the run; one explicitly enabled live smoke review succeeds.
 
+Progress: the offline engine is complete. It builds a digest-bound neutral
+brief from the packet, fails rather than clipping an oversized initial evidence
+set, persists the raw and validated preliminary result before author delivery,
+makes exactly one reconciliation call, validates identities and evidence paths,
+and renders the final JSON report to Markdown. The OpenRouter adapter uses
+strict structured output, an explicit model, no fallback or retry, ZDR-only
+routing, data-collection denial, disabled response caching, and disabled context
+compression.[^or-structured][^or-routing][^or-transforms][^or-response-cache]
+The metered live smoke remains explicitly opt-in until a model and API key are
+supplied through the Slice 3 command.
+
 ### Slice 3 — usable command and AI Central integration
 
 Compose preparation and review behind one practical `review` command, keep

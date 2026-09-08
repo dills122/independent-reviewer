@@ -202,11 +202,13 @@ the snapshot builder; they are not persisted branch-name fields.
 The author packet may be absent at preparation time. A run then enters
 `AWAITING_AUTHOR` after preliminary persistence.
 
-Implementation status: `ReviewRequestV1Schema` currently enforces this request
+Implementation status: `ReviewRequestV1Schema` enforces this request
 boundary, including a separately typed optional author packet, cumulative
 working-tree defaults, contextual canonical-input kinds, and review-instance
-bounds. The snapshot and orchestration layers do not exist yet, so structural
-separation is not yet a claim that runtime author withholding has been proven.
+bounds. Snapshot capture and the two-call orchestrator now preserve that
+separation at runtime; a mock-provider integration test proves that author
+content is absent from the preliminary request and that the validated
+preliminary artifact is durable before the author packet is delivered.
 Its committed structural JSON Schema describes caller input; defaulted fields
 remain optional at the serialized boundary and are materialized during local
 semantic validation.
@@ -293,8 +295,9 @@ head side. Canonical-input reconciliation compares typed
 provenance fields rather than delimiter-joined text. Each initial-evidence
 digest is SHA-256 over the exact UTF-8 content, and source-context content must
 contain exactly the declared logical line count (with CRLF treated as one line
-separator and a terminal separator not creating an extra line). Orchestration
-must still prove that only this artifact is sent before preliminary persistence.
+separator and a terminal separator not creating an extra line). The two-call
+orchestrator sends only this artifact before preliminary persistence; the
+separately stored author packet is appended only afterward.
 A required `briefDigest` now binds the exact ordered blind-stage content, and
 its finalizer refuses an embedded manifest whose snapshot identity does not
 verify.
@@ -338,6 +341,12 @@ The preliminary assessment contains:
 It is append-only after persistence. Final reconciliation refers to preliminary
 finding IDs rather than rewriting the record.
 
+Implementation status: the strict `PreliminaryAssessmentV1Schema` binds the
+assessment to the snapshot and neutral-brief digests, requires the author-packet
+transition, and validates finding evidence against captured paths. The raw
+provider candidate and the validated preliminary artifact are stored separately
+before author delivery.
+
 ### Final review report
 
 The final report contains:
@@ -358,6 +367,12 @@ The final report contains:
 - recommended next actions split into blockers and non-blocking fast follows.
 
 Fast follows cannot contain work required to justify a `Ready` verdict.
+
+Implementation status: the strict `FinalReviewReportV1Schema` and runtime
+semantic checks require a disposition for every preliminary finding, validate
+evidence paths and artifact identities, and reject a ready verdict with P0/P1
+findings, blockers, or limitations. The engine stores provider-reported usage,
+the validated JSON report, and a locally rendered Markdown report.
 
 ## Lifecycle state machine
 
@@ -628,12 +643,13 @@ independent-reviewer review --packet <path> --config <path>
 independent-reviewer report --run <id> --format json|markdown
 ```
 
-`prepare` performs no provider call. It now writes the manifest, canonical
-inputs, optional author packet, and content-addressed blobs as separate private
-files. `inspect` verifies the manifest and every referenced blob before showing
+`prepare` performs no provider call. It now writes packet metadata, the
+manifest, canonical inputs, optional author packet, and content-addressed blobs
+as separate private files. `inspect` verifies the manifest and every referenced blob before showing
 the neutral snapshot; it does not print the separately stored author packet.
-Initial transmission-plan construction remains part of the next slice.
-`review` and `report` remain proposed commands for the provider flow.
+Small-change transmission-plan construction is implemented and fails visibly
+when the complete initial evidence exceeds its configured byte budget. `review`
+and `report` remain proposed commands for the final CLI-integration slice.
 
 Exact convenience flags can be added after the request, packet, and run-record
 schemas are accepted. A single `review --repo .` workflow may compose these

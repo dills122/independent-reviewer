@@ -42,6 +42,23 @@ export {
 } from "./review-request.js";
 export type { AuthorPacketV1, CanonicalInputV1, ReviewRequestV1 } from "./review-request.js";
 export {
+  FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
+  FinalReviewReportV1Schema,
+  PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
+  PreliminaryAssessmentV1Schema,
+  ReviewFindingV1Schema,
+} from "./review-results.js";
+export type {
+  FinalReviewReportV1,
+  PreliminaryAssessmentV1,
+  ReviewFindingV1,
+} from "./review-results.js";
+export {
+  REVIEW_RUN_CONFIG_V1_JSON_SCHEMA,
+  ReviewRunConfigV1Schema,
+} from "./review-run-config.js";
+export type { ReviewRunConfigV1 } from "./review-run-config.js";
+export {
   DigestV1Schema,
   SNAPSHOT_MANIFEST_V1_JSON_SCHEMA,
   SnapshotContentV1Schema,

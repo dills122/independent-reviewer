@@ -1,0 +1,167 @@
+{
+  "$id": "urn:independent-reviewer:schema:preliminary-assessment:v1",
+  "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "stage": {
+      "type": "string",
+      "const": "PRELIMINARY"
+    },
+    "snapshotDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "briefDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "inspectedPaths": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 9,
+            "maxLength": 128,
+            "pattern": "^finding_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scenario": {
+            "type": "string",
+            "minLength": 1
+          },
+          "impact": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                },
+                "detail": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "path",
+                "detail"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "correction": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "severity",
+          "title",
+          "scenario",
+          "impact",
+          "evidence",
+          "correction"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "evidenceGaps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "nextAction": {
+      "type": "string",
+      "const": "REQUEST_AUTHOR_PACKET"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "stage",
+    "snapshotDigest",
+    "briefDigest",
+    "summary",
+    "inspectedPaths",
+    "findings",
+    "evidenceGaps",
+    "limitations",
+    "nextAction"
+  ],
+  "additionalProperties": false
+}

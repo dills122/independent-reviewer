@@ -12,7 +12,10 @@
       "import": "./dist/src/index.js"
     },
     "./schemas/neutral-review-brief-v1": "./schemas/neutral-review-brief-v1.schema.json",
+    "./schemas/preliminary-assessment-v1": "./schemas/preliminary-assessment-v1.schema.json",
+    "./schemas/final-review-report-v1": "./schemas/final-review-report-v1.schema.json",
     "./schemas/review-request-v1": "./schemas/review-request-v1.schema.json",
+    "./schemas/review-run-config-v1": "./schemas/review-run-config-v1.schema.json",
     "./schemas/snapshot-manifest-v1": "./schemas/snapshot-manifest-v1.schema.json"
   },
   "files": [

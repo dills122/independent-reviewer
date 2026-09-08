@@ -1,0 +1,68 @@
+{
+  "$id": "urn:independent-reviewer:schema:review-run-config:v1",
+  "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "configId": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 128,
+      "pattern": "^config_[A-Za-z0-9][A-Za-z0-9_-]*$"
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "budgets": {
+      "type": "object",
+      "properties": {
+        "maxInitialEvidenceBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "maxConversationBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "maxOutputTokensPerCall": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "maxTotalTokens": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300000
+        }
+      },
+      "required": [
+        "maxInitialEvidenceBytes",
+        "maxConversationBytes",
+        "maxOutputTokensPerCall",
+        "maxTotalTokens",
+        "timeoutMs"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "configId",
+    "model",
+    "budgets"
+  ],
+  "additionalProperties": false
+}
