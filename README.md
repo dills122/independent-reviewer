@@ -177,4 +177,12 @@ implementation. Verify the local AI context separately with
 
 ## Contributing
 
-Changes go through pull requests and the required Repository checks job. Read [Repository governance](docs/repository-governance.md) for branch rules and CI, and run `python3 -B scripts/check-ai-context.py --ci` before opening a PR.
+Read [Contributing](CONTRIBUTING.md) before proposing a change. Report defects
+and oddities through the documented [bug-reporting workflow](docs/bug-reporting.md),
+which requires enough Git and changeset information to replay public cases.
+Report suspected vulnerabilities privately according to the
+[security policy](SECURITY.md).
+
+Changes go through pull requests and the required Repository checks job. Read
+[Repository governance](docs/repository-governance.md) for branch rules and CI,
+and run `python3 -B scripts/check-ai-context.py --ci` before opening a PR.

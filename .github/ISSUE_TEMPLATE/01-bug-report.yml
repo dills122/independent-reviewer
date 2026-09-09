@@ -1,0 +1,175 @@
+name: Bug or unexpected behavior
+description: Report a reproducible defect, odd result, crash, or confusing behavior
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Independent Reviewer. Search existing issues first and use the [bug-reporting guide](https://github.com/dills122/independent-reviewer/blob/main/docs/bug-reporting.md) to prepare replayable evidence.
+
+        Do not report vulnerabilities or include credentials, private source, or unredacted review artifacts here. Use the repository's private security-reporting link instead.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched open and closed issues for the same behavior.
+          required: true
+        - label: This report does not disclose a security vulnerability or sensitive material.
+          required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong, and why does it look like a defect?
+      placeholder: One concise paragraph describing the problem and its impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Include the exact error, exit code, wrong output, or other symptom.
+      placeholder: What actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Describe the result you expected and the basis for that expectation.
+      placeholder: What should have happened instead?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Affected area
+      options:
+        - prepare or Git capture
+        - inspect or packet validation
+        - review orchestration
+        - OpenRouter transport
+        - final-stage resume
+        - report validation or rendering
+        - library API
+        - documentation or setup
+        - other or unknown
+    validations:
+      required: true
+
+  - type: input
+    id: reviewer-version
+    attributes:
+      label: Independent Reviewer version
+      description: Provide the release version or full commit SHA you ran.
+      placeholder: v1.2.3 or 0123456789abcdef0123456789abcdef01234567
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Start from a clean checkout when possible. List every command and input needed to reproduce the behavior, in order.
+      placeholder: |
+        1. Check out Independent Reviewer at ...
+        2. Create or check out the target repository state described below.
+        3. Run `...`.
+        4. Observe `...`.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: target-visibility
+    attributes:
+      label: Target repository availability
+      description: How can maintainers access the repository whose changeset triggers the problem?
+      options:
+        - Public repository or public fork
+        - Public minimal reproduction repository
+        - Sanitized patch or Git bundle attached
+        - Private repository; synthetic reproduction provided
+        - Private repository; unable to share reproduction
+        - Not a repository-dependent problem
+    validations:
+      required: true
+
+  - type: textarea
+    id: changeset
+    attributes:
+      label: Target repository and replayable changeset
+      description: For public source, provide repository URL, full base and head commit SHAs, dirty-state status, and checkout/replay commands. Otherwise attach a sanitized patch or reproduction, or explain why sharing is impossible. Do not include secrets or proprietary source.
+      placeholder: |
+        Repository: https://github.com/owner/repository
+        Base SHA: 0123456789abcdef0123456789abcdef01234567
+        Head SHA: 89abcdef0123456789abcdef0123456789abcdef
+        Working tree: clean
+        Replay:
+          git clone https://github.com/owner/repository.git
+          cd repository
+          git checkout 89abcdef0123456789abcdef0123456789abcdef
+    validations:
+      required: true
+
+  - type: textarea
+    id: reviewer-inputs
+    attributes:
+      label: Sanitized Independent Reviewer inputs
+      description: Paste or attach the request and config needed to reproduce, with repository paths and sensitive data removed. Write "Not applicable" and explain when the failure occurs before these inputs are used.
+      placeholder: Sanitized request/config, relevant flags, and exclusion patterns.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include OS and architecture, Node.js, npm, and Git versions, installation method, shell, and relevant provider/model route when applicable.
+      placeholder: |
+        OS/architecture:
+        Node.js:
+        npm:
+        Git:
+        Shell:
+        Install/run method:
+        Provider/model (if relevant):
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitized diagnostics
+      description: Add terminal output, exit codes, stack traces, packet inspection, or run-attempt metadata. Redact keys, private code, author content, local usernames/paths, and provider request bodies.
+      render: shell
+
+  - type: textarea
+    id: frequency
+    attributes:
+      label: Frequency and regression
+      description: Does it happen every time? If this worked before, identify the last known-good version or commit.
+      placeholder: Reproduces 3/3 times; last known good was ...
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Add screenshots, related issues, suspected cause, or workarounds. Mark guesses as guesses.
+
+  - type: checkboxes
+    id: final-check
+    attributes:
+      label: Final checks
+      options:
+        - label: I provided replay material or clearly explained why it cannot be shared.
+          required: true
+        - label: I removed credentials, private source, and other sensitive data from this public report.
+          required: true
