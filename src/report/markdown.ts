@@ -1,5 +1,6 @@
 import type { FinalReviewReportV1 } from "../contracts/index.js";
 import type { ReviewReport } from "../contracts/standards-results.js";
+import type { selectedRules } from "../contracts/standards-review.js";
 
 /** Human-readable verdict names, shared with the CLI so the two cannot disagree. */
 export const VERDICT_LABELS_V1: Record<FinalReviewReportV1["verdict"], string> = {
@@ -26,7 +27,10 @@ function lineItems(items: string[]): string {
 }
 
 /** Renders only validated report fields; it does not infer or change a verdict. */
-export function renderReviewMarkdown(report: ReviewReport): string {
+export function renderReviewMarkdown(
+  report: ReviewReport,
+  rules: ReturnType<typeof selectedRules> = [],
+): string {
   const findings =
     report.findings.length === 0
       ? "None."
@@ -79,6 +83,19 @@ export function renderReviewMarkdown(report: ReviewReport): string {
     "",
     findings,
     "",
+    ...(report.schemaVersion === 2
+      ? [
+          "## Selected standards",
+          "",
+          ...rules.map(
+            (rule) =>
+              `- ${escapeMarkdown(rule.id)} (${rule.enforcement}): ${escapeMarkdown(rule.text)} Source: ${escapeMarkdown(rule.source)}. Applies to: ${rule.paths.map(escapeMarkdown).join(", ")}. Exceptions: ${escapeMarkdown(rule.exceptions ?? "None declared.")}`,
+          ),
+          "",
+          "This result covers selected standards only; it is not a bug-free or deployment-readiness assessment.",
+          "",
+        ]
+      : []),
     "## Preliminary finding dispositions",
     "",
     lineItems(preliminaryFindingDispositions),

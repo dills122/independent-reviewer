@@ -1,6 +1,10 @@
 export * from "./contracts/index.js";
-export type { TwoStageReviewResultV1 } from "./orchestrator/two-stage-review.js";
+export type {
+  TwoStageReviewResult,
+  TwoStageReviewResultV1,
+} from "./orchestrator/two-stage-review.js";
 export {
+  preflightReview,
   resumeFinalReview,
   resumeFinalReviewV1,
   runTwoStageReview,
@@ -20,7 +24,7 @@ export type {
   ReviewStageV1,
 } from "./provider/review-provider.js";
 export { ProviderCallError } from "./provider/review-provider.js";
-export { renderFinalReviewMarkdownV1 } from "./report/markdown.js";
+export { renderFinalReviewMarkdownV1, renderReviewMarkdown } from "./report/markdown.js";
 export type {
   CapturedGitSnapshotV1,
   CaptureGitSnapshotOptionsV1,

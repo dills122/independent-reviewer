@@ -36,6 +36,64 @@ Deterministic snapshot and blind-brief identities are accepted in
 - Validated JSON and Markdown reports with bounded review loops.
 - AI Central skill integration.
 
+## Standards review
+
+Standards mode reviews code quality against selected rules, preserving the
+independent first assessment and separate author reconciliation. Supply a
+standards profile and an author/agent overview upfront. A business requirements
+document or implementation plan is not needed. Bug hunting, fuzzing and test
+execution are outside this mode.
+
+Build with `npm ci` and `npm run build`. Using paths to your own repository,
+selected review config, profile and overview:
+
+```sh
+node dist/src/cli.js init --repo /path/to/repository \
+  --config /path/to/review-config.json \
+  --standards /path/to/standards.json \
+  --author /path/to/author-overview.md
+node dist/src/cli.js review --repo /path/to/repository --base main --dry-run
+node dist/src/cli.js review --repo /path/to/repository --base main
+```
+
+Choose the actual base ref for your branch. `init` saves absolute input paths in
+Git-local settings and refuses to overwrite existing settings. Linked worktrees
+use their Git-resolved settings location. Flags override saved settings. The
+live command requires `OPENROUTER_API_KEY` in the environment; initialization and
+dry-run neither read credentials nor submit provider calls. Dry-run shows scope
+counts, routing and conservative token/cost admission, then removes its temporary
+packet. Reservations are not confirmed charges.
+
+Skip initialization by passing `--standards`, `--author` and `--config` directly
+to `review`. The [example profile](examples/standards.javascript-typescript.json)
+contains advisory JavaScript/TypeScript rules; select or customize rules to match
+your project. Profile fields are defined by
+[standards-profile-v1](schemas/standards-profile-v1.schema.json). Rule IDs must be
+unique across selected definitions. `paths` are repository-relative Node glob
+patterns; paths with no applicable rule remain visibly unassessed. Duplicate
+rule definitions require explicit resolution, rather than letting a model pick
+which one to enforce.
+
+Author input accepts plain text/Markdown or an existing structured author packet
+JSON. Plain text makes no verification claims. The input files are excluded from
+ordinary code evidence. The overview's digest is frozen before call one, and
+its content is delivered only in call two. Edited author artifacts fail inspection.
+
+Progress goes to stderr; `--quiet` suppresses it. The summary shows required or
+recommended changes, rule IDs, locations and corrections. The full Markdown
+report retains rule sources and reconciliation details. A passing standards
+review is not a claim of bug-free code or deployment readiness. Cost output
+separates provider-reported amounts from missing telemetry.
+
+Convenience-mode runs reserve one of three instances in a Git-local flow only
+after successful capture/preflight. Concurrent invocations cannot claim the same
+instance. Repeated captures never overwrite an existing packet; use `inspect`
+or an eligible `resume-final` for retained work. Use `--new-flow` only when
+explicitly starting a distinct review. The existing `--request ... --config ...`
+interface remains available for agents, including versioned
+[standards requests](schemas/standards-review-request-v2.schema.json).
+
+
 ## Local CLI
 
 Build, prepare a request, and inspect the resulting packet:

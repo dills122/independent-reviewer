@@ -8,7 +8,6 @@ import {
   DigestV1Schema,
   logicalLineCountV1,
   resolveSnapshotSourceContentV1,
-  type SnapshotContentV1,
   SnapshotManifestV1Schema,
   SnapshotPathV1Schema,
 } from "./snapshot-manifest.js";

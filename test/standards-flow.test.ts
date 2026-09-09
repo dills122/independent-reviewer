@@ -86,9 +86,41 @@ async function fixture() {
   return { repo, requestPath, configPath, packet: join(repo, ".review-runs", "run") };
 }
 
-for (const invalidRule of [false, true])
-  test(`standards CLI preserves blind assessment and ${invalidRule ? "rejects unknown rules" : "renders mandatory findings"}`, async () => {
+for (const scenario of [
+  "required",
+  "unknown",
+  "clean",
+  "exception",
+  "recommended",
+  "unavailable",
+  "inapplicable",
+  "conflict",
+])
+  test(`standards CLI protocol: ${scenario}`, async () => {
+    const invalidRule = scenario === "unknown";
+    const noFindings = scenario === "clean" || scenario === "unavailable";
+    const removed = noFindings || scenario === "exception";
+    const expectedExit = ["unknown", "inapplicable", "conflict"].includes(scenario)
+      ? 1
+      : scenario === "unavailable"
+        ? 3
+        : scenario === "required"
+          ? 2
+          : 0;
     const f = await fixture();
+    const fixtureRequest = JSON.parse(await readFile(f.requestPath, "utf8"));
+    const profile = JSON.parse(fixtureRequest.canonicalInputs.standards[0].content);
+    if (scenario === "recommended") profile.rules[0].enforcement = "RECOMMENDED";
+    if (scenario === "exception") {
+      profile.rules[0].exceptions = "Keep names required by an established public API.";
+      fixtureRequest.authorPacket.overview += " This exported name is fixed by the public API.";
+    }
+    if (scenario === "inapplicable") profile.rules[0].paths = ["lib/**"];
+    if (scenario === "conflict")
+      profile.rules.push({ ...profile.rules[0], text: "Use short names." });
+    fixtureRequest.canonicalInputs.standards[0].content = JSON.stringify(profile);
+    await writeFile(f.requestPath, JSON.stringify(fixtureRequest));
+    if (scenario === "clean") await writeFile(join(f.repo, "code.ts"), "export const value = 2;\n");
     const output: string[] = [];
     const errors: string[] = [];
     let calls = 0;
@@ -114,7 +146,7 @@ for (const invalidRule of [false, true])
         ];
         const finding = {
           ruleIds: [invalidRule ? "rule_unknown" : "rule_names"],
-          severity: "REQUIRED",
+          severity: scenario === "recommended" ? "RECOMMENDED" : "REQUIRED",
           title: "Describe the exported constant",
           problem: "The public name v does not convey its purpose.",
           impact: "Callers must inspect implementation to understand the value.",
@@ -128,7 +160,7 @@ for (const invalidRule of [false, true])
           summary: "Naming review",
           canonicalInputCoverage: [
             {
-              canonicalInputId: "input_standard",
+              canonicalInputId: brief.canonicalInputs.standards[0].id,
               status: "ASSESSED",
               explanation: "Applied naming rule.",
             },
@@ -143,7 +175,7 @@ for (const invalidRule of [false, true])
             ...common,
             stage: "PRELIMINARY",
             inspectedPaths: ["code.ts"],
-            findings: [{ id: "finding_name", ...finding }],
+            findings: noFindings ? [] : [{ id: "finding_name", ...finding }],
             evidenceGaps: [],
             limitations: [],
             nextAction: "REQUEST_AUTHOR_PACKET",
@@ -153,28 +185,49 @@ for (const invalidRule of [false, true])
           const saved = JSON.parse(
             await readFile(join(f.packet, "review", "preliminary.json"), "utf8"),
           );
-          assert.equal(saved.findings[0].id, "finding_name");
+          assert.equal(saved.findings.length, noFindings ? 0 : 1);
           value = {
             ...common,
             stage: "FINAL",
             mode: "STANDARDS",
-            findings: [
-              {
-                ...finding,
-                sourceFindingIds: ["finding_name"],
-                reconciliationRationale: "Preference does not establish a permitted exception.",
-              },
-            ],
-            withdrawnPreliminaryFindings: [],
+            findings: removed
+              ? []
+              : [
+                  {
+                    ...finding,
+                    sourceFindingIds: ["finding_name"],
+                    reconciliationRationale: "Preference does not establish a permitted exception.",
+                  },
+                ],
+            withdrawnPreliminaryFindings:
+              scenario === "exception"
+                ? [
+                    {
+                      preliminaryFindingId: "finding_name",
+                      rationale: "Selected exception applies to the established API.",
+                    },
+                  ]
+                : [],
             preliminaryConcernDispositions: [],
             authorClaims: [],
             authorVerificationClaims: [],
             changedPathCoverage: [
               { path: "code.ts", status: "INSPECTED", explanation: "Reviewed frozen code." },
             ],
-            limitations: [],
-            verdict: "NOT_READY",
-            nextActions: { blockers: ["Use a descriptive name."], fastFollows: [] },
+            limitations:
+              scenario === "unavailable" ? ["Required surrounding context is unavailable."] : [],
+            verdict:
+              scenario === "unavailable"
+                ? "UNABLE_TO_VERIFY"
+                : scenario === "recommended"
+                  ? "READY_WITH_FOLLOW_UPS"
+                  : removed
+                    ? "READY"
+                    : "NOT_READY",
+            nextActions: {
+              blockers: scenario === "required" ? ["Use a descriptive name."] : [],
+              fastFollows: scenario === "recommended" ? ["Consider a descriptive name."] : [],
+            },
           };
         }
         return {
@@ -188,19 +241,45 @@ for (const invalidRule of [false, true])
       },
     };
     try {
+      let args = ["review", "--request", f.requestPath];
+      if (scenario === "required") {
+        const standardsPath = join(f.repo, "standards.json");
+        const authorPath = join(f.repo, "author.md");
+        await writeFile(standardsPath, JSON.stringify(profile));
+        await writeFile(authorPath, fixtureRequest.authorPacket.overview);
+        await rm(f.requestPath);
+        args = [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          standardsPath,
+          "--author",
+          authorPath,
+        ];
+      }
       const result = await runCliV1(
-        ["review", "--request", f.requestPath, "--config", f.configPath, "--output", f.packet],
+        [...args, "--config", f.configPath, "--output", f.packet],
         { stdout: (m) => output.push(m), stderr: (m) => errors.push(m) },
         { readOpenRouterApiKey: () => "test", createProvider: () => provider },
       );
-      assert.equal(result, invalidRule ? 1 : 2, errors.join("\n"));
-      assert.equal(calls, invalidRule ? 1 : 2, errors.join("\n"));
+      assert.equal(result, expectedExit, errors.join("\n"));
+      assert.equal(
+        calls,
+        scenario === "conflict" ? 0 : ["unknown", "inapplicable"].includes(scenario) ? 1 : 2,
+        errors.join("\n"),
+      );
       if (invalidRule) assert.match(errors.join("\n"), /Unknown standard rule/);
-      else {
-        assert.match(output.join("\n"), /Standards review: changes requested/);
+      else if (expectedExit !== 1) {
+        assert.match(output.join("\n"), /Standards/);
         const report = JSON.parse(await readFile(join(f.packet, "review", "final.json"), "utf8"));
         assert.equal(report.mode, "STANDARDS");
-        assert.equal(report.findings[0].ruleIds[0], "rule_names");
+        assert.equal(report.findings.length, removed ? 0 : 1);
+        if (!removed) assert.equal(report.findings[0].ruleIds[0], "rule_names");
+        const markdown = await readFile(join(f.packet, "review", "report.md"), "utf8");
+        assert.match(markdown, /Project standard/);
         const authorPath = join(f.packet, "author-packet.json");
         const author = JSON.parse(await readFile(authorPath, "utf8"));
         author.overview = "Tampered";
@@ -211,3 +290,100 @@ for (const invalidRule of [false, true])
       await rm(f.repo, { recursive: true, force: true });
     }
   });
+
+test("standards convenience dry-run needs no credentials or provider and leaves no review run", async () => {
+  const f = await fixture();
+  const output: string[] = [];
+  const errors: string[] = [];
+  try {
+    const request = JSON.parse(await readFile(f.requestPath, "utf8"));
+    const profilePath = join(f.repo, "standards.json");
+    const overviewPath = join(f.repo, "author.md");
+    await writeFile(profilePath, request.canonicalInputs.standards[0].content);
+    await writeFile(overviewPath, request.authorPacket.overview);
+    const result = await runCliV1(
+      [
+        "review",
+        "--repo",
+        f.repo,
+        "--base",
+        "main",
+        "--standards",
+        profilePath,
+        "--author",
+        overviewPath,
+        "--config",
+        f.configPath,
+        "--dry-run",
+      ],
+      { stdout: (m) => output.push(m), stderr: (m) => errors.push(m) },
+      {
+        readOpenRouterApiKey: () => {
+          throw new Error("dry-run read credential");
+        },
+        createProvider: () => {
+          throw new Error("dry-run created provider");
+        },
+      },
+    );
+    assert.equal(result, 0, errors.join("\n"));
+    assert.match(output.join("\n"), /Reserved tokens/);
+    assert.doesNotMatch(output.join("\n"), /AUTHOR_PRIVATE/);
+    await assert.rejects(readFile(join(f.packet, "review", "final.json")));
+  } finally {
+    await rm(f.repo, { recursive: true, force: true });
+  }
+});
+
+test("saved settings never overwrite silently and direct inputs enforce three exclusive instance claims", async () => {
+  const f = await fixture();
+  try {
+    const { assembleStandardsRequest, localReviewDirectory } = await import(
+      "../src/cli/standards-input.js"
+    );
+    const request = JSON.parse(await readFile(f.requestPath, "utf8"));
+    const standardPath = join(f.repo, "standards.json");
+    const authorPath = join(f.repo, "author.md");
+    await writeFile(standardPath, request.canonicalInputs.standards[0].content);
+    await writeFile(authorPath, request.authorPacket.overview);
+    const errors: string[] = [];
+    const io = { stdout: (_: string) => {}, stderr: (s: string) => errors.push(s) };
+    const init = [
+      "init",
+      "--repo",
+      f.repo,
+      "--config",
+      f.configPath,
+      "--standards",
+      standardPath,
+      "--author",
+      authorPath,
+    ];
+    assert.equal(await runCliV1(init, io), 0);
+    assert.equal(await runCliV1(init, io), 1);
+    assert.match(errors.join("\n"), /Settings already exist/);
+    const options = new Map<string, string | true>([
+      ["--repo", f.repo],
+      ["--config", f.configPath],
+      ["--standards", standardPath],
+      ["--author", authorPath],
+    ]);
+    const first = await assembleStandardsRequest(options);
+    await first.claim();
+    const second = await assembleStandardsRequest(options);
+    const concurrent = await assembleStandardsRequest(options);
+    assert.equal(second.request.reviewInstance.number, 2);
+    await second.claim();
+    await assert.rejects(concurrent.claim(), /EEXIST/);
+    const third = await assembleStandardsRequest(options);
+    assert.equal(third.request.reviewInstance.number, 3);
+    await third.claim();
+    await assert.rejects(assembleStandardsRequest(options), /all three instances/);
+    const next = await assembleStandardsRequest(new Map([...options, ["--new-flow", true]]));
+    assert.notEqual(next.request.flowId, first.request.flowId);
+    assert.equal(next.request.reviewInstance.number, 1);
+    assert.match(await localReviewDirectory(f.repo), /\.git/);
+  } finally {
+    await rm(f.repo, { recursive: true, force: true });
+  }
+});

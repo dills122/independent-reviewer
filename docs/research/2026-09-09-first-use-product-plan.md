@@ -1,6 +1,6 @@
 # Standards-based code review: implementation plan
 
-Status: product scope and data flow agreed with owner; implementation not started. Updated 2026-09-09. Baseline: `8322b9edad655f932352329e6db11bda43383ef8` (PR #66). This revision supersedes the earlier requirements/plan-driven product proposal in this file.
+Status: slices 1–5 implemented and verified offline; slice 6 live semantic evaluation remains pending. Updated 2026-09-09. Baseline: `8322b9edad655f932352329e6db11bda43383ef8` (PR #66). This revision supersedes the earlier requirements/plan-driven product proposal in this file.
 
 ## Agreed outcome
 
@@ -44,7 +44,7 @@ Initial implementation target: JavaScript/TypeScript pilot, using a small docume
 | Provider routing, budgets, retry/resume and audit ledger | Progress and actionable error presentation around existing decisions. |
 | Candidate assembly, validated coordinates, Markdown rendering | Standards finding semantics and a clear “standards review” outcome label. |
 
-Current request/brief contracts require requirements and an implementation plan. Current prompt/finding severity semantics center on defects. This is a bounded contract and policy change, not just a renamed command. Preserve legacy contracts and behavior; add explicit versioned mode-specific contracts before wiring consumers. Do not weaken existing v1 artifacts or permit resuming across changed protocols.
+Legacy request/brief contracts require requirements and an implementation plan. Legacy prompt/finding severity semantics center on defects. This is a bounded contract and policy change, not just a renamed command. Preserve legacy contracts and behavior; add explicit versioned mode-specific contracts before wiring consumers. Do not weaken existing v1 artifacts or permit resuming across changed protocols.
 
 Standards-mode report outcomes should be explicit: standards satisfied, changes requested, non-blocking recommendations, or unable to assess. They describe only the selected standards and captured scope; none means bug-free or safe to deploy. Existing mode keeps its current verdict mapping. New standards severity describes rule enforcement, not invented outage/security severity.
 
@@ -94,7 +94,7 @@ Checkpoint: a standards review completes through the existing explicit request/c
 
 Dependencies: 3. Scope: two small increments, request assembly then saved settings.
 
-Proposed syntax (not shipped): `independent-reviewer review --base main --standards <profile-or-file> --author <overview-file>`. Saved settings can make the last two flags optional on repeated use. Support the current structured author packet first; any concise text adapter must preserve user-supplied meaning and mark absent optional claims, never invent tests or rationale.
+Implemented syntax: `independent-reviewer review --base main --standards <profile-or-file> --author <overview-file>`. Saved settings can make the last two flags optional on repeated use. Support the current structured author packet first; any concise text adapter must preserve user-supplied meaning and mark absent optional claims, never invent tests or rationale.
 
 - Generate request metadata and IDs; keep the existing explicit request/config mode available. Show effective configuration and scope in a provider-free dry-run.
 - Keep operational settings in an explicit external config or Git-resolved local settings location. Store credentials only through the existing environment mechanism.
@@ -149,4 +149,12 @@ These sources inform design, not proven demand or product accuracy:
 - [OpenRouter: Errors and Debugging](https://openrouter.ai/docs/api_reference/errors-and-debugging): error categories and Retry-After.
 - Local observations: [route assessment](../validation/2026-09-09-reference-scope-and-routes.md), [recovery batch](../validation/2026-09-09-call-recovery-batch.md), [pacing](../validation/2026-09-09-pacing.md). Successful transport with occasional false positives motivates separate delivery and quality measures; these were not standards-mode evaluations.
 
-Still unmeasured: first-use friction, standards-profile precision across projects, and provider reliability over time. Initial profile contents and exact CLI/schema names are implementation details to settle in slice 1, using sourced rules and existing interfaces. Scope and author-data timing are already agreed; they do not need reopening.
+Still unmeasured: first-use friction, standards-profile precision across projects, and provider reliability over time. Initial profile and CLI/schema names are now implemented; profile effectiveness still needs live evaluation. Scope and author-data timing are already agreed; they do not need reopening.
+
+## Implementation evidence — 2026-09-09
+
+Implemented on `codex/standards-review`; engine checkpoint `beed62e`. Added versioned standards contracts, frozen author identity, separate two-stage policy, rule/path/enforcement validation, source-bearing Markdown, convenience CLI, Git-local settings, provider-free admission preview, progress, and recovery/cost presentation. Legacy explicit requests remain supported. JavaScript/TypeScript example profile deliberately uses recommendations; users explicitly select mandatory project rules.
+
+`npm run check`: 207 tests passed, including eight deterministic standards protocol cases and an actual convenience-CLI invocation against a mock provider. `python3 -B scripts/check-ai-context.py --ci`: passed. Tests verify author withholding until persisted preliminary assessment, rule applicability/identity, advisory versus mandatory outcomes, missing context, author digest tampering, dry-run without credentials, exclusive instance claims, and terminal/progress safety. Conflict fixture checks duplicate rule identity rejection; it does not prove semantic detection of contradictory rules with distinct IDs.
+
+No paid standards-mode calls made. Eight human-labeled live evaluations, real-change adjudication, false-positive measurement, and first-use usability assessment remain pending. Mock responses establish protocol behavior, not model judgment. Contradictory prose and whether evidence actually supports an exception still require model judgment and human evaluation. No bug hunting, fuzzing, test execution, or automatic fixing added.

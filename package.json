@@ -19,7 +19,14 @@
     "./schemas/review-request-v1": "./schemas/review-request-v1.schema.json",
     "./schemas/review-run-config-v2": "./schemas/review-run-config-v2.schema.json",
     "./schemas/inspection-report-v1": "./schemas/inspection-report-v1.schema.json",
-    "./schemas/snapshot-manifest-v1": "./schemas/snapshot-manifest-v1.schema.json"
+    "./schemas/snapshot-manifest-v1": "./schemas/snapshot-manifest-v1.schema.json",
+    "./schemas/standards-candidate-v2": "./schemas/standards-candidate-v2.schema.json",
+    "./schemas/standards-inspection-report-v2": "./schemas/standards-inspection-report-v2.schema.json",
+    "./schemas/standards-preliminary-v2": "./schemas/standards-preliminary-v2.schema.json",
+    "./schemas/standards-profile-v1": "./schemas/standards-profile-v1.schema.json",
+    "./schemas/standards-report-v2": "./schemas/standards-report-v2.schema.json",
+    "./schemas/standards-review-brief-v2": "./schemas/standards-review-brief-v2.schema.json",
+    "./schemas/standards-review-request-v2": "./schemas/standards-review-request-v2.schema.json"
   },
   "files": [
     "dist/src",

@@ -8,16 +8,12 @@ import {
   type FinalReviewReportV1,
   jsonDocument,
   logicalLineCountV1,
-  type NeutralReviewBriefV1,
-  NeutralReviewBriefV1Schema,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
-  type PreliminaryAssessmentV1,
   PreliminaryAssessmentV1Schema,
   type ReviewFindingV1,
   ReviewRunConfigV2Schema,
   resolveSnapshotSourceContentV1,
   sha256Utf8,
-  verifyNeutralReviewBriefIdentityV1,
 } from "../contracts/index.js";
 import { type ReviewBrief, ReviewBriefSchema } from "../contracts/neutral-review-brief.js";
 import {
@@ -27,6 +23,7 @@ import {
   STANDARDS_PRELIMINARY_V2_JSON_SCHEMA,
   StandardsPreliminaryV2Schema,
 } from "../contracts/standards-results.js";
+import type { ReviewAuthor } from "../contracts/standards-review.js";
 import { selectedRules } from "../contracts/standards-review.js";
 import {
   ProviderCallError,
@@ -40,6 +37,7 @@ import { renderReviewMarkdown } from "../report/markdown.js";
 import { inspectSnapshotPacket, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
 import { buildReviewBrief } from "../transmission/neutral-brief-builder.js";
 import { compactProjectGuidanceV1 } from "../transmission/project-guidance-digest.js";
+import { emitReviewProgress } from "./progress.js";
 import {
   type ConstrainedResponseSchemaV1,
   constrainFinalConcernScopeV1,
@@ -72,7 +70,6 @@ function blindReviewEvidence(brief: ReviewBrief): unknown {
   if (brief.schemaVersion === 2)
     return {
       ...brief,
-      selectedRules: selectedRules(brief.canonicalInputs),
       requiredCoverage: {
         changedPaths: brief.snapshotManifest.paths.map((entry) => entry.path),
         canonicalInputIds: brief.snapshotManifest.canonicalInputs.map((input) => input.id),
@@ -110,6 +107,7 @@ async function appendRunEvent(
     `${JSON.stringify({ schemaVersion: 1, at: new Date().toISOString(), ...event })}\n`,
     { encoding: "utf8", mode: 0o600 },
   );
+  emitReviewProgress(event);
 }
 
 function normalizedError(error: unknown): {
@@ -983,6 +981,133 @@ async function completeFinalStageV1(
   }
 }
 
+function prepareReviewCalls(
+  brief: ReviewBrief,
+  authorPacket: ReviewAuthor,
+  config: ReviewRunConfigV2,
+) {
+  const blindMessages: ReviewMessageV1[] = [
+    { role: "system", content: brief.schemaVersion === 2 ? STANDARDS_POLICY : REVIEW_POLICY_V1 },
+    { role: "user", content: JSON.stringify(blindReviewEvidence(brief)) },
+  ];
+  const evidencePaths = [...allowedPaths(brief)].sort();
+  const changedPaths = brief.snapshotManifest.paths.map((entry) => entry.path).sort();
+  const canonicalInputIds = brief.snapshotManifest.canonicalInputs.map((entry) => entry.id).sort();
+  const preliminaryConstrained = constrainResponseSchemaV1(
+    brief.schemaVersion === 2
+      ? STANDARDS_PRELIMINARY_V2_JSON_SCHEMA
+      : PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
+    {
+      evidencePaths,
+      changedPaths,
+      canonicalInputIds,
+      identities: {
+        snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
+        briefDigest: brief.briefDigest.value,
+      },
+      authorVerificationClaims: authorPacket.claimedVerification,
+      ...(brief.schemaVersion === 2
+        ? { ruleIds: selectedRules(brief.canonicalInputs).map((rule) => rule.id) }
+        : {}),
+    },
+  );
+  const preliminaryResponseSchema = preliminaryConstrained.schema;
+  const finalConstrained = constrainResponseSchemaV1(
+    brief.schemaVersion === 2
+      ? STANDARDS_CANDIDATE_V2_JSON_SCHEMA
+      : FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA,
+    {
+      evidencePaths,
+      changedPaths,
+      canonicalInputIds,
+      identities: {
+        snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
+        briefDigest: brief.briefDigest.value,
+      },
+      authorVerificationClaims: authorPacket.claimedVerification,
+      ...(brief.schemaVersion === 2
+        ? { ruleIds: selectedRules(brief.canonicalInputs).map((rule) => rule.id) }
+        : {}),
+    },
+  );
+  const finalResponseSchema = finalConstrained.schema;
+  assertConversationBudget(blindMessages, config.budgets.maxConversationBytes);
+  const authorMessage = JSON.stringify({
+    schemaVersion: 1,
+    type: "AUTHOR_PACKET",
+    snapshotDigest: brief.snapshotManifest.snapshotDigest,
+    authorPacket: authorPacket,
+  });
+  const finalMessageSkeleton: ReviewMessageV1[] = [
+    ...blindMessages,
+    { role: "assistant", content: "" },
+    { role: "user", content: authorMessage },
+  ];
+  assertConversationBudget(finalMessageSkeleton, config.budgets.maxConversationBytes);
+  const requiredTokens = requiredTwoStageTokenReservation(
+    blindMessages,
+    authorMessage,
+    config.budgets.maxOutputTokensPerCall,
+    preliminaryResponseSchema,
+    finalResponseSchema,
+  );
+  const preliminaryCallReservation =
+    conservativeInputTokenUpperBound(blindMessages, preliminaryResponseSchema) +
+    config.budgets.maxOutputTokensPerCall;
+  const retryReservation = Math.max(
+    preliminaryCallReservation,
+    requiredTokens - preliminaryCallReservation,
+  );
+  const requiredWithRetry = requiredTokens + retryReservation;
+  if (requiredWithRetry > config.budgets.maxTotalTokens) {
+    throw new Error(
+      `The two-stage review requires a conservative reservation of ${requiredWithRetry} tokens including one provider retry (${requiredTokens} without retry), exceeding the ${config.budgets.maxTotalTokens}-token budget.`,
+    );
+  }
+
+  const reservedCostUsd =
+    reservationCostUsd(requiredTokens, config, 2) +
+    priceCeilingCostUsd(
+      retryReservation - config.budgets.maxOutputTokensPerCall,
+      config.budgets.maxOutputTokensPerCall,
+      config,
+    );
+  return {
+    blindMessages,
+    authorMessage,
+    preliminaryConstrained,
+    finalConstrained,
+    preliminaryResponseSchema,
+    requiredTokens,
+    requiredWithRetry,
+    retryReservation,
+    reservedCostUsd,
+  };
+}
+
+/** Uses the same admission calculation as execution, without constructing a provider. */
+export async function preflightReview(packetPath: string, configValue: unknown) {
+  const config = ReviewRunConfigV2Schema.parse(configValue);
+  const packet = await inspectSnapshotPacket(packetPath);
+  if (!packet.authorPacket)
+    throw new Error("An author packet is required for the two-stage review.");
+  if (packet.reviewConfigRef !== config.configId)
+    throw new Error("Review configuration does not match packet.");
+  if (!packet.manifest.paths.length)
+    throw new Error("The snapshot contains no changed paths to review.");
+  const brief = await buildReviewBrief(packetPath, config.budgets.maxInitialEvidenceBytes);
+  const calls = prepareReviewCalls(brief, packet.authorPacket, config);
+  if (calls.reservedCostUsd > config.budgets.maxTotalCostUsd)
+    throw new Error("The remaining cost budget cannot reserve the preliminary call.");
+  return {
+    reservedTokens: calls.requiredWithRetry,
+    reservedCostUsd: calls.reservedCostUsd,
+    model: config.model,
+    providers: config.providerRouting.order,
+    snapshotDigest: brief.snapshotManifest.snapshotDigest,
+  };
+}
+
 /** Runs two mandatory model calls and at most one final-output repair call. */
 export async function runTwoStageReview(
   packetPath: string,
@@ -1025,91 +1150,21 @@ export async function runTwoStageReview(
   });
 
   try {
-    const blindMessages: ReviewMessageV1[] = [
-      { role: "system", content: brief.schemaVersion === 2 ? STANDARDS_POLICY : REVIEW_POLICY_V1 },
-      { role: "user", content: JSON.stringify(blindReviewEvidence(brief)) },
-    ];
-    const evidencePaths = [...allowedPaths(brief)].sort();
-    const changedPaths = brief.snapshotManifest.paths.map((entry) => entry.path).sort();
-    const canonicalInputIds = brief.snapshotManifest.canonicalInputs
-      .map((entry) => entry.id)
-      .sort();
-    const preliminaryConstrained = constrainResponseSchemaV1(
-      brief.schemaVersion === 2
-        ? STANDARDS_PRELIMINARY_V2_JSON_SCHEMA
-        : PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
-      {
-        evidencePaths,
-        changedPaths,
-        canonicalInputIds,
-        identities: {
-          snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
-          briefDigest: brief.briefDigest.value,
-        },
-        authorVerificationClaims: packet.authorPacket.claimedVerification,
-      },
-    );
-    const preliminaryResponseSchema = preliminaryConstrained.schema;
-    const finalConstrained = constrainResponseSchemaV1(
-      brief.schemaVersion === 2
-        ? STANDARDS_CANDIDATE_V2_JSON_SCHEMA
-        : FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA,
-      {
-        evidencePaths,
-        changedPaths,
-        canonicalInputIds,
-        identities: {
-          snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
-          briefDigest: brief.briefDigest.value,
-        },
-        authorVerificationClaims: packet.authorPacket.claimedVerification,
-      },
-    );
-    const finalResponseSchema = finalConstrained.schema;
-    assertConversationBudget(blindMessages, config.budgets.maxConversationBytes);
-    const authorMessage = JSON.stringify({
-      schemaVersion: 1,
-      type: "AUTHOR_PACKET",
-      snapshotDigest: brief.snapshotManifest.snapshotDigest,
-      authorPacket: packet.authorPacket,
-    });
-    const finalMessageSkeleton: ReviewMessageV1[] = [
-      ...blindMessages,
-      { role: "assistant", content: "" },
-      { role: "user", content: authorMessage },
-    ];
-    assertConversationBudget(finalMessageSkeleton, config.budgets.maxConversationBytes);
-    const requiredTokens = requiredTwoStageTokenReservation(
+    const {
       blindMessages,
       authorMessage,
-      config.budgets.maxOutputTokensPerCall,
+      preliminaryConstrained,
+      finalConstrained,
       preliminaryResponseSchema,
-      finalResponseSchema,
-    );
-    const preliminaryCallReservation =
-      conservativeInputTokenUpperBound(blindMessages, preliminaryResponseSchema) +
-      config.budgets.maxOutputTokensPerCall;
-    const retryReservation = Math.max(
-      preliminaryCallReservation,
-      requiredTokens - preliminaryCallReservation,
-    );
-    const requiredWithRetry = requiredTokens + retryReservation;
-    if (requiredWithRetry > config.budgets.maxTotalTokens) {
-      throw new Error(
-        `The two-stage review requires a conservative reservation of ${requiredWithRetry} tokens including one provider retry (${requiredTokens} without retry), exceeding the ${config.budgets.maxTotalTokens}-token budget.`,
-      );
-    }
+      requiredTokens,
+      reservedCostUsd,
+    } = prepareReviewCalls(brief, packet.authorPacket, config);
     const costLedger = new RunCostLedgerV1(config.budgets.maxTotalCostUsd);
     // Both mandatory calls are reserved up front, the same way requiredTokens reserves tokens.
     await assertCostBudget(
       runRecordPath,
       costLedger,
-      reservationCostUsd(requiredTokens, config, 2) +
-        priceCeilingCostUsd(
-          retryReservation - config.budgets.maxOutputTokensPerCall,
-          config.budgets.maxOutputTokensPerCall,
-          config,
-        ),
+      reservedCostUsd,
       "PRELIMINARY",
       "RESERVATION",
     );
@@ -1193,7 +1248,13 @@ export async function runTwoStageReview(
       retryState,
     );
     await writeExclusive(finalPath, jsonDocument(report));
-    await writeExclusive(markdownPath, renderReviewMarkdown(report));
+    await writeExclusive(
+      markdownPath,
+      renderReviewMarkdown(
+        report,
+        brief.schemaVersion === 2 ? selectedRules(brief.canonicalInputs) : [],
+      ),
+    );
     await appendRunEvent(runRecordPath, {
       type: "RUN_COMPLETED",
       terminalState: report.verdict,
@@ -1459,6 +1520,9 @@ export async function resumeFinalReview(
         briefDigest: brief.briefDigest.value,
       },
       authorVerificationClaims: packet.authorPacket.claimedVerification,
+      ...(brief.schemaVersion === 2
+        ? { ruleIds: selectedRules(brief.canonicalInputs).map((rule) => rule.id) }
+        : {}),
     },
   );
   const finalResponseSchema = finalConstrained.schema;
@@ -1475,6 +1539,9 @@ export async function resumeFinalReview(
         briefDigest: brief.briefDigest.value,
       },
       authorVerificationClaims: packet.authorPacket.claimedVerification,
+      ...(brief.schemaVersion === 2
+        ? { ruleIds: selectedRules(brief.canonicalInputs).map((rule) => rule.id) }
+        : {}),
     },
   );
   const preliminaryResponseSchema = preliminaryConstrained.schema;
@@ -1546,7 +1613,13 @@ export async function resumeFinalReview(
       costLedger,
     );
     await writeExclusive(finalPath, jsonDocument(report));
-    await writeExclusive(markdownPath, renderReviewMarkdown(report));
+    await writeExclusive(
+      markdownPath,
+      renderReviewMarkdown(
+        report,
+        brief.schemaVersion === 2 ? selectedRules(brief.canonicalInputs) : [],
+      ),
+    );
     await appendRunEvent(runRecordPath, {
       type: "RUN_COMPLETED",
       terminalState: report.verdict,

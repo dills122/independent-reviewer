@@ -1,12 +1,12 @@
+import { matchesGlob } from "node:path";
 import { finalizeReviewBrief } from "../contracts/artifact-identity.js";
 import {
   computeInitialEvidenceContentDigestV1,
-  finalizeNeutralReviewBriefV1,
   type NeutralReviewBriefV1,
   type SnapshotContentV1,
 } from "../contracts/index.js";
 import { NeutralReviewBriefV1Schema, type ReviewBrief } from "../contracts/neutral-review-brief.js";
-import { canonicalInputList } from "../contracts/standards-review.js";
+import { canonicalInputList, selectedRules } from "../contracts/standards-review.js";
 import { inspectSnapshotPacket, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
 
 /**
@@ -101,7 +101,23 @@ export async function buildReviewBrief(
     });
   }
 
+  const standardsRules =
+    "standards" in packet.canonicalInputs ? selectedRules(packet.canonicalInputs) : undefined;
   const coverageConstraints = [
+    ...(standardsRules
+      ? packet.manifest.paths
+          .filter(
+            (entry) =>
+              !standardsRules.some((rule) =>
+                rule.paths.some((pattern) => matchesGlob(entry.path, pattern)),
+              ),
+          )
+          .map((entry) => ({
+            type: "UNSUPPORTED_CONTENT" as const,
+            detail: "No selected standard applies to this changed path.",
+            paths: [entry.path],
+          }))
+      : []),
     ...packet.manifest.exclusions
       .filter((exclusion) => exclusion.reason !== "RUNNER_CONTROL")
       .map((exclusion) => ({
@@ -147,7 +163,10 @@ export async function buildReviewBrief(
       ? packet.canonicalInputs.standards
       : packet.canonicalInputs.requirements
     ).map((requirement) => ({
-      text: requirement.content,
+      text:
+        "standards" in packet.canonicalInputs
+          ? `Assess the selected standards in ${requirement.title}.`
+          : requirement.content,
       canonicalInputIds: [requirement.id],
     })),
     canonicalInputs: packet.canonicalInputs,

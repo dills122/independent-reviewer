@@ -48,6 +48,7 @@ const RESPONSE_ARRAY_LIMITS_V1: Readonly<Record<string, number>> = {
 const PATH_ANCHORED_EVIDENCE_KINDS_V1 = new Set(["LINE_RANGE", "SYMBOL"]);
 
 export interface ConstrainResponseSchemaOptionsV1 {
+  ruleIds?: string[];
   evidencePaths: string[];
   changedPaths: string[];
   canonicalInputIds: string[];
@@ -279,6 +280,13 @@ export function constrainResponseSchemaV1(
   pinIdentityConstants(root, options.identities);
   constrainEvidencePaths(root, options.evidencePaths);
   constrainLedgers(root, options);
+  if (options.ruleIds)
+    visitNodes(root, (node, name) => {
+      if (name === "ruleIds" && node.type === "array") {
+        const item = requireNode(node.items, "ruleIds.items");
+        item.enum = options.ruleIds;
+      }
+    });
   const appliedArrayLimits = boundUnspecifiedProse(root, Math.max(options.changedPaths.length, 1));
   return { schema: root, appliedArrayLimits };
 }
