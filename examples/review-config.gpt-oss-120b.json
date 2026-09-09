@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "configId": "config_health_120b",
+  "model": "openai/gpt-oss-120b",
+  "providerRouting": {
+    "order": ["coreweave/fp4", "deepinfra/bf16"],
+    "maxPrice": {
+      "prompt": 0.037,
+      "completion": 0.17,
+      "request": 0
+    }
+  },
+  "budgets": {
+    "maxInitialEvidenceBytes": 32000,
+    "maxConversationBytes": 128000,
+    "maxOutputTokensPerCall": 4096,
+    "maxTotalTokens": 80000,
+    "maxTotalCostUsd": 0.02,
+    "timeoutMs": 120000
+  }
+}

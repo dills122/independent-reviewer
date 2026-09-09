@@ -204,9 +204,6 @@ function finalCoverage() {
     authorVerificationClaims: [
       {
         claimIndex: 0,
-        command: "npm test",
-        claimedOutcome: "PASSED" as const,
-        claimedSummary: "Reported by author.",
         status: "UNVERIFIED" as const,
         explanation: "The reviewer did not run the author-reported command.",
       },
@@ -478,6 +475,27 @@ describe("two-stage review orchestrator", () => {
           });
         }
         const isRepair = JSON.stringify(providerRequest.messages).includes("FINAL_OUTPUT_REPAIR");
+        if (isRepair) {
+          assert.deepEqual(
+            valueAtPath(providerRequest.responseSchema.schema, [
+              "properties",
+              "preliminaryFindingDispositions",
+              "items",
+              "properties",
+              "preliminaryFindingId",
+              "enum",
+            ]),
+            ["finding_repair"],
+          );
+          assert.equal(
+            valueAtPath(providerRequest.responseSchema.schema, [
+              "properties",
+              "preliminaryConcernDispositions",
+              "maxItems",
+            ]),
+            0,
+          );
+        }
         const finalFinding = {
           ...finding,
           origin: "PRELIMINARY",
@@ -585,8 +603,8 @@ describe("two-stage review orchestrator", () => {
           [0],
         );
         assert.equal(
-          valueAtPath(verificationLedger, ["items", "properties", "claimedSummary", "maxLength"]),
-          401,
+          valueAtPath(verificationLedger, ["items", "properties", "claimedSummary"]),
+          undefined,
         );
         throw new ProviderCallError("INVALID_RESPONSE", "stop after schema inspection");
       },
@@ -670,17 +688,38 @@ describe("two-stage review orchestrator", () => {
       id: "generation-invalid",
       choices: [{ finish_reason: "stop", message: { content: null } }],
     };
+    const responseMetadata = {
+      responseId: "generation-invalid",
+      model: "mock/reviewer",
+      provider: "Mock Provider",
+      finishReason: "stop",
+      usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30, cost: 0.003 },
+    };
     const provider: ReviewProviderV1 = {
       auditRequest: mockAuditRequest,
       complete: async () => {
         throw new ProviderCallError("INVALID_RESPONSE", "No usable completion content.", {
           responseBody: rawResponseBody,
+          responseMetadata,
         });
       },
     };
 
     try {
       await assert.rejects(() => runTwoStageReviewV1(packetPath, config, provider));
+      const events = (await readFile(join(packetPath, "review", "run-record.jsonl"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      assert.deepEqual(
+        events.find((event) => event.type === "CALL_FAILED").responseMetadata,
+        responseMetadata,
+      );
+      assert.equal(events.filter((event) => event.type === "CALL_STARTED").length, 1);
+      assert.equal(
+        events.some((event) => event.type === "CALL_SUCCEEDED"),
+        false,
+      );
       assert.deepEqual(
         JSON.parse(
           await readFile(
@@ -1110,7 +1149,7 @@ describe("two-stage review orchestrator", () => {
           budgets: {
             ...config.budgets,
             maxOutputTokensPerCall: 15_000,
-            maxTotalTokens: 71_000,
+            maxTotalTokens: 73_000,
             maxTotalCostUsd: 1,
           },
         },
@@ -1332,13 +1371,13 @@ describe("two-stage review orchestrator", () => {
           preliminaryConcernDispositions: [
             {
               kind: "EVIDENCE_GAP",
-              preliminaryConcern: "The excluded path could not be inspected.",
+              concernIndex: 0,
               disposition: "RESOLVED",
               rationale: "The reviewer incorrectly claimed the gap was resolved.",
             },
             {
               kind: "LIMITATION",
-              preliminaryConcern: "A changed path was excluded.",
+              concernIndex: 0,
               disposition: "RESOLVED",
               rationale: "The reviewer incorrectly claimed the limitation was resolved.",
             },

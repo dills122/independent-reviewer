@@ -75,7 +75,7 @@ SDK. See [ADR-002](decisions/002-use-typescript-node-runtime.md).
 
 1. **Prepare.** Resolve base and head, requirements, plan, exclusions, and verification evidence. Capture staged, unstaged, and selected untracked changes for working-tree reviews. Do not stage or commit to simplify capture. Detect changes during capture and retry or fail; later review reads use the snapshot only.
 2. **Validate.** Hash captured content and write the manifest. Check scope, file policy, size limits, and model capabilities. Produce a local dry-run packet showing exactly what will be sent. Never silently truncate a diff or silently exclude relevant files.
-3. **Blind review.** Start an external conversation containing trusted review policy, neutral requirements, scope, diff, tests, and initial surrounding code. Withhold the author packet at the orchestrator boundary. The model can request bounded evidence reads.
+3. **Blind review.** Start an external conversation containing trusted review policy, neutral requirements, scope, diff, tests, and initial surrounding code. Withhold the author packet at the orchestrator boundary. The shipped model receives one fixed payload; on-demand evidence reads remain deferred under ADR-005.
 4. **Persist preliminary assessment.** Require a structured preliminary findings and coverage ledger before unlocking the author packet. Persist the response and its input identity. This is a durable artifact; it cannot be overwritten by reconciliation.
 5. **Reconcile author claims.** Continue the external review conversation with the author packet. Ask the reviewer to confirm, contradict, or mark claims unverified and explain any changes to preliminary findings. Record missing author explanation explicitly if absent.
 6. **Validate and report.** Validate report shape, snapshot identity, path/line anchors, verification provenance, and required coverage fields. Preserve limitations; invalid output, incomplete scope, or exhausted context cannot become an empty successful review. An evidence anchor proves a location exists, not that a finding is true.
@@ -118,8 +118,9 @@ empty model turn. See
 
 Use schema-constrained output when supported and validate responses locally
 regardless.[^or-structured] Set `require_parameters: true` so routing does not
-silently ignore requested capabilities. Use a configured two-endpoint provider
-allowlist with same-model fallback and a hard provider price ceiling. Record the
+silently ignore requested capabilities. Use a configured one-to-three-endpoint
+allowlist and a hard provider price ceiling. One endpoint disables fallback for
+route isolation; multiple endpoints permit same-model fallback. Record the
 actual route; model fallback remains disabled.[^or-routing]
 
 Explicitly disable provider context compression because it can remove or
@@ -165,7 +166,9 @@ brief from the packet, fails rather than clipping an oversized initial evidence
 set, persists the raw and validated preliminary result before author delivery,
 makes one reconciliation call and permits at most one separately recorded
 same-model repair when a complete final candidate fails local validation,
-validates identities and evidence paths,
+assembles `final-review-candidate-v1` references into the unchanged final report
+using exact original author-claim and preliminary-concern text, validates
+identities and evidence paths,
 requires exact changed-path/canonical-input coverage and preliminary-concern
 dispositions, validates line/symbol anchors against frozen blobs, and renders
 the complete, presentation-safe reconciliation ledger to Markdown. Final-only
@@ -173,7 +176,7 @@ findings require a non-empty emergence rationale while preliminary-origin
 findings structurally require a null rationale, and author-reported commands
 cannot be promoted to runner-confirmed evidence. Each stage specializes its provider-facing
 schema with the frozen snapshot's permitted evidence paths, exact identities,
-coverage sizes, and input-derived author-verification bounds, while retaining
+coverage sizes, and author-verification indices, while retaining
 local semantic and anchor validation. Compact project guidance preserves every
 non-empty heading/list/prose block and fails before a provider call if the full
 digest cannot fit. It conservatively reserves both

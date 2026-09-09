@@ -1,4 +1,4 @@
-import type { AuthorPacketV1 } from "../contracts/index.js";
+import type { AuthorPacketV1, PreliminaryAssessmentV1 } from "../contracts/index.js";
 
 /**
  * The subset of JSON Schema this module traverses. The input is `z.toJSONSchema` output, so the
@@ -226,8 +226,7 @@ function constrainLedgers(root: JsonSchemaNodeV1, options: ConstrainResponseSche
 /**
  * Pass 4: bounds every prose string and every array the earlier passes left unbounded.
  *
- * Must run after `constrainLedgers`, and before `widenAuthorClaimText`, which restores room for
- * author-supplied text this pass would otherwise truncate.
+ * Must run after `constrainLedgers`.
  */
 function boundUnspecifiedProse(
   root: JsonSchemaNodeV1,
@@ -264,33 +263,6 @@ function boundUnspecifiedProse(
 }
 
 /**
- * Pass 5: restores enough length for the author's own verification text.
- *
- * Must run after `boundUnspecifiedProse`, which clamps these fields to the generic prose ceiling.
- */
-function widenAuthorClaimText(
-  root: JsonSchemaNodeV1,
-  authorVerificationClaims: AuthorPacketV1["claimedVerification"],
-): void {
-  const properties = requireProperties(root, "(root)");
-  const ledger = optionalNode(properties.authorVerificationClaims);
-  const itemProperties = optionalProperties(optionalNode(ledger?.items));
-  const command = optionalNode(itemProperties.command);
-  const claimedSummary = optionalNode(itemProperties.claimedSummary);
-  if (!command || !claimedSummary) {
-    return;
-  }
-  command.maxLength = Math.max(
-    DEFAULT_PROSE_MAX_LENGTH_V1,
-    ...authorVerificationClaims.map((claim) => Array.from(claim.command).length),
-  );
-  claimedSummary.maxLength = Math.max(
-    DEFAULT_PROSE_MAX_LENGTH_V1,
-    ...authorVerificationClaims.map((claim) => Array.from(claim.summary).length),
-  );
-}
-
-/**
  * Builds the JSON Schema that constrains one provider call, over a single clone.
  *
  * The passes are ordered and each states what it depends on; the order is load-bearing, and a new
@@ -305,6 +277,50 @@ export function constrainResponseSchemaV1(
   constrainEvidencePaths(root, options.evidencePaths);
   constrainLedgers(root, options);
   const appliedArrayLimits = boundUnspecifiedProse(root, Math.max(options.changedPaths.length, 1));
-  widenAuthorClaimText(root, options.authorVerificationClaims);
   return { schema: root, appliedArrayLimits };
+}
+
+/**
+ * Specializes the optional repair after the preliminary has been persisted. Its complete
+ * schema must be included in repair admission; it is not part of the initial call reservation.
+ */
+export function constrainRepairReferencesV1(
+  final: ConstrainedResponseSchemaV1,
+  preliminary: Pick<PreliminaryAssessmentV1, "findings" | "evidenceGaps" | "limitations">,
+): ConstrainedResponseSchemaV1 {
+  const schema = structuredClone(final.schema);
+  const properties = requireProperties(schema, "(root)");
+  const appliedArrayLimits = { ...final.appliedArrayLimits };
+  const pin = (name: string, field: string, values: Array<string | number>): void => {
+    const ledger = requireNode(properties[name], name);
+    ledger.minItems = values.length;
+    ledger.maxItems = values.length;
+    appliedArrayLimits[name] = values.length;
+    const items = requireProperties(requireNode(ledger.items, `${name}.items`), `${name}.items`);
+    const reference = requireNode(items[field], `${name}.items.${field}`);
+    reference.enum = [...new Set(values)];
+  };
+  pin(
+    "preliminaryFindingDispositions",
+    "preliminaryFindingId",
+    preliminary.findings.map((finding) => finding.id),
+  );
+  pin("preliminaryConcernDispositions", "concernIndex", [
+    ...preliminary.evidenceGaps.map((_, index) => index),
+    ...preliminary.limitations.map((_, index) => index),
+  ]);
+  const concerns = requireNode(
+    properties.preliminaryConcernDispositions,
+    "preliminaryConcernDispositions",
+  );
+  const concernProperties = requireProperties(
+    requireNode(concerns.items, "preliminaryConcernDispositions.items"),
+    "preliminaryConcernDispositions.items",
+  );
+  requireNode(concernProperties.kind, "preliminaryConcernDispositions.items.kind").enum = [
+    ...(preliminary.evidenceGaps.length > 0 ? ["EVIDENCE_GAP"] : []),
+    ...(preliminary.limitations.length > 0 ? ["LIMITATION"] : []),
+  ];
+  // Kind/index pairing, unique coverage, and finding relationships remain locally validated.
+  return { schema, appliedArrayLimits };
 }

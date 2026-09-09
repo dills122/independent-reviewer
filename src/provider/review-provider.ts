@@ -20,6 +20,7 @@ export interface ProviderErrorDiagnosticV1 {
 
 export interface ProviderCallErrorOptions extends ErrorOptions {
   readonly diagnostic?: ProviderErrorDiagnosticV1;
+  readonly responseMetadata?: ProviderResponseMetadataV1;
   /** Credential-redacted provider response retained for private failure diagnostics. */
   readonly responseBody?: unknown;
 }
@@ -28,6 +29,7 @@ export class ProviderCallError extends Error {
   readonly code: ProviderCallErrorCode;
   readonly diagnostic: ProviderErrorDiagnosticV1 | null;
   readonly responseBody: unknown | null;
+  readonly responseMetadata: ProviderResponseMetadataV1 | null;
 
   constructor(code: ProviderCallErrorCode, message: string, options?: ProviderCallErrorOptions) {
     super(message, options);
@@ -35,7 +37,17 @@ export class ProviderCallError extends Error {
     this.code = code;
     this.diagnostic = options?.diagnostic ?? null;
     this.responseBody = options?.responseBody ?? null;
+    this.responseMetadata = options?.responseMetadata ?? null;
   }
+}
+
+/** Validated, credential-safe envelope metadata; presence does not mean output was accepted. */
+export interface ProviderResponseMetadataV1 {
+  readonly responseId: string | null;
+  readonly model: string | null;
+  readonly provider: string | null;
+  readonly finishReason: string | null;
+  readonly usage: ReviewProviderResponseV1["usage"];
 }
 
 export type ReviewStageV1 = "PRELIMINARY" | "FINAL";

@@ -8,13 +8,14 @@ import {
 import {
   ProviderCallError,
   type ProviderErrorDiagnosticV1,
+  type ProviderResponseMetadataV1,
   type ReviewProviderRequestV1,
   type ReviewProviderResponseV1,
   type ReviewProviderV1,
 } from "./review-provider.js";
 
 const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
-const OPENROUTER_PROVIDER_POLICY_VERSION_V2 = "openrouter-chat-completions-v2";
+const OPENROUTER_PROVIDER_POLICY_VERSION_V3 = "openrouter-chat-completions-v3";
 const OPENROUTER_PUBLIC_HEADERS_V1 = {
   "content-type": "application/json",
   "x-openrouter-cache": "false",
@@ -247,6 +248,18 @@ function providerErrorMessage(diagnostic: ProviderErrorDiagnosticV1): string {
   return `OpenRouter reported provider error ${diagnostic.providerErrorCode}${type}${provider}${message}.`;
 }
 
+function responseMetadata(body: unknown, apiKey: string): ProviderResponseMetadataV1 | null {
+  const parsed = OpenRouterResponseSchema.safeParse(body);
+  if (!parsed.success) return null;
+  return {
+    responseId: boundedText(parsed.data.id, 160, apiKey),
+    model: boundedText(parsed.data.model, 160, apiKey),
+    provider: boundedText(parsed.data.provider, 160, apiKey),
+    finishReason: boundedText(parsed.data.choices[0]?.finish_reason, 80, apiKey),
+    usage: normalizedUsage(parsed.data.usage),
+  };
+}
+
 function openRouterWireBodyV2(
   request: ReviewProviderRequestV1,
   routing: OpenRouterProviderRoutingV1,
@@ -267,7 +280,7 @@ function openRouterWireBodyV2(
     provider: {
       order: routing.order,
       only: routing.order,
-      allow_fallbacks: true,
+      allow_fallbacks: routing.order.length > 1,
       data_collection: "deny",
       max_price: routing.maxPrice,
       require_parameters: true,
@@ -307,7 +320,7 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       body: wireBody,
     });
     return {
-      providerPolicyVersion: OPENROUTER_PROVIDER_POLICY_VERSION_V2,
+      providerPolicyVersion: OPENROUTER_PROVIDER_POLICY_VERSION_V3,
       wireBodyDigest: sha256Utf8(wireBody),
       wireBodyBytes: Buffer.byteLength(wireBody, "utf8"),
       credentialFreeWireRequestDigest: sha256Utf8(credentialFreeWireRequest),
@@ -354,6 +367,11 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       );
     }
     const responseBody = redactCredential(body, this.#apiKey);
+    const metadata = responseMetadata(body, this.#apiKey);
+    const rejectedResponse = {
+      responseBody,
+      ...(metadata === null ? {} : { responseMetadata: metadata }),
+    };
 
     // OpenRouter can report generation errors inside an HTTP 200 response.
     // https://openrouter.ai/docs/api_reference/errors-and-debugging
@@ -362,14 +380,14 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       const diagnostic = providerErrorDiagnostic(body, providerError, response, this.#apiKey);
       throw new ProviderCallError("PROVIDER_ERROR", providerErrorMessage(diagnostic), {
         diagnostic,
-        responseBody,
+        ...rejectedResponse,
       });
     }
     if (!response.ok) {
       throw new ProviderCallError(
         "PROVIDER_ERROR",
         `OpenRouter request failed (HTTP ${response.status}).`,
-        { responseBody },
+        rejectedResponse,
       );
     }
 
@@ -378,15 +396,15 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         "OpenRouter response did not match the expected envelope.",
-        { responseBody },
+        rejectedResponse,
       );
     }
     const choice = parsed.data.choices[0];
     if (choice?.finish_reason !== "stop") {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
-        `OpenRouter response did not complete normally (finish reason: ${choice?.finish_reason ?? "missing"}).`,
-        { responseBody },
+        `OpenRouter response did not complete normally (finish reason: ${metadata?.finishReason ?? "missing"}).`,
+        rejectedResponse,
       );
     }
     const content = choice.message.content;
@@ -394,7 +412,7 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         "OpenRouter response did not contain usable completion content.",
-        { responseBody },
+        rejectedResponse,
       );
     }
     const returnedModel = nullableString(parsed.data.model);
@@ -403,8 +421,8 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       // provider implementation. Distinct wording keeps a failure attributable to one layer.
       throw new ProviderCallError(
         "INVALID_RESPONSE",
-        `OpenRouter returned a different model than requested (${returnedModel}).`,
-        { responseBody },
+        "OpenRouter returned a different model than requested.",
+        rejectedResponse,
       );
     }
 
@@ -417,7 +435,7 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
         "OpenRouter returned malformed structured JSON.",
         {
           cause: error,
-          responseBody,
+          ...rejectedResponse,
         },
       );
     }
@@ -438,6 +456,7 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         "OpenRouter returned completion content that reflected the API credential.",
+        rejectedResponse,
       );
     }
 

@@ -11,7 +11,7 @@ const ProviderEndpointSlugV1Schema = z
 
 export const OpenRouterProviderRoutingV1Schema = z
   .strictObject({
-    order: z.array(ProviderEndpointSlugV1Schema).min(2).max(3),
+    order: z.array(ProviderEndpointSlugV1Schema).min(1).max(3),
     maxPrice: z.strictObject({
       prompt: z.number().nonnegative().max(1_000),
       completion: z.number().nonnegative().max(1_000),

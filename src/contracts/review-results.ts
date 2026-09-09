@@ -285,3 +285,28 @@ export const FINAL_REVIEW_REPORT_V1_JSON_SCHEMA = {
   $comment: STRUCTURAL_JSON_SCHEMA_COMMENT_V1,
   ...z.toJSONSchema(FinalReviewReportV1Schema, { target: "draft-2020-12", io: "output" }),
 };
+
+/** Provider output references source text; the runner assembles the persisted report. */
+export const FinalReviewCandidateV1Schema = z.strictObject({
+  ...FinalReviewReportV1Schema.shape,
+  authorVerificationClaims: z.array(
+    FinalReviewReportV1Schema.shape.authorVerificationClaims.element.omit({
+      command: true,
+      claimedOutcome: true,
+      claimedSummary: true,
+    }),
+  ),
+  preliminaryConcernDispositions: z.array(
+    FinalReviewReportV1Schema.shape.preliminaryConcernDispositions.element
+      .omit({ preliminaryConcern: true })
+      .extend({ concernIndex: z.int().nonnegative() }),
+  ),
+});
+
+export type FinalReviewCandidateV1 = z.infer<typeof FinalReviewCandidateV1Schema>;
+
+export const FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA = {
+  $id: "urn:independent-reviewer:schema:final-review-candidate:v1",
+  $comment: STRUCTURAL_JSON_SCHEMA_COMMENT_V1,
+  ...z.toJSONSchema(FinalReviewCandidateV1Schema, { target: "draft-2020-12", io: "output" }),
+};
