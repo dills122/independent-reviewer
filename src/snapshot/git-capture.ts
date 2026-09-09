@@ -15,7 +15,12 @@ import {
   type SnapshotManifestV1,
 } from "../contracts/index.js";
 import { mapWithConcurrencyV1 } from "./concurrency.js";
-import { decodeGitText, decodeNulFields, runGit } from "./git-command.js";
+import {
+  decodeGitText,
+  decodeNulFields,
+  DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+  runGit,
+} from "./git-command.js";
 
 export type SnapshotCaptureErrorCode =
   | "AMBIGUOUS_BASE"
@@ -36,6 +41,8 @@ export class SnapshotCaptureError extends Error {
 export interface CaptureGitSnapshotOptionsV1 {
   base?: string;
   excludedFileSystemPaths?: string[];
+  /** Caller-supplied glob patterns, matched against repository-relative paths. */
+  excludedPathPatterns?: string[];
   maxAttempts?: number;
   maxFileBytes?: number;
 }
@@ -90,11 +97,115 @@ function sha256Bytes(bytes: Uint8Array): DigestV1 {
   };
 }
 
+/** Whole basenames that carry credentials by convention. */
+const SECRET_FILENAMES_V1 = new Set([
+  ".env",
+  ".netrc",
+  "_netrc",
+  ".npmrc",
+  ".pypirc",
+  ".dockercfg",
+  ".git-credentials",
+  ".htpasswd",
+  ".pgpass",
+  "credentials",
+  "id_rsa",
+  "id_dsa",
+  "id_ecdsa",
+  "id_ed25519",
+  "terraform.tfvars",
+]);
+
+/** Extensions whose contents are key material or credential stores. */
+const SECRET_EXTENSIONS_V1 = [
+  ".pem",
+  ".key",
+  ".p12",
+  ".pfx",
+  ".jks",
+  ".keystore",
+  ".ppk",
+  ".kdbx",
+  ".tfstate",
+];
+
+/** Directory components whose contents are credentials regardless of file name. */
+const SECRET_DIRECTORIES_V1 = new Set([".ssh", ".aws", ".gnupg", ".docker"]);
+
+/**
+ * High-confidence credential markers, used to catch the common case the filename policy cannot:
+ * a key pasted into ordinary source, configuration, or a test fixture.
+ */
+const SECRET_CONTENT_MARKERS_V1: ReadonlyArray<{ label: string; pattern: RegExp }> = [
+  { label: "PEM private key block", pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
+  { label: "PGP private key block", pattern: /-----BEGIN PGP PRIVATE KEY BLOCK-----/ },
+  { label: "AWS access key id", pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
+  { label: "GitHub token", pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\b/ },
+  { label: "GitHub fine-grained token", pattern: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/ },
+  { label: "Slack token", pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
+  { label: "Google API key", pattern: /\bAIza[0-9A-Za-z_-]{35}\b/ },
+  { label: "OpenAI-style API key", pattern: /\bsk-[A-Za-z0-9]{20,}\b/ },
+];
+
+/** Bytes scanned for content markers; a credential sits near the top of a file in practice. */
+const SECRET_SCAN_BYTES_V1 = 256 * 1024;
+
 function isSecretPath(path: string): boolean {
+  const segments = path.toLowerCase().split("/");
+  if (segments.slice(0, -1).some((segment) => SECRET_DIRECTORIES_V1.has(segment))) {
+    return true;
+  }
   const name = basename(path).toLowerCase();
   return (
-    name === ".env" || name.startsWith(".env.") || name.endsWith(".pem") || name.endsWith(".key")
+    SECRET_FILENAMES_V1.has(name) ||
+    name.startsWith(".env.") ||
+    name.startsWith("service-account") ||
+    /^secrets?\.ya?ml$/.test(name) ||
+    SECRET_EXTENSIONS_V1.some((extension) => name.endsWith(extension))
   );
+}
+
+/** Names the first credential marker found in captured content, if any. */
+function secretContentMarker(bytes: Uint8Array): string | undefined {
+  if (bytes.includes(0)) {
+    return undefined;
+  }
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: false }).decode(
+      bytes.subarray(0, SECRET_SCAN_BYTES_V1),
+    );
+  } catch {
+    return undefined;
+  }
+  return SECRET_CONTENT_MARKERS_V1.find(({ pattern }) => pattern.test(text))?.label;
+}
+
+/**
+ * Compiles caller-supplied exclusion patterns. `*` matches within a path segment, `**` across
+ * segments; matching is case-insensitive and anchored to the whole repository-relative path.
+ */
+function compileExclusionPatterns(patterns: readonly string[]): RegExp[] {
+  return patterns.map((pattern) => {
+    const source = pattern
+      .split(/(\*\*\/|\*\*|\*|\?)/)
+      .map((part) => {
+        switch (part) {
+          case "**/":
+            return "(?:[^/]*/)*";
+          case "**":
+            return ".*";
+          case "*":
+            return "[^/]*";
+          case "?":
+            return "[^/]";
+          default:
+            return part.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+        }
+      })
+      .join("");
+    return new RegExp(`^${source}$`, "i");
+  });
 }
 
 function contentKind(bytes: Uint8Array): "BINARY" | "TEXT" {
@@ -172,7 +283,7 @@ async function indexModeAt(repositoryPath: string, path: string): Promise<string
  * Builds the captured side shared by the tree and working-tree readers, which differ only in how
  * `gitMode` and `bytes` were obtained.
  *
- * `isGenerated` is always `false`: capture-v1 has no generated-file detection, so the
+ * `isGenerated` is always `false`: capture-v2 has no generated-file detection, so the
  * `GENERATED_POLICY` exclusion reason is never produced. The field and the enum member stay in the
  * v1 contract; populating them is deferred rather than dropped.
  */
@@ -337,6 +448,23 @@ async function collectChangeSpecs(
   return changes.sort((left, right) => compareUtf16(left.path, right.path));
 }
 
+/**
+ * Caller exclusions name files or directories. A directory must cover everything beneath it: the
+ * CLI excludes packet directories this way, and a prior run's blobs and author packet sit inside
+ * one.
+ */
+function isUnderExcludedPath(path: string, excludedPaths: ReadonlySet<string>): boolean {
+  if (excludedPaths.has(path)) {
+    return true;
+  }
+  for (const excluded of excludedPaths) {
+    if (path.startsWith(`${excluded}/`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 async function collectState(
   repositoryPath: string,
   baseCommit: string,
@@ -345,6 +473,7 @@ async function collectState(
   includeUntracked: boolean,
   maxFileBytes: number,
   excludedPaths: ReadonlySet<string>,
+  excludedPatterns: readonly RegExp[],
 ): Promise<CollectedState> {
   const observedHeadCommit = captureWorkingTree
     ? await gitText(repositoryPath, ["rev-parse", "--verify", "HEAD^{commit}"])
@@ -376,7 +505,9 @@ async function collectState(
 
   for (const spec of specs) {
     const relevantPaths = spec.previousPath ? [spec.previousPath, spec.path] : [spec.path];
-    const callerExcludedPath = relevantPaths.find((path) => excludedPaths.has(path));
+    const callerExcludedPath = relevantPaths.find((path) =>
+      isUnderExcludedPath(path, excludedPaths),
+    );
     if (callerExcludedPath) {
       exclusions.push({
         path: callerExcludedPath,
@@ -390,7 +521,18 @@ async function collectState(
       exclusions.push({
         path: secretPath,
         reason: "SECRET_POLICY",
-        detail: "Excluded by capture-v1 secret filename policy.",
+        detail: "Excluded by capture-v2 secret filename policy.",
+      });
+      continue;
+    }
+    const patternPath = relevantPaths.find((path) =>
+      excludedPatterns.some((pattern) => pattern.test(path)),
+    );
+    if (patternPath) {
+      exclusions.push({
+        path: patternPath,
+        reason: "USER_EXCLUDED",
+        detail: "Excluded by a caller-supplied path pattern.",
       });
       continue;
     }
@@ -426,6 +568,20 @@ async function collectState(
       });
       continue;
     }
+    // Content scanning happens after the read and before anything is admitted to the manifest, so
+    // a credential pasted into ordinary source never reaches a blob the packet would transmit.
+    const secretMarker = [before, after]
+      .filter((side): side is CapturedSide => typeof side === "object" && side !== null)
+      .map((side) => secretContentMarker(side.bytes))
+      .find((marker) => marker !== undefined);
+    if (secretMarker) {
+      exclusions.push({
+        path: spec.path,
+        reason: "SECRET_CONTENT",
+        detail: `Excluded by capture-v2 content policy: ${secretMarker} detected.`,
+      });
+      continue;
+    }
     const unavailable =
       before === "SIZE_LIMIT" || after === "SIZE_LIMIT"
         ? "SIZE_LIMIT"
@@ -439,7 +595,7 @@ async function collectState(
         detail:
           unavailable === "SIZE_LIMIT"
             ? `Content exceeds the ${maxFileBytes}-byte capture limit.`
-            : "Git entry kind is not supported by capture-v1.",
+            : "Git entry kind is not supported by capture-v2.",
       });
       continue;
     }
@@ -582,22 +738,41 @@ async function resolveBaseCommit(
 }
 
 /** Freezes a committed or cumulative working-tree Git target into manifest-indexed blobs. */
-export async function captureGitSnapshotV1(
-  value: unknown,
-  options: CaptureGitSnapshotOptionsV1 = {},
-): Promise<CapturedGitSnapshotV1> {
-  const request = ReviewRequestV1Schema.parse(value) as ReviewRequestV1;
-  let repositoryPath: string;
+/** Resolves the worktree root of a repository path, as capture itself resolves it. */
+export async function resolveRepositoryRootV1(repositoryPath: string): Promise<string> {
   try {
-    repositoryPath = decodeGitText(
-      (await runGit(request.repository.path, ["rev-parse", "--show-toplevel"])).stdout,
+    return await realpath(
+      decodeGitText((await runGit(repositoryPath, ["rev-parse", "--show-toplevel"])).stdout),
     );
-    repositoryPath = await realpath(repositoryPath);
   } catch (error) {
     throw new SnapshotCaptureError("NOT_GIT_REPOSITORY", "Repository path is not a Git worktree.", {
       cause: error,
     });
   }
+}
+
+/** Reports whether Git ignores a path in the given repository. */
+export async function isPathIgnoredV1(
+  repositoryPath: string,
+  absolutePath: string,
+): Promise<boolean> {
+  // check-ignore rejects --literal-pathspecs, so this call opts out of it.
+  const result = await runGit(
+    repositoryPath,
+    ["check-ignore", "--quiet", "--", absolutePath],
+    [0, 1, 128],
+    DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+    false,
+  );
+  return result.exitCode === 0;
+}
+
+export async function captureGitSnapshotV1(
+  value: unknown,
+  options: CaptureGitSnapshotOptionsV1 = {},
+): Promise<CapturedGitSnapshotV1> {
+  const request = ReviewRequestV1Schema.parse(value) as ReviewRequestV1;
+  const repositoryPath = await resolveRepositoryRootV1(request.repository.path);
   const captureWorkingTree = request.repository.head === undefined;
   const headCommit = await gitText(repositoryPath, [
     "rev-parse",
@@ -645,6 +820,8 @@ export async function captureGitSnapshotV1(
     }),
   );
 
+  const excludedPatterns = compileExclusionPatterns(options.excludedPathPatterns ?? []);
+
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const first = await collectState(
       repositoryPath,
@@ -654,6 +831,7 @@ export async function captureGitSnapshotV1(
       request.repository.workingTree.includeUntracked,
       maxFileBytes,
       excludedPaths,
+      excludedPatterns,
     );
     const second = await collectState(
       repositoryPath,
@@ -663,6 +841,7 @@ export async function captureGitSnapshotV1(
       request.repository.workingTree.includeUntracked,
       maxFileBytes,
       excludedPaths,
+      excludedPatterns,
     );
     if (first.stateDigest.value !== second.stateDigest.value) {
       continue;
@@ -707,7 +886,7 @@ export async function captureGitSnapshotV1(
       exclusions: first.exclusions,
       omissions: first.omissions,
       canonicalInputs,
-      policies: { capture: "capture-v1", transmission: "transmission-v1" },
+      policies: { capture: "capture-v2", transmission: "transmission-v1" },
       raceCheck: {
         attempts: attempt,
         status: "STABLE",

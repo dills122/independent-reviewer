@@ -33,16 +33,23 @@ export interface GitResult {
   stderr: Buffer;
 }
 
-/** Runs Git without a shell so repository paths, refs, and pathspecs remain data. */
+/**
+ * Runs Git without a shell so repository paths, refs, and pathspecs remain data.
+ *
+ * `literalPathspecs` defaults to true and should stay that way for anything that takes a pathspec.
+ * A few plumbing commands (`check-ignore`) reject the flag outright, so they opt out.
+ */
 export async function runGit(
   repositoryPath: string,
   args: readonly string[],
   allowedExitCodes: readonly number[] = [0],
   timeoutMs: number = DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+  literalPathspecs = true,
 ): Promise<GitResult> {
   return new Promise((resolve, reject) => {
     // `--literal-pathspecs` keeps paths as data: no wildcard globbing, no `:(magic)` prefixes.
-    const child = spawn("git", ["-C", repositoryPath, "--literal-pathspecs", ...args], {
+    const globalArgs = literalPathspecs ? ["--literal-pathspecs"] : [];
+    const child = spawn("git", ["-C", repositoryPath, ...globalArgs, ...args], {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       env: gitEnvironment(),

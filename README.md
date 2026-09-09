@@ -47,15 +47,36 @@ node dist/src/cli.js inspect --packet ./.review-runs/<snapshot-id>
 ```
 
 Use `--base <ref>` to override base resolution and `--output <new-directory>`
-to choose the packet directory. `prepare` never overwrites an existing packet.
-It stores the manifest, canonical inputs, optional author packet, and captured
-blobs as separate private files. `inspect --json` prints the validated neutral
-snapshot material but only reports whether a separate author packet exists.
-The request fixture and schema show the current input shape.
+to choose the packet directory. Packets default to `<repository root>/.review-runs/<snapshot-id>`,
+not a path relative to the current directory. `prepare` never overwrites an
+existing packet. It stores the manifest, canonical inputs, optional author
+packet, and captured blobs as separate private files. `inspect --json` prints
+the validated neutral snapshot material but only reports whether a separate
+author packet exists. The request fixture and schema show the current input
+shape.
 
-Capture defaults to a 512 KiB per-file limit. Secret-like basenames (`.env`,
-`.env.*`, `*.pem`, and `*.key`), oversized files, submodules, and unsupported
-entry kinds are excluded visibly rather than silently transmitted.
+Packet directories are always excluded from capture, so a previous run's blobs
+and author packet never become evidence for the next review. If the packet
+directory is inside the reviewed worktree and is not ignored by Git, `prepare`
+and `review` warn — add it to `.gitignore`.
+
+Capture defaults to a 512 KiB per-file limit. The following are excluded
+visibly rather than silently transmitted:
+
+- **Credential filenames and directories** — `.env` and `.env.*`, `.netrc`,
+  `.npmrc`, `.pypirc`, `.dockercfg`, `.git-credentials`, `.htpasswd`,
+  `.pgpass`, `credentials`, `id_rsa`/`id_dsa`/`id_ecdsa`/`id_ed25519`,
+  `terraform.tfvars`, `service-account*`, `secrets.y[a]ml`, the extensions
+  `.pem`, `.key`, `.p12`, `.pfx`, `.jks`, `.keystore`, `.ppk`, `.kdbx`,
+  `.tfstate`, and anything under `.ssh/`, `.aws/`, `.gnupg/`, or `.docker/`.
+- **Credential content** — files containing a PEM or PGP private key block, an
+  AWS access key id, a GitHub, Slack, Google, or OpenAI-style API key, reported
+  as `SECRET_CONTENT`. Detection is marker-based, not exhaustive: it is a
+  backstop, not a guarantee that nothing sensitive is transmitted.
+- **Caller patterns** — `--exclude '<glob>[,<glob>]'` matches
+  repository-relative paths, where `*` stays within a path segment and `**`
+  crosses segments.
+- Oversized files, submodules, and unsupported entry kinds.
 
 Run the complete two-stage review with a request containing a separate author
 packet and a config matching its `reviewConfigRef`:
