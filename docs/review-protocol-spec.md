@@ -924,3 +924,9 @@ cannot prove the explanation true.
 This adds required fields to the unreleased standards-v2 pilot result schemas.
 The standards policy identity advances to `standards-review-v2`, preventing
 final-only resume under the prior policy. Legacy v1 contracts remain unchanged.
+
+For a conflict-only report (every selected rule marked CONFLICT, zero findings),
+the runner owns the clarification next action: resolve precedence, applicability,
+or exceptions before changing code. Raw model actions remain in the saved
+candidate. Verdict, findings, and rule explanations are not rewritten. Reports
+with non-conflicted rules or findings retain their model-provided next actions.

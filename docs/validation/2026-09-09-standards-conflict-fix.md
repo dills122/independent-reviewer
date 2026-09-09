@@ -37,13 +37,21 @@ omitted disposition index 0 for the saved preliminary limitation. Existing
 validation rejected it and the repair supplied the reference. This was not a
 first-final acceptance success.
 
-Remaining wording caveat: final nextActions correctly asks to resolve the rule
-conflict, but also loosely suggests changing code to satisfy a single rule.
-That is insufficient unless standards precedence or applicability is clarified
-first. The report does not propose a specific contradictory rename anymore, but
-this alternative should not be treated as sound guidance. Semantic correctness
-of next-action prose and reliable first-final concern accounting remain open;
-this result does not prove all conflict guidance correct across arbitrary rules.
+The live next-action wording still loosely suggested changing code to satisfy
+one rule. Closed that narrow presentation issue without another paid call: for
+reports where every selected rule is conflicted and no code findings exist,
+the runner supplies the workflow action to clarify precedence, applicability, or
+exceptions first. It does not select a winning rule or alter the model's findings,
+verdict, or explanations. Other reports retain their model-provided actions.
+The raw live candidate remains preserved.
+
+A failing regression reproduced the wording gap; full checks still pass (211).
+Offline rematerialization of the exact saved live repair response confirms the
+correct verdict, zero findings, and clear clarification-only action. This result
+is recorded separately as `offline-rematerialized-final.json`; the original live
+report was not overwritten. One live reproduction does not prove arbitrary
+semantic conflict detection reliable. First-final concern accounting still
+needed the existing bounded repair and remains a separate follow-up.
 
 Evidence: `.review-runs/standards-conflict-fix-2026-09-09/conflicting-rules/`.
 The original failed run remains untouched in the earlier batch directory.

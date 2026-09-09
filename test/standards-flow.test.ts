@@ -307,6 +307,10 @@ for (const scenario of [
         assert.match(output.join("\n"), /Standards/);
         const report = JSON.parse(await readFile(join(f.packet, "review", "final.json"), "utf8"));
         assert.equal(report.mode, "STANDARDS");
+        if (scenario === "semantic-conflict")
+          assert.deepEqual(report.nextActions.blockers, [
+            "Clarify precedence, applicability, or exceptions for conflicting standards: rule_names, rule_short. Do not change code merely to satisfy one conflicting rule.",
+          ]);
         assert.equal(report.findings.length, removed ? 0 : 1);
         if (!removed) assert.equal(report.findings[0].ruleIds[0], "rule_names");
         const markdown = await readFile(join(f.packet, "review", "report.md"), "utf8");

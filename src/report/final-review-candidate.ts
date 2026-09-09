@@ -54,7 +54,7 @@ function materializeExpandedCandidate(
       `Preliminary ${kind} dispositions`,
     );
   }
-  return (standards ? StandardsReportV2Schema : FinalReviewReportV1Schema).parse({
+  const report = (standards ? StandardsReportV2Schema : FinalReviewReportV1Schema).parse({
     ...candidate,
     authorVerificationClaims: candidate.authorVerificationClaims.map((claim) => {
       const source = claims[claim.claimIndex];
@@ -73,6 +73,29 @@ function materializeExpandedCandidate(
       }),
     ),
   });
+  // Conflict-only follow-up is a runner-owned workflow action, not a code correction.
+  // Preserve the model's assessment and raw candidate; never invent a winning rule.
+  if (
+    report.schemaVersion === 2 &&
+    report.findings.length === 0 &&
+    report.ruleAssessments.every((entry) => entry.status === "CONFLICT")
+  ) {
+    const conflicts = report.ruleAssessments
+      .filter((entry) => entry.status === "CONFLICT")
+      .map((entry) => entry.ruleId)
+      .sort();
+    if (conflicts.length)
+      return {
+        ...report,
+        nextActions: {
+          blockers: [
+            `Clarify precedence, applicability, or exceptions for conflicting standards: ${conflicts.join(", ")}. Do not change code merely to satisfy one conflicting rule.`,
+          ],
+          fastFollows: [],
+        },
+      };
+  }
+  return report;
 }
 
 export function materializeFinalCandidate(
