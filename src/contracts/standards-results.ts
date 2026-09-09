@@ -11,6 +11,14 @@ import {
 } from "./review-results.js";
 import { contractJsonSchema } from "./standards-review.js";
 
+export const StandardsRuleAssessmentV2Schema = z.strictObject({
+  ruleId: prefixedIdentifier("rule"),
+  status: z.enum(["ASSESSED", "CONFLICT"]),
+  conflictingRuleIds: z.array(prefixedIdentifier("rule")),
+  explanation: NonEmptyTextSchema,
+});
+const ruleAssessments = z.array(StandardsRuleAssessmentV2Schema).min(1);
+
 export const StandardsFindingV2Schema = ReviewFindingV1Schema.omit({
   scenario: true,
   severity: true,
@@ -33,6 +41,7 @@ export const StandardsPreliminaryV2Schema = z
   .strictObject({
     ...PreliminaryAssessmentV1Schema.shape,
     schemaVersion: z.literal(2),
+    ruleAssessments,
     findings: z.array(StandardsFindingV2Schema),
   })
   .superRefine(validatePreliminaryStructure);
@@ -41,6 +50,7 @@ export const StandardsReportV2Schema = z
   .strictObject({
     ...FinalReviewReportV1Schema.shape,
     schemaVersion: z.literal(2),
+    ruleAssessments,
     mode: z.literal("STANDARDS"),
     findings: z.array(FinalStandardsFindingSchema),
   })
@@ -66,6 +76,7 @@ export const StandardsReportV2Schema = z
 export const StandardsCandidateV2Schema = z.strictObject({
   ...FinalReviewCandidateV2Schema.shape,
   schemaVersion: z.literal(2),
+  ruleAssessments,
   mode: z.literal("STANDARDS"),
   findings: z.array(
     StandardsFindingV2Schema.omit({ id: true }).extend({
@@ -77,6 +88,7 @@ export const StandardsCandidateV2Schema = z.strictObject({
 export const StandardsExpandedCandidateV2Schema = z.strictObject({
   ...FinalReviewCandidateV1Schema.shape,
   schemaVersion: z.literal(2),
+  ruleAssessments,
   mode: z.literal("STANDARDS"),
   findings: z.array(FinalStandardsFindingSchema),
 });

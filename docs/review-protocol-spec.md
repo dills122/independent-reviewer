@@ -903,3 +903,24 @@ Never:
 [^openai-evals]: OpenAI, [Evaluation Best Practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices).
 [^anthropic-evals]: Anthropic, [Define Success Criteria and Build Evaluations](https://platform.claude.com/docs/en/test-and-evaluate/develop-tests).
 [^git-check-ref-format]: Git, [`git-check-ref-format`](https://git-scm.com/docs/git-check-ref-format).
+
+### Standards rule accounting (pilot policy v2)
+
+Both standards assessments now require `ruleAssessments`: each selected `ruleId`
+appears exactly once, with `status` (`ASSESSED` or `CONFLICT`),
+`conflictingRuleIds`, and an explanation. `ASSESSED` means the rule was considered,
+not that compliance or runtime correctness was proven. Conflict references must
+be reciprocal, distinct, and refer to other selected rules. A conflicted rule
+cannot support a code-violation finding. A final unresolved conflict requires
+`UNABLE_TO_VERIFY` and a visible limitation; the report includes the rule ledger.
+
+Before findings, compare applicable mandatory rules for mutual compatibility.
+Do not recommend a correction that violates another applicable mandatory rule.
+Author preference cannot resolve conflicting requirements; changes to the blind
+assessment require an evidence-based explanation. Semantic conflict recognition
+remains model judgment; complete accounting prevents silent rule omission but
+cannot prove the explanation true.
+
+This adds required fields to the unreleased standards-v2 pilot result schemas.
+The standards policy identity advances to `standards-review-v2`, preventing
+final-only resume under the prior policy. Legacy v1 contracts remain unchanged.

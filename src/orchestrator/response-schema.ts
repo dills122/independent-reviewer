@@ -32,6 +32,7 @@ const RESPONSE_ARRAY_LIMITS_V1: Readonly<Record<string, number>> = {
   authorClaims: 24,
   sourceFindingIds: 40,
   ruleIds: 12,
+  conflictingRuleIds: 12,
   withdrawnPreliminaryFindings: 40,
   blockers: 12,
   evidence: 8,
@@ -282,9 +283,14 @@ export function constrainResponseSchemaV1(
   constrainLedgers(root, options);
   if (options.ruleIds)
     visitNodes(root, (node, name) => {
-      if (name === "ruleIds" && node.type === "array") {
+      if ((name === "ruleIds" || name === "conflictingRuleIds") && node.type === "array") {
         const item = requireNode(node.items, "ruleIds.items");
         item.enum = options.ruleIds;
+      }
+      if (name === "ruleId") node.enum = options.ruleIds;
+      if (name === "ruleAssessments" && node.type === "array") {
+        node.minItems = options.ruleIds?.length;
+        node.maxItems = options.ruleIds?.length;
       }
     });
   const appliedArrayLimits = boundUnspecifiedProse(root, Math.max(options.changedPaths.length, 1));

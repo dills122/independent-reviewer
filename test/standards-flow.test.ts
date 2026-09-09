@@ -95,14 +95,17 @@ for (const scenario of [
   "unavailable",
   "inapplicable",
   "conflict",
+  "omitted-rule",
+  "semantic-conflict",
 ])
   test(`standards CLI protocol: ${scenario}`, async () => {
     const invalidRule = scenario === "unknown";
-    const noFindings = scenario === "clean" || scenario === "unavailable";
+    const noFindings =
+      scenario === "clean" || scenario === "unavailable" || scenario === "semantic-conflict";
     const removed = noFindings || scenario === "exception";
-    const expectedExit = ["unknown", "inapplicable", "conflict"].includes(scenario)
+    const expectedExit = ["unknown", "inapplicable", "conflict", "omitted-rule"].includes(scenario)
       ? 1
-      : scenario === "unavailable"
+      : ["unavailable", "semantic-conflict"].includes(scenario)
         ? 3
         : scenario === "required"
           ? 2
@@ -116,6 +119,12 @@ for (const scenario of [
       fixtureRequest.authorPacket.overview += " This exported name is fixed by the public API.";
     }
     if (scenario === "inapplicable") profile.rules[0].paths = ["lib/**"];
+    if (scenario === "semantic-conflict")
+      profile.rules.push({
+        ...profile.rules[0],
+        id: "rule_short",
+        text: "Exported constants must use the exact name v.",
+      });
     if (scenario === "conflict")
       profile.rules.push({ ...profile.rules[0], text: "Use short names." });
     fixtureRequest.canonicalInputs.standards[0].content = JSON.stringify(profile);
@@ -158,6 +167,21 @@ for (const scenario of [
           snapshotDigest: brief.snapshotManifest.snapshotDigest,
           briefDigest: brief.briefDigest,
           summary: "Naming review",
+          ...(scenario === "omitted-rule"
+            ? {}
+            : {
+                ruleAssessments: profile.rules.map((rule: { id: string }) => ({
+                  ruleId: rule.id,
+                  status: scenario === "semantic-conflict" ? "CONFLICT" : "ASSESSED",
+                  conflictingRuleIds:
+                    scenario === "semantic-conflict"
+                      ? profile.rules
+                          .filter((other: { id: string }) => other.id !== rule.id)
+                          .map((other: { id: string }) => other.id)
+                      : [],
+                  explanation: "Applied selected rule.",
+                })),
+              }),
           canonicalInputCoverage: [
             {
               canonicalInputId: brief.canonicalInputs.standards[0].id,
@@ -215,15 +239,18 @@ for (const scenario of [
               { path: "code.ts", status: "INSPECTED", explanation: "Reviewed frozen code." },
             ],
             limitations:
-              scenario === "unavailable" ? ["Required surrounding context is unavailable."] : [],
-            verdict:
-              scenario === "unavailable"
-                ? "UNABLE_TO_VERIFY"
-                : scenario === "recommended"
-                  ? "READY_WITH_FOLLOW_UPS"
-                  : removed
-                    ? "READY"
-                    : "NOT_READY",
+              scenario === "semantic-conflict"
+                ? ["rule_names conflicts with rule_short; clarify which naming rule governs."]
+                : scenario === "unavailable"
+                  ? ["Required surrounding context is unavailable."]
+                  : [],
+            verdict: ["unavailable", "semantic-conflict"].includes(scenario)
+              ? "UNABLE_TO_VERIFY"
+              : scenario === "recommended"
+                ? "READY_WITH_FOLLOW_UPS"
+                : removed
+                  ? "READY"
+                  : "NOT_READY",
             nextActions: {
               blockers: scenario === "required" ? ["Use a descriptive name."] : [],
               fastFollows: scenario === "recommended" ? ["Consider a descriptive name."] : [],
@@ -268,7 +295,11 @@ for (const scenario of [
       assert.equal(result, expectedExit, errors.join("\n"));
       assert.equal(
         calls,
-        scenario === "conflict" ? 0 : ["unknown", "inapplicable"].includes(scenario) ? 1 : 2,
+        scenario === "conflict"
+          ? 0
+          : ["unknown", "inapplicable", "omitted-rule"].includes(scenario)
+            ? 1
+            : 2,
         errors.join("\n"),
       );
       if (invalidRule) assert.match(errors.join("\n"), /Unknown standard rule/);

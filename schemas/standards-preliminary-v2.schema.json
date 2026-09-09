@@ -257,6 +257,48 @@
     "nextAction": {
       "type": "string",
       "const": "REQUEST_AUTHOR_PACKET"
+    },
+    "ruleAssessments": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ruleId": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 128,
+            "pattern": "^rule_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ASSESSED",
+              "CONFLICT"
+            ]
+          },
+          "conflictingRuleIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 6,
+              "maxLength": 128,
+              "pattern": "^rule_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            }
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "ruleId",
+          "status",
+          "conflictingRuleIds",
+          "explanation"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
@@ -270,7 +312,8 @@
     "findings",
     "evidenceGaps",
     "limitations",
-    "nextAction"
+    "nextAction",
+    "ruleAssessments"
   ],
   "additionalProperties": false
 }

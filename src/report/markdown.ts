@@ -85,6 +85,13 @@ export function renderReviewMarkdown(
     "",
     ...(report.schemaVersion === 2
       ? [
+          "## Rule assessments",
+          "",
+          ...report.ruleAssessments.map(
+            (entry) =>
+              `- ${escapeMarkdown(entry.ruleId)}: ${entry.status}${entry.conflictingRuleIds.length ? ` (conflicts: ${entry.conflictingRuleIds.map(escapeMarkdown).join(", ")})` : ""} — ${escapeMarkdown(entry.explanation)}`,
+          ),
+          "",
           "## Selected standards",
           "",
           ...rules.map(

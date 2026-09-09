@@ -46,6 +46,7 @@ import {
 } from "./response-schema.js";
 import {
   assertStandardsFindings,
+  assertStandardsRuleCoverage,
   STANDARDS_POLICY,
   STANDARDS_POLICY_VERSION,
 } from "./standards-policy.js";
@@ -569,6 +570,7 @@ async function assertAssessmentAnchors(
     brief.snapshotManifest.canonicalInputs.map((input) => input.id),
     assessment.canonicalInputCoverage.map((coverage) => coverage.canonicalInputId),
   );
+  assertStandardsRuleCoverage(assessment, brief);
   assertStandardsFindings(assessment.findings, brief);
   await assertFindingEvidenceAnchors(assessment.findings, brief, packetPath);
 }
@@ -676,6 +678,7 @@ async function assertFinalSemantics(
       (disposition) => `${disposition.kind}:${disposition.preliminaryConcern}`,
     ),
   );
+  assertStandardsRuleCoverage(report, brief);
   assertStandardsFindings(report.findings, brief);
   await assertFindingEvidenceAnchors(report.findings, brief, packetPath);
 }

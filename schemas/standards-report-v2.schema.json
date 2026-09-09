@@ -633,6 +633,48 @@
       ],
       "additionalProperties": false
     },
+    "ruleAssessments": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ruleId": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 128,
+            "pattern": "^rule_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ASSESSED",
+              "CONFLICT"
+            ]
+          },
+          "conflictingRuleIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 6,
+              "maxLength": 128,
+              "pattern": "^rule_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            }
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "ruleId",
+          "status",
+          "conflictingRuleIds",
+          "explanation"
+        ],
+        "additionalProperties": false
+      }
+    },
     "mode": {
       "type": "string",
       "const": "STANDARDS"
@@ -654,6 +696,7 @@
     "limitations",
     "verdict",
     "nextActions",
+    "ruleAssessments",
     "mode"
   ],
   "additionalProperties": false
