@@ -217,8 +217,8 @@ while retaining its original fresh-task workflow as a fallback.
 ### Deferred until requested
 
 - an evidence service serving bounded file reads, searches, and diff context from the
-  frozen snapshot on request (the brief's `capabilities` block is reserved for it and is
-  always transmitted empty in v1);
+  frozen snapshot on request (see ADR-005: the brief carries no capability
+  declaration, so a reviewer receives one fixed payload and can request nothing);
 - broad model comparisons or a large quality-evaluation framework;
 - isolated or containerized execution of arbitrary repository tests;
 - broader provider pools, model fallback, or distributed resumability; and

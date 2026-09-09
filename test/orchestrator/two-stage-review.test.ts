@@ -324,14 +324,12 @@ describe("two-stage review orchestrator", () => {
       assert.equal(result.report.verdict, "READY");
       assert.match(await readFile(result.markdownPath, "utf8"), /Verdict: Ready/);
       assert.doesNotMatch(await readFile(result.briefPath, "utf8"), /AUTHOR_SECRET/);
-      // capabilities is reserved surface: v1 has no evidence service, so both arrays stay empty.
-      const builtBrief = JSON.parse(await readFile(result.briefPath, "utf8")) as {
-        capabilities: { evidenceOperations: unknown[]; verificationChecks: unknown[] };
-      };
-      assert.deepEqual(builtBrief.capabilities, {
-        evidenceOperations: [],
-        verificationChecks: [],
-      });
+      // The brief declares no reviewer capabilities at all (ADR-005).
+      const builtBrief = JSON.parse(await readFile(result.briefPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      assert.equal("capabilities" in builtBrief, false);
       const events = (await readFile(result.runRecordPath, "utf8"))
         .trim()
         .split("\n")

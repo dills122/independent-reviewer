@@ -94,23 +94,6 @@ export const NeutralReviewBriefV1Schema = z
         paths: z.array(SnapshotPathV1Schema),
       }),
     ),
-    /**
-     * Reserved for a future evidence service. v1 always transmits both arrays empty: the reviewer
-     * receives one fixed payload and can request nothing, so no code path populates them. The
-     * shape stays in v1 because it is folded into briefDigest; removing it would change the
-     * identity of every brief.
-     */
-    capabilities: z.strictObject({
-      evidenceOperations: z.array(
-        z.enum(["READ_SNAPSHOT_FILE", "READ_DIFF", "SEARCH_SNAPSHOT", "READ_CANONICAL_INPUT"]),
-      ),
-      verificationChecks: z.array(
-        z.strictObject({
-          id: prefixedIdentifier("check"),
-          title: NonEmptyTextSchema,
-        }),
-      ),
-    }),
   })
   .superRefine((brief, context) => {
     const canonicalInputs = [
@@ -169,14 +152,6 @@ export const NeutralReviewBriefV1Schema = z
         code: "custom",
         message: "initial evidence identifiers must be unique",
         path: ["initialEvidence"],
-      });
-    }
-    const verificationCheckIds = brief.capabilities.verificationChecks.map((check) => check.id);
-    if (new Set(verificationCheckIds).size !== verificationCheckIds.length) {
-      context.addIssue({
-        code: "custom",
-        message: "verification-check identifiers must be unique",
-        path: ["capabilities", "verificationChecks"],
       });
     }
     brief.initialEvidence.forEach((evidence, index) => {
