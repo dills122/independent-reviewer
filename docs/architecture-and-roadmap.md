@@ -159,9 +159,9 @@ Read the API key at runtime from environment or an external secret store. Keep i
 The orchestrator owns retries. Before the first call it reserves both mandatory
 stages plus one provider retry at the larger stage reservation. The example
 120B configuration permits 160,000 conservatively counted tokens while retaining
-its $0.02 cost ceiling. Definite 429/500/502/503/504 responses (including non-JSON
+its $0.02 cost ceiling. Definite 429/500/502/503/504/529 responses (including non-JSON
 HTTP errors) and normally terminated empty completions may retry once per run.
-A 429 without a usable Retry-After hint uses a randomized 5–10 second cooldown.
+A 429 or 529 without a usable Retry-After hint uses a randomized 5–10 second cooldown.
 OpenRouter clients sharing one in-process pacing coordinator pause new requests
 for that model together, including after retry exhaustion. Separate CLI processes
 do not share this coordinator. Optional minimum request-start spacing is available

@@ -250,7 +250,7 @@ interface ProviderRetryContextV1 {
 function retryDelayMs(error: ProviderCallError): number | null {
   const code = Number(error.diagnostic?.providerErrorCode);
   const status = error.diagnostic?.httpStatus;
-  const transient = [429, 500, 502, 503, 504];
+  const transient = [429, 500, 502, 503, 504, 529];
   if (
     !error.retryable &&
     (error.code !== "PROVIDER_ERROR" ||
@@ -258,7 +258,7 @@ function retryDelayMs(error: ProviderCallError): number | null {
   )
     return null;
   const fallbackDelay = () =>
-    code === 429 || status === 429
+    code === 429 || status === 429 || code === 529 || status === 529
       ? 5_000 + Math.floor(Math.random() * 5_000)
       : 1_000 + Math.floor(Math.random() * 1_000);
   const hint = error.diagnostic?.retryAfter;

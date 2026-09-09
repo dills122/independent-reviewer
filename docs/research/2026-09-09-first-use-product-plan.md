@@ -1,6 +1,6 @@
 # Standards-based code review: implementation plan
 
-Status: slices 1–5 implemented and verified offline; slice 6 live semantic evaluation remains pending. Updated 2026-09-09. Baseline: `8322b9edad655f932352329e6db11bda43383ef8` (PR #66). This revision supersedes the earlier requirements/plan-driven product proposal in this file.
+Status: slices 1–5 implemented and verified offline; eight live cases executed, exposing delivery and semantic acceptance gaps. See [live results](../validation/2026-09-09-standards-live.md). Updated 2026-09-09. Baseline: `8322b9edad655f932352329e6db11bda43383ef8` (PR #66). This revision supersedes the earlier requirements/plan-driven product proposal in this file.
 
 ## Agreed outcome
 
@@ -158,3 +158,5 @@ Implemented on `codex/standards-review`; engine checkpoint `beed62e`. Added vers
 `npm run check`: 207 tests passed, including eight deterministic standards protocol cases and an actual convenience-CLI invocation against a mock provider. `python3 -B scripts/check-ai-context.py --ci`: passed. Tests verify author withholding until persisted preliminary assessment, rule applicability/identity, advisory versus mandatory outcomes, missing context, author digest tampering, dry-run without credentials, exclusive instance claims, and terminal/progress safety. Conflict fixture checks duplicate rule identity rejection; it does not prove semantic detection of contradictory rules with distinct IDs.
 
 No paid standards-mode calls made. Eight human-labeled live evaluations, real-change adjudication, false-positive measurement, and first-use usability assessment remain pending. Mock responses establish protocol behavior, not model judgment. Contradictory prose and whether evidence actually supports an exception still require model judgment and human evaluation. No bug hunting, fuzzing, test execution, or automatic fixing added.
+
+Live follow-up: eight starts produced four final reports, with two full semantic passes. Added bounded 529 recovery (208 tests pass); unresolved conflict handling and uncertainty-as-violation remain quality issues. Live acceptance is not complete. See linked evaluation for costs, failures, configuration changes, and next fixes.
