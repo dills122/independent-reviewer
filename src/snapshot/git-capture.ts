@@ -123,22 +123,48 @@ async function gitText(repositoryPath: string, args: readonly string[]): Promise
   return decodeGitText((await runGit(repositoryPath, args)).stdout);
 }
 
+/**
+ * Reads the mode from a single `ls-tree`/`ls-files` record. Git is invoked with
+ * `--literal-pathspecs`, so one path can only match one entry; more than one record means the
+ * assumption broke and the mode would be attributed to the wrong file.
+ */
+function singleRecordMode(records: string[], path: string): string | undefined {
+  if (records.length === 0) {
+    return undefined;
+  }
+  if (records.length > 1) {
+    throw new SnapshotCaptureError(
+      "INVALID_GIT_SCOPE",
+      `Git returned ${records.length} entries for a single path: ${path}`,
+    );
+  }
+  const record = records[0] as string;
+  const separator = record.indexOf(" ");
+  if (separator <= 0) {
+    throw new SnapshotCaptureError(
+      "INVALID_GIT_SCOPE",
+      `Git returned an unparsable entry for path: ${path}`,
+    );
+  }
+  return record.slice(0, separator);
+}
+
 async function gitModeAt(
   repositoryPath: string,
   revision: string,
   path: string,
 ): Promise<string | undefined> {
-  const output = decodeGitText(
+  const records = decodeNulFields(
     (await runGit(repositoryPath, ["ls-tree", "-z", revision, "--", path])).stdout,
   );
-  return output === "" ? undefined : output.slice(0, output.indexOf(" "));
+  return singleRecordMode(records, path);
 }
 
 async function indexModeAt(repositoryPath: string, path: string): Promise<string | undefined> {
-  const output = decodeGitText(
+  const records = decodeNulFields(
     (await runGit(repositoryPath, ["ls-files", "-s", "-z", "--", path])).stdout,
   );
-  return output === "" ? undefined : output.slice(0, output.indexOf(" "));
+  return singleRecordMode(records, path);
 }
 
 async function captureTreeSide(
