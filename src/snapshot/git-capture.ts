@@ -14,6 +14,7 @@ import {
   type SnapshotManifestIdentityInputV1,
   type SnapshotManifestV1,
 } from "../contracts/index.js";
+import { mapWithConcurrencyV1 } from "./concurrency.js";
 import { decodeGitText, decodeNulFields, runGit } from "./git-command.js";
 
 export type SnapshotCaptureErrorCode =
@@ -619,18 +620,16 @@ export async function captureGitSnapshotV1(
   }
   const excludedPaths = new Set(
     (
-      await Promise.all(
-        (options.excludedFileSystemPaths ?? []).map(async (absolutePath) => {
-          if (!isAbsolute(absolutePath)) {
-            throw new TypeError("excludedFileSystemPaths entries must be absolute paths");
-          }
-          try {
-            return await realpath(absolutePath);
-          } catch {
-            return absolutePath;
-          }
-        }),
-      )
+      await mapWithConcurrencyV1(options.excludedFileSystemPaths ?? [], async (absolutePath) => {
+        if (!isAbsolute(absolutePath)) {
+          throw new TypeError("excludedFileSystemPaths entries must be absolute paths");
+        }
+        try {
+          return await realpath(absolutePath);
+        } catch {
+          return absolutePath;
+        }
+      })
     ).flatMap((absolutePath) => {
       const repositoryRelativePath = relative(repositoryPath, absolutePath);
       if (

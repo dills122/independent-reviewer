@@ -1,6 +1,8 @@
-import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { pipeline } from "node:stream/promises";
 
 import * as z from "zod";
 
@@ -17,6 +19,7 @@ import {
   type ReviewRequestV1,
   type SnapshotManifestV1,
 } from "../contracts/index.js";
+import { mapWithConcurrencyV1 } from "./concurrency.js";
 import type { CapturedGitSnapshotV1 } from "./git-capture.js";
 
 const MANIFEST_FILE = "snapshot-manifest.json";
@@ -99,6 +102,23 @@ function digestBytes(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+/**
+ * Streams one blob through SHA-256. Verification never needs the bytes themselves, so streaming
+ * keeps peak memory bounded by the concurrency limit rather than by the size of the packet.
+ */
+async function verifyBlobFile(path: string): Promise<{ digest: string; byteLength: number }> {
+  const hash = createHash("sha256");
+  let byteLength = 0;
+  await pipeline(createReadStream(path), async (source) => {
+    for await (const chunk of source) {
+      const bytes = chunk as Uint8Array;
+      byteLength += bytes.length;
+      hash.update(bytes);
+    }
+  });
+  return { digest: hash.digest("hex"), byteLength };
+}
+
 /** Writes a new private snapshot packet directory and never overwrites an existing packet. */
 export async function writeSnapshotPacketV1(
   packetPath: string,
@@ -118,40 +138,50 @@ export async function writeSnapshotPacketV1(
     }
   }
 
+  // The packet is staged in a sibling directory and renamed into place, so an interrupted or
+  // failed write leaves no directory at packetPath: nothing partial to mistake for a packet, and
+  // nothing blocking a retry.
   await mkdir(dirname(packetPath), { recursive: true, mode: 0o700 });
-  await mkdir(packetPath, { mode: 0o700 });
-  await mkdir(join(packetPath, BLOBS_DIRECTORY), { mode: 0o700 });
-  await writeFile(join(packetPath, MANIFEST_FILE), jsonDocument(captured.manifest), {
-    flag: "wx",
-    mode: 0o600,
-  });
-  await writeFile(join(packetPath, CANONICAL_INPUTS_FILE), jsonDocument(request.canonicalInputs), {
-    flag: "wx",
-    mode: 0o600,
-  });
-  await writeFile(
-    join(packetPath, PACKET_METADATA_FILE),
-    jsonDocument({ schemaVersion: 1, reviewConfigRef: request.reviewConfigRef }),
-    { flag: "wx", mode: 0o600 },
-  );
-  if (request.authorPacket) {
-    await writeFile(join(packetPath, AUTHOR_PACKET_FILE), jsonDocument(request.authorPacket), {
+  const stagingPath = `${packetPath}.partial-${randomUUID()}`;
+  try {
+    await mkdir(stagingPath, { mode: 0o700 });
+    await mkdir(join(stagingPath, BLOBS_DIRECTORY), { mode: 0o700 });
+    await writeFile(join(stagingPath, MANIFEST_FILE), jsonDocument(captured.manifest), {
       flag: "wx",
       mode: 0o600,
     });
-  }
-  await Promise.all(
-    records.map(({ digest }) =>
+    await writeFile(
+      join(stagingPath, CANONICAL_INPUTS_FILE),
+      jsonDocument(request.canonicalInputs),
+      { flag: "wx", mode: 0o600 },
+    );
+    await writeFile(
+      join(stagingPath, PACKET_METADATA_FILE),
+      jsonDocument({ schemaVersion: 1, reviewConfigRef: request.reviewConfigRef }),
+      { flag: "wx", mode: 0o600 },
+    );
+    if (request.authorPacket) {
+      await writeFile(join(stagingPath, AUTHOR_PACKET_FILE), jsonDocument(request.authorPacket), {
+        flag: "wx",
+        mode: 0o600,
+      });
+    }
+    await mapWithConcurrencyV1(records, ({ digest }) =>
       writeFile(
-        join(packetPath, BLOBS_DIRECTORY, digest),
+        join(stagingPath, BLOBS_DIRECTORY, digest),
         captured.blobs.get(digest) as Uint8Array,
-        {
-          flag: "wx",
-          mode: 0o600,
-        },
+        { flag: "wx", mode: 0o600 },
       ),
-    ),
-  );
+    );
+    await rename(stagingPath, packetPath);
+  } catch (error) {
+    await rm(stagingPath, { recursive: true, force: true });
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOTEMPTY" || code === "EEXIST") {
+      throw new Error(`A snapshot packet already exists at ${packetPath}.`, { cause: error });
+    }
+    throw error;
+  }
 }
 
 async function readOptionalAuthorPacket(packetPath: string): Promise<AuthorPacketV1 | undefined> {
@@ -185,14 +215,12 @@ export async function inspectSnapshotPacketV1(
   );
   assertCanonicalInputsMatch(manifest, canonicalInputs);
   const records = contentRecords(manifest);
-  await Promise.all(
-    records.map(async ({ digest, byteLength }) => {
-      const bytes = await readFile(join(packetPath, BLOBS_DIRECTORY, digest));
-      if (bytes.length !== byteLength || digestBytes(bytes) !== digest) {
-        throw new Error(`Captured blob ${digest} failed digest verification.`);
-      }
-    }),
-  );
+  await mapWithConcurrencyV1(records, async ({ digest, byteLength }) => {
+    const verified = await verifyBlobFile(join(packetPath, BLOBS_DIRECTORY, digest));
+    if (verified.byteLength !== byteLength || verified.digest !== digest) {
+      throw new Error(`Captured blob ${digest} failed digest verification.`);
+    }
+  });
   const authorPacket = await readOptionalAuthorPacket(packetPath);
   return {
     manifest,
