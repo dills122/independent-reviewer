@@ -3,24 +3,31 @@ import { createReadStream } from "node:fs";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
-
 import * as z from "zod";
-
+import { sha256Utf8 } from "../contracts/canonical-json.js";
 import {
+  type AuthorPacketV1,
   AuthorPacketV1Schema,
   canonicalizeJson,
   computeCanonicalInputDigestV1,
-  PersistedCanonicalInputsV1Schema,
-  ReviewRequestV1Schema,
   DigestV1Schema,
-  SnapshotManifestV1Schema,
   jsonDocument,
+  PersistedCanonicalInputsV1Schema,
+  type ReviewRequestV1,
+  ReviewRequestV1Schema,
+  type SnapshotManifestV1,
+  SnapshotManifestV1Schema,
   sha256BytesHex,
   verifySnapshotManifestIdentityV1,
-  type AuthorPacketV1,
-  type ReviewRequestV1,
-  type SnapshotManifestV1,
 } from "../contracts/index.js";
+import {
+  canonicalInputList,
+  type ReviewAuthor,
+  ReviewAuthorSchema,
+  type ReviewCanonicalInputs,
+  ReviewCanonicalInputsSchema,
+  ReviewRequestSchema,
+} from "../contracts/standards-review.js";
 import { mapWithConcurrencyV1 } from "./concurrency.js";
 import type { CapturedGitSnapshotV1 } from "./git-capture.js";
 
@@ -38,6 +45,12 @@ export interface InspectedSnapshotPacketV1 {
   blobCount: number;
 }
 
+export interface InspectedSnapshotPacket
+  extends Omit<InspectedSnapshotPacketV1, "canonicalInputs" | "authorPacket"> {
+  canonicalInputs: ReviewCanonicalInputs;
+  authorPacket?: ReviewAuthor;
+}
+
 const PacketMetadataV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   reviewConfigRef: z
@@ -46,6 +59,11 @@ const PacketMetadataV1Schema = z.strictObject({
     .max(128)
     .regex(/^config_[A-Za-z0-9][A-Za-z0-9_-]*$/),
 });
+
+const PacketMetadataSchema = z.union([
+  PacketMetadataV1Schema,
+  PacketMetadataV1Schema.extend({ schemaVersion: z.literal(2), authorDigest: DigestV1Schema }),
+]);
 
 function contentRecords(manifest: SnapshotManifestV1): Array<{
   digest: string;
@@ -67,12 +85,8 @@ function contentRecords(manifest: SnapshotManifestV1): Array<{
   return [...records].map(([digest, byteLength]) => ({ digest, byteLength }));
 }
 
-function canonicalInputLedger(canonicalInputs: ReviewRequestV1["canonicalInputs"]): unknown[] {
-  return [
-    ...canonicalInputs.requirements,
-    canonicalInputs.implementationPlan,
-    ...canonicalInputs.projectGuidance,
-  ]
+function canonicalInputLedger(canonicalInputs: ReviewCanonicalInputs): unknown[] {
+  return canonicalInputList(canonicalInputs)
     .map((input) => ({
       id: input.id,
       kind: input.kind,
@@ -84,7 +98,7 @@ function canonicalInputLedger(canonicalInputs: ReviewRequestV1["canonicalInputs"
 
 function assertCanonicalInputsMatch(
   manifest: SnapshotManifestV1,
-  canonicalInputs: ReviewRequestV1["canonicalInputs"],
+  canonicalInputs: ReviewCanonicalInputs,
 ): void {
   const manifestLedger = [...manifest.canonicalInputs].sort((left, right) =>
     left.id < right.id ? -1 : left.id > right.id ? 1 : 0,
@@ -119,7 +133,7 @@ export async function writeSnapshotPacketV1(
   captured: CapturedGitSnapshotV1,
   requestValue: unknown,
 ): Promise<void> {
-  const request = ReviewRequestV1Schema.parse(requestValue);
+  const request = ReviewRequestSchema.parse(requestValue);
   if (!verifySnapshotManifestIdentityV1(captured.manifest)) {
     throw new Error("Cannot write a snapshot with an invalid manifest identity.");
   }
@@ -151,7 +165,15 @@ export async function writeSnapshotPacketV1(
     );
     await writeFile(
       join(stagingPath, PACKET_METADATA_FILE),
-      jsonDocument({ schemaVersion: 1, reviewConfigRef: request.reviewConfigRef }),
+      jsonDocument(
+        request.schemaVersion === 2
+          ? {
+              schemaVersion: 2,
+              reviewConfigRef: request.reviewConfigRef,
+              authorDigest: sha256Utf8(jsonDocument(request.authorPacket)),
+            }
+          : { schemaVersion: 1, reviewConfigRef: request.reviewConfigRef },
+      ),
       { flag: "wx", mode: 0o600 },
     );
     if (request.authorPacket) {
@@ -178,9 +200,9 @@ export async function writeSnapshotPacketV1(
   }
 }
 
-async function readOptionalAuthorPacket(packetPath: string): Promise<AuthorPacketV1 | undefined> {
+async function readOptionalAuthorPacket(packetPath: string): Promise<ReviewAuthor | undefined> {
   try {
-    return AuthorPacketV1Schema.parse(
+    return ReviewAuthorSchema.parse(
       JSON.parse(await readFile(join(packetPath, AUTHOR_PACKET_FILE), "utf8")),
     );
   } catch (error) {
@@ -192,19 +214,17 @@ async function readOptionalAuthorPacket(packetPath: string): Promise<AuthorPacke
 }
 
 /** Validates packet metadata, identities, and every manifest-referenced blob. */
-export async function inspectSnapshotPacketV1(
-  packetPath: string,
-): Promise<InspectedSnapshotPacketV1> {
+export async function inspectSnapshotPacket(packetPath: string): Promise<InspectedSnapshotPacket> {
   const manifest = SnapshotManifestV1Schema.parse(
     JSON.parse(await readFile(join(packetPath, MANIFEST_FILE), "utf8")),
   );
   if (!verifySnapshotManifestIdentityV1(manifest)) {
     throw new Error("Snapshot manifest digest verification failed.");
   }
-  const canonicalInputs = PersistedCanonicalInputsV1Schema.parse(
+  const canonicalInputs = ReviewCanonicalInputsSchema.parse(
     JSON.parse(await readFile(join(packetPath, CANONICAL_INPUTS_FILE), "utf8")),
   );
-  const packetMetadata = PacketMetadataV1Schema.parse(
+  const packetMetadata = PacketMetadataSchema.parse(
     JSON.parse(await readFile(join(packetPath, PACKET_METADATA_FILE), "utf8")),
   );
   assertCanonicalInputsMatch(manifest, canonicalInputs);
@@ -216,6 +236,14 @@ export async function inspectSnapshotPacketV1(
     }
   });
   const authorPacket = await readOptionalAuthorPacket(packetPath);
+  if ((packetMetadata.schemaVersion === 2) !== "standards" in canonicalInputs)
+    throw new Error("Packet mode mismatch.");
+  if (
+    packetMetadata.schemaVersion === 2 &&
+    (!authorPacket ||
+      sha256Utf8(jsonDocument(authorPacket)).value !== packetMetadata.authorDigest.value)
+  )
+    throw new Error("Author overview digest verification failed.");
   return {
     manifest,
     canonicalInputs,
@@ -236,4 +264,17 @@ export async function readSnapshotBlobV1(
     throw new Error(`Captured blob ${digest.value} failed digest verification.`);
   }
   return bytes;
+}
+
+export async function inspectSnapshotPacketV1(
+  packetPath: string,
+): Promise<InspectedSnapshotPacketV1> {
+  const packet = await inspectSnapshotPacket(packetPath);
+  return {
+    ...packet,
+    canonicalInputs: PersistedCanonicalInputsV1Schema.parse(packet.canonicalInputs),
+    ...(packet.authorPacket
+      ? { authorPacket: AuthorPacketV1Schema.parse(packet.authorPacket) }
+      : {}),
+  } as InspectedSnapshotPacketV1;
 }

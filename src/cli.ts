@@ -4,9 +4,7 @@ import { readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-
-import * as z from "zod";
-
+import type * as z from "zod";
 import {
   buildInspectionReportV1,
   type FinalReviewReportV1,
@@ -15,16 +13,18 @@ import {
   ReviewRequestV1Schema,
   ReviewRunConfigV2Schema,
 } from "./contracts/index.js";
-import { resumeFinalReviewV1, runTwoStageReviewV1 } from "./orchestrator/two-stage-review.js";
+import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
+import { canonicalInputList, ReviewRequestSchema } from "./contracts/standards-review.js";
+import { resumeFinalReview, runTwoStageReview } from "./orchestrator/two-stage-review.js";
 import { OpenRouterProviderV1, ProviderCallError } from "./provider/openrouter.js";
 import type { ReviewProviderV1 } from "./provider/review-provider.js";
-import { VERDICT_LABELS_V1 } from "./report/markdown.js";
+import { reviewVerdictLabel, VERDICT_LABELS_V1 } from "./report/markdown.js";
 import {
   captureGitSnapshotV1,
   isPathIgnoredV1,
   resolveRepositoryRootV1,
 } from "./snapshot/git-capture.js";
-import { inspectSnapshotPacketV1, writeSnapshotPacketV1 } from "./snapshot/snapshot-packet.js";
+import { inspectSnapshotPacket, writeSnapshotPacketV1 } from "./snapshot/snapshot-packet.js";
 
 export interface CliIoV1 {
   stdout(message: string): void;
@@ -201,7 +201,7 @@ function requiredOption(options: Map<string, string | true>, name: string): stri
 }
 
 /** The human-readable view of the same validated report the JSON view emits. */
-function formatInspection(report: InspectionReportV1): string {
+function formatInspection(report: InspectionReport): string {
   const lines = [
     `Snapshot: ${report.snapshotManifest.snapshotDigest.value}`,
     `Base: ${report.snapshotManifest.source.baseCommit}`,
@@ -217,7 +217,7 @@ function formatInspection(report: InspectionReportV1): string {
     lines.push(`${exclusion.reason} ${exclusion.path}`);
   }
   lines.push(`Omissions: ${report.snapshotManifest.omissions.length}`);
-  lines.push(`Canonical inputs: ${report.canonicalInputs.requirements.length + 1}`);
+  lines.push(`Canonical inputs: ${canonicalInputList(report.canonicalInputs).length}`);
   lines.push(`Captured blobs: ${report.blobCount}`);
   lines.push(`Author packet: ${report.authorPacketPresent ? "stored separately" : "not provided"}`);
   return lines.join("\n");
@@ -242,7 +242,7 @@ async function preparePacket(
   expectedConfigId?: string,
 ): Promise<PreparedPacketV1> {
   const requestPath = resolve(requiredOption(options, "--request"));
-  const request = ReviewRequestV1Schema.parse(JSON.parse(await readFile(requestPath, "utf8")));
+  const request = ReviewRequestSchema.parse(JSON.parse(await readFile(requestPath, "utf8")));
   if (expectedConfigId && request.reviewConfigRef !== expectedConfigId) {
     throw new Error(
       `Review request config reference ${request.reviewConfigRef} does not match ${expectedConfigId}.`,
@@ -354,8 +354,8 @@ async function review(
   const prepared = await preparePacket(options, config.configId);
   await warnUnignoredPacketLocation(prepared.repositoryRoot, prepared.packetPath, io);
   io.stdout(`Prepared snapshot packet: ${prepared.packetPath}`);
-  const result = await runTwoStageReviewV1(prepared.packetPath, config, provider);
-  io.stdout(`Verdict: ${VERDICT_LABELS_V1[result.report.verdict]}`);
+  const result = await runTwoStageReview(prepared.packetPath, config, provider);
+  io.stdout(`Verdict: ${reviewVerdictLabel(result.report)}`);
   io.stdout(`Report: ${result.markdownPath}`);
   return reviewOutcomeExitCodeV1(result.report.verdict);
 }
@@ -366,19 +366,19 @@ async function resumeFinal(
   dependencies: CliDependenciesV1,
 ): Promise<number> {
   const { config, provider } = await resolveLiveReviewContextV1(options, dependencies);
-  const result = await resumeFinalReviewV1(
+  const result = await resumeFinalReview(
     resolve(requiredOption(options, "--packet")),
     config,
     provider,
   );
-  io.stdout(`Verdict: ${VERDICT_LABELS_V1[result.report.verdict]}`);
+  io.stdout(`Verdict: ${reviewVerdictLabel(result.report)}`);
   io.stdout(`Report: ${result.markdownPath}`);
   return reviewOutcomeExitCodeV1(result.report.verdict);
 }
 
 async function inspect(options: Map<string, string | true>, io: CliIoV1): Promise<void> {
-  const inspected = await inspectSnapshotPacketV1(resolve(requiredOption(options, "--packet")));
-  const report = buildInspectionReportV1(inspected);
+  const inspected = await inspectSnapshotPacket(resolve(requiredOption(options, "--packet")));
+  const report = buildInspectionReport(inspected);
   if (options.get("--json") === true) {
     io.stdout(JSON.stringify(report, null, 2));
     return;

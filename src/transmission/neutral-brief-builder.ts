@@ -1,10 +1,13 @@
+import { finalizeReviewBrief } from "../contracts/artifact-identity.js";
 import {
   computeInitialEvidenceContentDigestV1,
   finalizeNeutralReviewBriefV1,
   type NeutralReviewBriefV1,
   type SnapshotContentV1,
 } from "../contracts/index.js";
-import { inspectSnapshotPacketV1, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
+import { NeutralReviewBriefV1Schema, type ReviewBrief } from "../contracts/neutral-review-brief.js";
+import { canonicalInputList } from "../contracts/standards-review.js";
+import { inspectSnapshotPacket, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
 
 /**
  * How a captured side renders: either a standalone label, or a pointer to source bytes the caller
@@ -59,19 +62,15 @@ async function capturedText(
  * Builds the complete small-change blind payload. It fails instead of silently
  * truncating evidence when the configured transmission budget is exceeded.
  */
-export async function buildNeutralReviewBriefV1(
+export async function buildReviewBrief(
   packetPath: string,
   maxInitialEvidenceBytes: number,
-): Promise<NeutralReviewBriefV1> {
+): Promise<ReviewBrief> {
   if (!Number.isSafeInteger(maxInitialEvidenceBytes) || maxInitialEvidenceBytes < 1) {
     throw new TypeError("maxInitialEvidenceBytes must be a positive safe integer.");
   }
-  const packet = await inspectSnapshotPacketV1(packetPath);
-  const canonicalInputIds = [
-    ...packet.canonicalInputs.requirements.map((input) => input.id),
-    packet.canonicalInputs.implementationPlan.id,
-    ...packet.canonicalInputs.projectGuidance.map((input) => input.id),
-  ];
+  const packet = await inspectSnapshotPacket(packetPath);
+  const canonicalInputIds = canonicalInputList(packet.canonicalInputs).map((input) => input.id);
 
   let transmittedBytes = 0;
   const initialEvidence = [];
@@ -132,14 +131,22 @@ export async function buildNeutralReviewBriefV1(
       })),
   ];
 
-  return finalizeNeutralReviewBriefV1({
-    schemaVersion: 1,
+  return finalizeReviewBrief({
+    ...("standards" in packet.canonicalInputs
+      ? { schemaVersion: 2, mode: "STANDARDS" }
+      : { schemaVersion: 1 }),
     briefId: `brief_${packet.manifest.snapshotDigest.value.slice(0, 24)}`,
     objective: {
-      text: "Independently assess the frozen change against its canonical requirements, implementation plan, and project guidance.",
+      text:
+        "standards" in packet.canonicalInputs
+          ? "Assess the frozen code against the selected standards; reconcile author explanation only after the independent assessment."
+          : "Independently assess the frozen change against its canonical requirements, implementation plan, and project guidance.",
       canonicalInputIds,
     },
-    successCriteria: packet.canonicalInputs.requirements.map((requirement) => ({
+    successCriteria: ("standards" in packet.canonicalInputs
+      ? packet.canonicalInputs.standards
+      : packet.canonicalInputs.requirements
+    ).map((requirement) => ({
       text: requirement.content,
       canonicalInputIds: [requirement.id],
     })),
@@ -148,4 +155,13 @@ export async function buildNeutralReviewBriefV1(
     initialEvidence,
     coverageConstraints,
   });
+}
+
+export async function buildNeutralReviewBriefV1(
+  packetPath: string,
+  maxInitialEvidenceBytes: number,
+): Promise<NeutralReviewBriefV1> {
+  return NeutralReviewBriefV1Schema.parse(
+    await buildReviewBrief(packetPath, maxInitialEvidenceBytes),
+  );
 }

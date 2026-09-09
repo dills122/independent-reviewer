@@ -1,4 +1,5 @@
 import type { FinalReviewReportV1 } from "../contracts/index.js";
+import type { ReviewReport } from "../contracts/standards-results.js";
 
 /** Human-readable verdict names, shared with the CLI so the two cannot disagree. */
 export const VERDICT_LABELS_V1: Record<FinalReviewReportV1["verdict"], string> = {
@@ -25,14 +26,14 @@ function lineItems(items: string[]): string {
 }
 
 /** Renders only validated report fields; it does not infer or change a verdict. */
-export function renderFinalReviewMarkdownV1(report: FinalReviewReportV1): string {
+export function renderReviewMarkdown(report: ReviewReport): string {
   const findings =
     report.findings.length === 0
       ? "None."
       : report.findings
           .map(
             (finding) =>
-              `### ${finding.severity}: ${escapeMarkdown(finding.title)}\n\nOrigin: ${finding.origin === "FINAL_ONLY" ? `Final-only — ${escapeMarkdown(finding.emergenceRationale ?? "")}` : "Preliminary assessment"}\n\n${escapeMarkdown(finding.scenario)}\n\nImpact: ${escapeMarkdown(finding.impact)}\n\nCorrection: ${escapeMarkdown(finding.correction)}\n\nEvidence:\n${finding.evidence
+              `### ${finding.severity}: ${escapeMarkdown(finding.title)}\n\nOrigin: ${finding.origin === "FINAL_ONLY" ? `Final-only — ${escapeMarkdown(finding.emergenceRationale ?? "")}` : "Preliminary assessment"}\n\n${escapeMarkdown("problem" in finding ? finding.problem : finding.scenario)}${"ruleIds" in finding ? `\n\nStandards: ${finding.ruleIds.map(escapeMarkdown).join(", ")}` : ""}\n\nImpact: ${escapeMarkdown(finding.impact)}\n\nCorrection: ${escapeMarkdown(finding.correction)}\n\nEvidence:\n${finding.evidence
                 .map((evidence) => {
                   const location =
                     evidence.anchor === "LINE_RANGE"
@@ -68,9 +69,9 @@ export function renderFinalReviewMarkdownV1(report: FinalReviewReportV1): string
   );
 
   return [
-    "# Independent review",
+    report.schemaVersion === 2 ? "# Standards review" : "# Independent review",
     "",
-    `Verdict: ${VERDICT_LABELS_V1[report.verdict]}`,
+    `Verdict: ${reviewVerdictLabel(report)}`,
     "",
     escapeMarkdown(report.summary),
     "",
@@ -115,4 +116,19 @@ export function renderFinalReviewMarkdownV1(report: FinalReviewReportV1): string
     list(report.limitations),
     "",
   ].join("\n");
+}
+
+export const STANDARDS_VERDICT_LABELS = {
+  READY: "Standards satisfied",
+  READY_WITH_FOLLOW_UPS: "Standards review: non-blocking recommendations",
+  NOT_READY: "Standards review: changes requested",
+  UNABLE_TO_VERIFY: "Standards review: unable to assess",
+};
+export function reviewVerdictLabel(report: ReviewReport): string {
+  return (report.schemaVersion === 2 ? STANDARDS_VERDICT_LABELS : VERDICT_LABELS_V1)[
+    report.verdict
+  ];
+}
+export function renderFinalReviewMarkdownV1(report: FinalReviewReportV1): string {
+  return renderReviewMarkdown(report);
 }

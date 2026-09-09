@@ -14,6 +14,29 @@ budget, and failure protocol is recorded in
 The deterministic artifact identity profile is recorded in
 [ADR-004](decisions/004-use-jcs-sha256-artifact-identities.md).
 
+
+## Standards review mode (v2)
+
+Standards mode implements the agreed [product plan](research/2026-09-09-first-use-product-plan.md).
+It accepts selected standards and a separate author overview without business
+requirements or an implementation plan. The existing v1 mode remains available.
+Call one sees frozen code and standards only; call two receives the persisted
+assessment plus the overview collected upfront. Standards inputs are validated
+profile JSON in digest-bound PROJECT_GUIDANCE documents; no placeholder plan or
+requirements are synthesized. Brief v2 binds the mode and selected inputs under
+a separate identity profile. Packet metadata v2 binds the author digest before
+submission; inspection exposes only its presence.
+
+Standards findings cite selected rule IDs, applicability, a concrete code-quality
+problem, evidence and correction. REQUIRED and RECOMMENDED classifications replace
+defect severity in this mode. Existing verdict codes retain exit compatibility,
+but labels explicitly describe standards satisfaction/changes/recommendations or
+inability to assess, never deployment readiness. Unknown or inapplicable rule
+references fail validation. Conflicting rule IDs require explicit selection of
+one definition. Subjective disagreement with a standard is not an exception.
+Bug hunting, fuzzing and runtime verification are outside this mode. Transport,
+privacy and spending bounds remain; protocols cannot be mixed during resume.
+
 ## Objective
 
 Build a standalone review engine that takes a frozen implementation target and canonical requirements, conducts an engineering review through an external model on OpenRouter, and returns an evidence-backed report to the implementation workflow. Start with a local CLI; add an MR/PR bot using the same engine later.

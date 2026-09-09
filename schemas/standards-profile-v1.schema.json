@@ -1,0 +1,80 @@
+{
+  "$id": "urn:independent-reviewer:schema:standards-profile:v1",
+  "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rules": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 128,
+            "pattern": "^rule_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "enforcement": {
+            "type": "string",
+            "enum": [
+              "REQUIRED",
+              "RECOMMENDED"
+            ]
+          },
+          "paths": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "exceptions": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "enforcement",
+          "paths",
+          "exceptions"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "name",
+    "source",
+    "rules"
+  ],
+  "additionalProperties": false
+}

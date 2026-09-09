@@ -31,6 +31,7 @@ const DEFAULT_PROSE_MAX_LENGTH_V1 = 400;
 const RESPONSE_ARRAY_LIMITS_V1: Readonly<Record<string, number>> = {
   authorClaims: 24,
   sourceFindingIds: 40,
+  ruleIds: 12,
   withdrawnPreliminaryFindings: 40,
   blockers: 12,
   evidence: 8,
@@ -317,7 +318,9 @@ export function constrainFinalConcernScopeV1(
  */
 export function constrainRepairReferencesV1(
   final: ConstrainedResponseSchemaV1,
-  preliminary: Pick<PreliminaryAssessmentV1, "findings" | "evidenceGaps" | "limitations">,
+  preliminary: Pick<PreliminaryAssessmentV1, "evidenceGaps" | "limitations"> & {
+    findings: { id: string }[];
+  },
 ): ConstrainedResponseSchemaV1 {
   const schema = structuredClone(final.schema);
   const properties = requireProperties(schema, "(root)");

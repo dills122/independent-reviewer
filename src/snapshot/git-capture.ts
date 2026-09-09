@@ -1,26 +1,26 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, readFile, readlink, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative } from "node:path";
-
 import {
   compareUtf16,
   computeCanonicalInputDigestV1,
-  sha256BytesDigestV1,
+  type DigestV1,
   digestCanonicalJson,
   finalizeSnapshotManifestV1,
-  ReviewRequestV1Schema,
-  SnapshotPathV1Schema,
-  type DigestV1,
   type ReviewRequestV1,
+  ReviewRequestV1Schema,
   type SnapshotContentV1,
   type SnapshotManifestIdentityInputV1,
   type SnapshotManifestV1,
+  SnapshotPathV1Schema,
+  sha256BytesDigestV1,
 } from "../contracts/index.js";
+import { canonicalInputList, ReviewRequestSchema } from "../contracts/standards-review.js";
 import { mapWithConcurrencyV1 } from "./concurrency.js";
 import {
+  DEFAULT_GIT_COMMAND_TIMEOUT_MS,
   decodeGitText,
   decodeNulFields,
-  DEFAULT_GIT_COMMAND_TIMEOUT_MS,
   runGit,
 } from "./git-command.js";
 
@@ -762,7 +762,7 @@ export async function captureGitSnapshotV1(
   value: unknown,
   options: CaptureGitSnapshotOptionsV1 = {},
 ): Promise<CapturedGitSnapshotV1> {
-  const request = ReviewRequestV1Schema.parse(value) as ReviewRequestV1;
+  const request = ReviewRequestSchema.parse(value);
   const repositoryPath = await resolveRepositoryRootV1(request.repository.path);
   const captureWorkingTree = request.repository.head === undefined;
   const headCommit = await gitText(repositoryPath, [
@@ -847,11 +847,7 @@ export async function captureGitSnapshotV1(
         ? decodeGitText(remoteResult.stdout)
         : decodeGitText((await runGit(repositoryPath, ["rev-parse", "--absolute-git-dir"])).stdout);
     const repositoryId = `repo_${sha256BytesDigestV1(Buffer.from(repositoryIdentitySource)).value.slice(0, 24)}`;
-    const canonicalInputs = [
-      ...request.canonicalInputs.requirements,
-      request.canonicalInputs.implementationPlan,
-      ...request.canonicalInputs.projectGuidance,
-    ].map((input) => ({
+    const canonicalInputs = canonicalInputList(request.canonicalInputs).map((input) => ({
       id: input.id,
       kind: input.kind,
       digest: computeCanonicalInputDigestV1(input),
