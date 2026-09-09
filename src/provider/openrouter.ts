@@ -399,6 +399,8 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
     }
     const returnedModel = nullableString(parsed.data.model);
     if (returnedModel !== null && returnedModel !== request.model) {
+      // Adapter-level guard on the wire response; the orchestrator repeats the rule for any
+      // provider implementation. Distinct wording keeps a failure attributable to one layer.
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         `OpenRouter returned a different model than requested (${returnedModel}).`,
