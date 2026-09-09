@@ -271,4 +271,117 @@ describe("OpenRouterProviderV1", () => {
         /different model/i.test(error.message),
     );
   });
+  it("classifies a body-phase abort as transport-uncertain, not a definite failure", async () => {
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () => {
+      // fetch resolves on headers; the body then fails the way an aborted stalled body does.
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"id":"x","choices":['));
+          setTimeout(
+            () => controller.error(new DOMException("The operation was aborted", "TimeoutError")),
+            10,
+          );
+        },
+      });
+      return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    await assert.rejects(
+      () => provider.complete({ ...request, timeoutMs: 200 }),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.code, "TRANSPORT_UNCERTAIN");
+        return true;
+      },
+    );
+  });
+
+  it("rejects a response body larger than the response cap", async () => {
+    const oversized = "y".repeat(9 * 1024 * 1024);
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+      Response.json({
+        id: "generation-large",
+        model: "vendor/model",
+        choices: [{ finish_reason: "stop", message: { content: `{"padding":"${oversized}"}` } }],
+      }),
+    );
+
+    await assert.rejects(
+      () => provider.complete(request),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.code, "INVALID_RESPONSE");
+        assert.match(error.message, /response cap/);
+        return true;
+      },
+    );
+  });
+
+  it("rejects a response nested past the redaction depth limit", async () => {
+    let nested: unknown = "leaf";
+    for (let depth = 0; depth < 200; depth += 1) {
+      nested = { nested };
+    }
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+      Response.json({
+        id: "generation-deep",
+        model: "vendor/model",
+        choices: [{ finish_reason: "stop", message: { content: '{"ok":true}' } }],
+        deep: nested,
+      }),
+    );
+
+    await assert.rejects(
+      () => provider.complete(request),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.code, "INVALID_RESPONSE");
+        assert.match(error.message, /nests deeper/);
+        return true;
+      },
+    );
+  });
+
+  it("discards a successful response whose fields reflect the credential", async () => {
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+      Response.json({
+        id: "generation-reflected",
+        model: "vendor/model",
+        choices: [
+          { finish_reason: "stop", message: { content: '{"echo":"your key is secret-key"}' } },
+        ],
+      }),
+    );
+
+    await assert.rejects(
+      () => provider.complete(request),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.code, "INVALID_RESPONSE");
+        assert.doesNotMatch(error.message, /secret-key/);
+        return true;
+      },
+    );
+  });
+
+  it("does not echo a credential-shaped provider error code", async () => {
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+      Response.json({
+        id: "generation-error-2",
+        model: "vendor/model",
+        error: { code: "secret-key", message: "rejected" },
+      }),
+    );
+
+    await assert.rejects(
+      () => provider.complete(request),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.code, "PROVIDER_ERROR");
+        assert.equal(error.diagnostic?.providerErrorCode, "unknown");
+        assert.doesNotMatch(error.message, /secret-key/);
+        return true;
+      },
+    );
+  });
 });
