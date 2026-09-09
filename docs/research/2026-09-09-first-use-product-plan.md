@@ -1,197 +1,152 @@
-# First useful review: product research and delivery proposal
+# Standards-based code review: implementation plan
 
-Status: proposal for owner review; implementation not started. Research date: 2026-09-09. Baseline: `8322b9edad655f932352329e6db11bda43383ef8`, merged PR #66. Product decision owner: repository owner.
+Status: product scope and data flow agreed with owner; implementation not started. Updated 2026-09-09. Baseline: `8322b9edad655f932352329e6db11bda43383ef8` (PR #66). This revision supersedes the earlier requirements/plan-driven product proposal in this file.
 
-## Recommendation
+## Agreed outcome
 
-Make one complete local workflow easy: supply existing intent, request a review, understand progress, and act on findings. Keep the current two-stage engine. Deliver simpler setup and visible results first, then use matched reviews to improve judgment. Do not equate successful delivery with useful advice.
+Review changed code against applicable standards and return useful, concrete feedback on readability, complexity, duplication, module boundaries, maintainability, and project conventions. Keep the existing author/agent overview and explanation. Business requirements and a separate implementation plan are not prerequisites for this mode.
 
-Scope covers the three requested priorities: (1) simpler review entry, (2) trustworthy/actionable findings, (3) clear progress and recovery. The proposed first users are developers and coding-agent operators who already have requirements and an implementation plan. This audience is an assumption to confirm, not validated demand.
+The first release combines three benefits: simple invocation, actionable standards findings, and clear progress/recovery. Bug hunting, fuzzing, runtime verification, autonomous fixes, and PR hosting integration remain later phases. Reviewing the reviewer's own implementation still includes correctness tests: product scope does not restrict our engineering checks.
 
-The product milestone is: a developer unfamiliar with this repository can review their own change without maintainer help and identify both the next action and any review limitation.
+Owner lifted the earlier no-TDD/testing-work restriction. Use focused test-first work where it clarifies new behavior or a failure; run normal required checks. Other limits are not implicitly lifted: no extra paid runs, publication, wider provider routing, or destructive actions solely because testing is now allowed.
 
-## Research method and limits
+## Data flow
 
-Decision question: which small additions most reduce setup, interpretation, and recovery work while preserving review independence and bounded spending?
+Collect code target, standards, and author overview before submission; freeze each input and record its provenance. No mid-review request for author input is necessary.
 
-Compared wrapper-only CLI improvements, a new guided CLI surface, broader protocol/model changes, and a web/PR interface. Criteria: direct user benefit, reuse of shipped behavior, integrity of evidence, reversibility, and measurable outcome. Primary practitioner guidance and provider documentation inform design; repository code and retained live results establish current capability. Research stopped once each priority had supporting guidance, a concrete gap, an alternative, and a verifiable delivery slice.
-
-This work authorizes research and planning only beyond the CI fix/merge. No new provider requests, user outreach, model comparison, deployment, or product implementation occurred. External guidance supports design choices; it does not prove adoption, accuracy gains, or the numerical pilot targets below.
-
-## Evidence and implications
-
-| Type | Evidence | Product implication |
+| Point | Data available to model | Runner obligation |
 | --- | --- | --- |
-| Documented fact | CLI Guidelines recommend examples, explicit configuration precedence, machine-readable output, and progress for long operations. [S1] | Offer a short happy path while retaining the existing script interface. |
-| Documented fact | Nielsen Norman Group describes timely status feedback as a way for users to understand what happened and choose next actions. [S2] | Show real stages and waits before asking users to interpret errors. |
-| Documented fact | Google's review guidance emphasizes explaining reasons and distinguishing required changes from optional advice. [S3] | Make impact and required action easy to scan. |
-| Documented fact | Anthropic distinguishes outcome evaluation from transcript checks and recommends combining evaluation with human feedback. [S4] | Score correctness and usefulness separately from structural validity. |
-| Documented fact | OpenRouter documents rate-limit/availability errors and Retry-After guidance. [S5] | Display the runner's recovery decision; the UI must not invent its own retry loop. |
-| Observation | `src/cli.ts` requires request/config files; review prints packet, verdict, and report paths without stage progress. | Remove metadata preparation and ledger-reading from ordinary use. |
-| Observation | `src/contracts/review-request.ts` requires requirements and a plan; the live orchestration also requires author input. | Simplification must preserve real inputs and their separation. |
-| Observation | `src/contracts/review-results.ts` and `src/report/markdown.ts` already contain scenario, impact, correction, evidence, coverage, and uncertainty. | Improve presentation and quality before adding response fields. |
-| Observation | Latest route assessment completed 4/4 reviews in 17–25 seconds with two calls each; one review included a false positive. [L1] | Delivery is promising; correctness still needs work. |
-| Observation | Recovery batch completed 5/5 reviews, including two recovered failures; 4/5 matched expected findings. [L2] | Preserve successful stages and measure delivered quality independently. |
-| Observation | Fixed-spacing comparison showed no clear benefit; duplicate preliminary IDs remain an observed failure. [L3] | Keep spacing disabled by default; give malformed outputs an honest failure state. |
-| Inference | Setup friction and report interpretation can improve without changing the model conversation. | Ship these reversible improvements before introducing more calls. |
-| Unknown | New-user setup time, real-change precision/recall, willingness to provide a plan, and provider stability over time. | Validate with a small pilot; do not claim production reliability. |
+| Call 1: independent assessment | Frozen diff, captured surrounding code, selected standards and applicable project guidance | Withhold author overview, implementation chat/memory, and prior review verdicts. |
+| Between calls | No new model call | Validate and persist preliminary assessment before allowing author delivery. |
+| Call 2: reconciliation | Original evidence, saved preliminary assessment, separately labeled author overview/explanation | Retain, revise, combine, or withdraw findings with evidence-based reasons. Author disagreement alone does not invalidate a finding. |
+| Completion | Validated report | Render findings and limitations; retain both assessments and provenance. |
 
-## Choices and trade-offs
+Established project rules belong in call 1. “I chose this approach because…” belongs in call 2. User/agent rationale may explain a valid exception; it cannot change operational permissions, rewrite frozen standards, or silently remove a rule. If a rule explicitly permits exceptions, the report must explain why the supplied evidence satisfies that exception.
 
-| Decision | Recommended | Alternative and when to reconsider |
-| --- | --- | --- |
-| First-use surface | Guided local setup plus concise review command, compiling existing contracts | A copyable request template is cheaper but leaves bookkeeping burden. Web/PR UI becomes attractive if pilot users will not use a CLI. |
-| Missing intent | Collect genuine requirements/plan; explain missing inputs before a paid call | A code-only mode would broaden the audience but needs an explicit protocol decision. Never synthesize a pretend plan from the patch. |
-| Finding quality | Reuse existing fields; evaluate one prompt/default change at a time | Extra judging calls or model ensembles may help, but add cost and failure points. Consider only after a measured quality gap survives focused changes. |
-| Recovery | Present existing bounded retry/resume decisions | Automatically starting another full review can duplicate cost and change the verdict. It is outside this milestone. |
-| Context | Keep deterministic frozen input and visible omissions | On-demand evidence retrieval is justified later if adjudicated misses repeatedly trace to absent context. |
-| Default model/route | Keep selection explicit; make the evaluated profile easy to select | Do not turn a four-run result into an invisible permanent default. Refresh routing/pricing evidence before release. |
+Keep two mandatory calls and the shipped bounded retry/repair policy. No additional model is needed for packaging, report rendering, or ordinary quality checking.
 
-## Proposed user experience
+## What counts as a finding
 
-Command names below are proposals, not shipped syntax.
+Every finding identifies a selected rule, its source, affected frozen code, the concrete maintenance/readability problem, and a proportionate correction. A runtime failing scenario is not required for a standards finding; never invent one to satisfy today's defect-oriented response schema.
 
-1. `independent-reviewer init` records explicit operational settings and paths to review inputs. It explains credential setup without reading a key into a flag or config file. It makes no provider call.
-2. `independent-reviewer review --base main --dry-run` validates inputs and shows scope, exclusions, selected profile, and conservative reservation. It does not transmit source.
-3. `independent-reviewer review --base main` generates IDs and request metadata, freezes evidence, and runs the existing two stages. Existing `--request ... --config ...` remains supported.
-4. Completion presents the verdict, blockers, concise findings, material limitations, reported cost when available, and a link/path to the full report.
+Examples of useful review: an explicit layer boundary violated by an import; duplicated policy logic that the selected standard requires centralizing; needless indirection that obscures a named operation. “I prefer this name,” “this function is long,” or “add an abstraction” is insufficient without applicable guidance and a concrete explanation.
 
-Example progress, reflecting actual events:
+Proposed rule record: stable ID, source/version or digest, applicable language/path, requirement versus recommendation, and exception policy. Explicit project rules take precedence over the selected baseline for the same issue. Conflicting mandatory project rules become a visible unresolved standard, not an arbitrary reviewer choice. Surrounding conventions are evidence, not automatically mandatory rules. No automatic blocking severity for a subjective preference.
 
-```text
-Capturing current changes…
-Reviewing code — 12s elapsed
-Initial review saved. Checking author explanation…
-Provider rate-limited this call. Retrying in 8s; initial review retained.
-Review complete: Not ready — 1 blocking finding
-```
+Initial implementation target: JavaScript/TypeScript pilot, using a small documented profile and supplied project rules. This is an implementation default based on the existing stack, not a claim that one profile fits every language. Unsupported language/profile combinations must be visible. Formatting already covered by a configured formatter should not dominate model feedback; this phase does not execute repository lint/test commands.
 
-No fabricated percentage or ETA. A stage's elapsed time is not a provider execution guarantee. An explicit retry wait comes from the runner's scheduled delay and may be extended by shared cooldowns.
+## Existing capability and required changes
 
-### Input and policy boundaries
-
-- Generate flow/config/input IDs and ledger metadata, not engineering intent or test claims. New invocations must not silently create fresh flows to evade the three-instance bound: require explicit new-flow intent or select the existing flow and enforce its count.
-- Keep requirements, plan, guidance, and author explanation separately identified. A guided form/template maps user-authored fields deterministically to existing contracts. Missing mandatory content fails preflight; empty optional lists mean no supplied claims.
-- Initially use selected files or guided text entry; no extra model call to package input. Do not ingest chat history, CCE memory, or old review verdicts into the blind stage.
-- Save local operational policy outside reviewed content, using a Git-resolved local settings path or explicit external config. Repository files may supply guidance and input-path suggestions; they cannot silently change endpoint, budget, or privacy policy. Linked-worktree behavior needs a focused check before finalizing storage.
-- Preserve explicit CLI overrides over saved local settings. Keep the API key environment-only for this milestone. Show effective settings and reject conflicting input modes before submission.
-- Exclude generated control files and author input from general code capture; deliver author content only after the preliminary artifact is durable. Preserve packet tamper checks and visible omissions.
-- Unchanged-target reruns must not overwrite packets or silently buy another review. Offer inspect or an eligible resume; changed targets require a new snapshot within the flow limit.
-
-## Delivery slices
-
-Order reflects dependencies rather than the earlier numerical priority labels. Every slice should leave the existing CLI usable. File lists are likely implementation touchpoints; generated schemas/exports accompany deliberate contract additions.
-
-### 0. Establish a small product baseline — small
-
-Responsibility: maintainer and product owner. Dependencies: none.
-
-Retain a short scorecard for existing clean, planted-defect, misleading-author, and scope-boundary cases. Record current user journey and report screenshots/text examples. Reuse fixtures and logs; do not build an evaluation platform.
-
-Acceptance: baseline names code/prompt/config versions; separately records completion, findings, false positives, omissions, time, and reported/unknown cost; all expected findings have human-reviewed rationale.
-
-Verification: manually reconcile the scorecard with L1–L3, preserving failed runs. Likely files: `docs/validation/` scorecard and this plan. No paid run is needed for this preparation.
-
-### 1. Save setup and expose preflight — medium
-
-Responsibility: CLI/config boundary. Dependencies: 0.
-
-Add a versioned local settings contract and `init`/dry-run flow. Reuse current capture, config validation, and admission functions; extract shared preflight only if necessary to avoid two disagreeing budget calculations.
-
-Acceptance: setup and dry-run make zero provider submissions; repeat setup never overwrites existing settings silently; missing inputs, ambiguous base, and insufficient budget explain exactly what to change.
-
-Verification: temp-repository CLI checks covering linked worktrees, effective configuration precedence, absent credential display, and no-submit admission. Likely files: new local-settings contract and CLI setup module, `src/cli.ts`, focused CLI tests, quickstart. Medium scope; split contract and UI wiring if it exceeds one focused change.
-
-### 2. Review without hand-authored request JSON — medium
-
-Responsibility: input assembly. Dependencies: 1.
-
-Compile selected neutral documents and a separately collected author form into `ReviewRequestV1`; assign identifiers and resolve packet destinations internally. Support both noninteractive flags/files and optional terminal guidance. Never prompt indefinitely in a pipe or CI.
-
-Acceptance: a user supplies meaningful content without IDs/schema metadata; legacy explicit request mode still works; repeated/changed targets enforce packet and flow rules without leaking author input.
-
-Verification: end-to-end CLI checks with existing mock provider for equivalent inputs, first-stage author withholding, missing plan, and repeat invocation. Likely files: new request-builder module, `src/cli.ts`, focused CLI tests, quickstart. Any need to weaken required inputs returns to the owner as a protocol choice.
-
-### 3. Show stage progress — medium
-
-Responsibility: orchestration-to-CLI presentation. Dependencies: 0; integrate with 2 before pilot.
-
-Expose bounded sanitized lifecycle notifications from existing transitions, with the durable run record authoritative. Present phase changes and elapsed waiting on stderr; keep primary/machine output on stdout. Add plain/no-animation behavior for non-TTY callers and quiet mode.
-
-Acceptance: progress appears before the first network call; saved-preliminary, final, retry/repair, and terminal states match real transitions; output contains no credentials, source, author prose, or raw model responses.
-
-Verification: injected clock/provider checks for long wait, retry, and output stream separation; a presentation callback failure cannot cause another provider submission. Likely files: small progress contract/module, `src/orchestrator/two-stage-review.ts`, `src/cli.ts`, targeted tests. Define exported event shape before consumers.
-
-### 4. Explain failures and safe next actions — medium
-
-Responsibility: CLI failure/status presentation. Dependencies: 3.
-
-Map existing typed errors and durable state to a concise explanation, preserved-work status, cost certainty, and the next valid command. If an offline status command is needed, it validates ledger/config identity and does not infer resume eligibility merely from the last error text.
-
-Acceptance: eligible final failures offer only the existing bounded resume; uncertain transport says outcome/cost unknown and never claims safe replay; missing input, budget rejection, malformed response, and exhausted retry remain distinguishable non-successes.
-
-Verification: reuse deterministic recovery scenarios for final-stage retention, long Retry-After, exhausted allowance, malformed preliminary IDs, and timeout. Likely files: new diagnostic presenter, `src/cli.ts`, minimal orchestrator state projection, targeted tests. Keep established exit codes. Do not add retries to improve the UI's apparent success rate.
-
-Checkpoint after 2–4: a person can start a review and understand success, waiting, and failure without reading JSONL. Use a mock provider for recovery demonstrations; do not wait for random provider failures.
-
-### 5. Make findings immediately actionable — small/medium
-
-Responsibility: report presentation. Dependencies: 0; integrate with 2–4.
-
-Add a brief terminal summary; organize Markdown around blocking actions, findings, then material uncertainty, with complete reconciliation/coverage details retained. Present existing scenario/impact/correction fields and frozen BASE/HEAD locations. Escape untrusted text, including terminal control sequences. Any code excerpt comes from validated frozen blobs, never the current checkout.
-
-Acceptance: required action and optional follow-ups are distinct; zero findings cannot conceal incomplete scope; summary and full report retain the same verdict/findings and expose unknown cost as unknown.
-
-Verification: render existing clean/bug/limited reports; check terminal/Markdown injection and navigation on renamed/deleted files. Likely files: `src/report/markdown.ts`, new terminal presenter, `src/cli.ts`, report tests. Keep `FinalReviewReportV1`; no extra model fields or calls solely for presentation.
-
-### 6. Improve judgment against matched cases — medium, bounded experiment
-
-Responsibility: prompt owner with human adjudication. Dependencies: 0 and 5.
-
-First candidate: tighten handling of assumptions about inputs using the observed whole-dollar false positive and a contrasting case where fractional inputs are allowed. Current prompt already forbids invented requirements; test a specific change rather than repeating that instruction more loudly. Keep one model/route/config fixed and change one factor at a time.
-
-Acceptance: candidate removes the targeted false positive without losing the corresponding real bug or other known blockers; invalid reports count as delivery failures; every newly disputed finding is reviewed against code/requirements, not automatically classified wrong because the author dislikes it.
-
-Verification: proposed 12 labeled cases (balanced clean/defective, including held-out boundary variants), baseline and candidate once each: 24 reviews, normally 48 mandatory calls. At a proposed $0.02 reservation per review, admit at most $0.48 total reserved budget; unknown usage consumes reservation. One confirmation pair on the targeted cases adds at most $0.04. These are proposed bounds, not billing guarantees or authorization to run now. Stop repeated same-cause failures and diagnose before more submissions.
-
-Likely files: `src/orchestrator/two-stage-review.ts` prompt version only if evidence supports it, small fixture inputs, scorecard/evidence document. Use human grading initially. If preliminary IDs repeatedly block completion, isolate runner-owned preliminary bookkeeping as its own versioned contract change; do not silently rename IDs inside already-bound artifacts.
-
-## Pilot and success criteria
-
-All numerical targets are proposed product gates, not established benchmarks. Owner confirms them before implementation.
-
-| Outcome | Proposed measure/gate |
+| Reuse | Update |
 | --- | --- |
-| Easy first use | Three developers unfamiliar with internals complete setup and start a valid review in at most 10 minutes each, with credentials and intent documents available, no maintainer help and no request-JSON editing. Report installation time separately. |
-| Understandable output | Each can identify blocking action, relevant location, uncertainty, and whether a retry is safe from the product output alone. |
-| Reliable user journey | Record every start, preflight rejection, submitted run, terminal result, and manual intervention. Separate provider delivery failures from valid Not ready verdicts. Do not infer an uptime percentage from this pilot. |
-| Useful findings | Record accepted, disputed, deferred, and not-actioned findings with reasons. Calculate correctness only after adjudication; acceptance rate is a usefulness signal, not truth. |
-| Better judgment | In the matched 12-case comparison: targeted false positive removed, no lost known blocking defects, all failures visible. Publish counts/denominators; a small result does not establish general precision/recall. |
-| Bounded overhead | Two mandatory model calls remain; presentation-only changes add none. Compare elapsed time, reported usage, and unknown reservations on identical inputs. |
+| Frozen Git capture, exclusions, hashes and packet inspection | Versioned standards-mode input and identity propagation without fake requirements/plan placeholders. |
+| Separate author packet and persisted preliminary assessment | Standards-specific prompt, evidence references, and reconciliation policy. |
+| Provider routing, budgets, retry/resume and audit ledger | Progress and actionable error presentation around existing decisions. |
+| Candidate assembly, validated coordinates, Markdown rendering | Standards finding semantics and a clear “standards review” outcome label. |
 
-Supplement fixtures with five voluntarily supplied real changes during pilot. Human reviewers establish expected behavior first where possible; unknown missed bugs remain unknown. Participation and paid-run budget need explicit scheduling at the sync. Keep source and feedback local; no analytics service by default.
+Current request/brief contracts require requirements and an implementation plan. Current prompt/finding severity semantics center on defects. This is a bounded contract and policy change, not just a renamed command. Preserve legacy contracts and behavior; add explicit versioned mode-specific contracts before wiring consumers. Do not weaken existing v1 artifacts or permit resuming across changed protocols.
 
-Package is currently private (`package.json`, version 0.0.0). Pilot can use a pinned checkout/local install. A public npm release is a separate distribution decision; the onboarding target must not pretend publication has happened. If installation dominates the pilot, reprioritize packaging next.
+Standards-mode report outcomes should be explicit: standards satisfied, changes requested, non-blocking recommendations, or unable to assess. They describe only the selected standards and captured scope; none means bug-free or safe to deploy. Existing mode keeps its current verdict mapping. New standards severity describes rule enforcement, not invented outage/security severity.
 
-## Risks and decisions for the sync
+## Implementation sequence
 
-1. **Audience:** approve developers/agent operators with existing intent documents as the first segment, or prioritize a code-only mode that requires separate protocol work.
-2. **Input burden:** confirm guided author fields plus selected requirements/plan files are acceptable. Do not promise “one command from nothing.”
-3. **Delivery scope:** approve slices 1–5 as the first product increment, with slice 0 as a small baseline and slice 6 as a bounded quality comparison. No web UI, PR bot, model ensemble, autonomous fixes, or arbitrary test execution in this increment.
-4. **Pilot:** agree on participants, representative change sizes/languages, and the proposed experiment cap. The current repository gives no reliable effort estimate in days; slices are small/medium dependency units, not delivery promises.
+Each numbered item is a small PR or a pair of narrowly dependent PRs. Contracts and generated schemas are committed with their consumers. File lists are likely touchpoints; keep shared primitives rather than copying their validators.
 
-After agreement, update the canonical roadmap/spec for approved public behavior, then implement in small PRs. Run focused behavior checks plus `npm run check` and the separate repository-context gate for each implementation change. Reuse checks; do not grow tests merely to mirror rendering internals.
+### 1. Define standards-mode contracts and examples
 
-## Sources
+Dependencies: none. Scope: two small increments, input then result contracts.
 
-Accessed 2026-09-09. Practitioner guidance is distinct from empirical proof of this product's value.
+- Add explicit mode/version, selected standard identities and applicability, and required separate author overview. Reuse the author-packet structure where it fits; generate administrative IDs in the runner. A concise overview does not require a new planning interview.
+- Define standards findings with rule reference, code evidence, problem/impact, correction, and requirement/recommendation classification. Define unresolved standards and mode-scoped outcomes without reusing defect severity misleadingly.
+- Version the corresponding brief/packet identity surfaces. Define legacy parsing and resume compatibility up front.
 
-- **S1:** [Command Line Interface Guidelines](https://clig.dev/) — output, help, configuration, robustness. Supports CLI conventions; our exact commands and milestones are proposals.
-- **S2:** [Nielsen Norman Group: Visibility of System Status](https://www.nngroup.com/articles/visibility-system-status/) — feedback and informed user action.
-- **S3:** [Google Engineering Practices: How to write code review comments](https://google.github.io/eng-practices/review/reviewer/comments.html) — reasons, guidance, severity.
-- **S4:** [Anthropic: Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) — outcomes, multiple grading methods, feedback, evaluation limits.
-- **S5:** [OpenRouter: Errors and Debugging](https://openrouter.ai/docs/api_reference/errors-and-debugging) — provider failure categories and Retry-After. Provider behavior can change; verify again when changing transport policy.
-- **L1:** [First-final concern scope and route assessment](../validation/2026-09-09-reference-scope-and-routes.md).
-- **L2:** [Call recovery batch](../validation/2026-09-09-call-recovery-batch.md).
-- **L3:** [Pacing comparison](../validation/2026-09-09-pacing.md).
-- **Local contracts:** [Architecture and roadmap](../architecture-and-roadmap.md), [CLI](../../src/cli.ts), [request](../../src/contracts/review-request.ts), [results](../../src/contracts/review-results.ts), [Markdown renderer](../../src/report/markdown.ts), [orchestrator](../../src/orchestrator/two-stage-review.ts).
+Acceptance: standards mode validates without requirements or implementation plan; absent standards or author overview is a precise preflight failure; existing v1 examples retain their behavior.
+
+Verification: focused contract tests for missing inputs, duplicate/unknown rule IDs, conflicts, and legacy acceptance; regenerate schemas. Touchpoints: `src/contracts/review-request.ts`, `neutral-review-brief.ts`, `review-results.ts`, shared identity contracts, `schemas/`, contract tests. Split identity propagation from schema definition if needed.
+
+### 2. Freeze standards and author input through capture
+
+Dependencies: 1. Scope: medium.
+
+- Resolve selected standards and code scope deterministically. Save rule text/source/digest, including which versions apply to the target. Report unsupported/omitted scope instead of silently clipping it.
+- Preserve the separately stored author overview; exclude author/control files from ordinary code capture so they cannot leak into call 1.
+- Build the standards brief from real selected rules. A patched rule file cannot silently change trusted operational policy; show standards changes and require explicit selection of the intended standard revision.
+
+Acceptance: both calls use the same frozen code/rules; changing live files after capture does not change review evidence; author content is absent from the blind payload.
+
+Verification: temp-repository integration tests for changed standards, exclusions, tampering, and author-withholding. Touchpoints: `src/snapshot/snapshot-packet.ts`, `git-capture.ts`, `src/transmission/neutral-brief-builder.ts`, focused tests.
+
+### 3. Apply standards review in both model stages
+
+Dependencies: 2. Scope: medium, split prompt/schema wiring from reconciliation if needed.
+
+- Select the versioned standards policy and response schemas by mode. Keep call 1 independent, persist its result, then expose the existing overview to call 2.
+- Bind findings to selected rule IDs and valid frozen code anchors. Require reasons for retained, revised, merged, withdrawn, and final-only findings; preserve source text and IDs through runner assembly.
+- Keep operational budgets, route allowlists, privacy controls, and retry/repair counts. Reject incompatible resume versions before submission.
+
+Acceptance: explicit standards violations survive an unsupported author defense; an evidenced permitted exception can change a finding; complexity/maintainability findings do not need fabricated runtime bugs. Invalid references and incomplete assessments cannot produce a passing outcome.
+
+Verification: mock-provider E2E for both stages and each disposition, cross-mode resume rejection, and failures preserving preliminary work. Touchpoints: `src/orchestrator/two-stage-review.ts`, `response-schema.ts`, `src/report/final-review-candidate.ts`, targeted tests.
+
+Checkpoint: a standards review completes through the existing explicit request/config entry point before adding convenience commands.
+
+### 4. Simplify invocation and preflight
+
+Dependencies: 3. Scope: two small increments, request assembly then saved settings.
+
+Proposed syntax (not shipped): `independent-reviewer review --base main --standards <profile-or-file> --author <overview-file>`. Saved settings can make the last two flags optional on repeated use. Support the current structured author packet first; any concise text adapter must preserve user-supplied meaning and mark absent optional claims, never invent tests or rationale.
+
+- Generate request metadata and IDs; keep the existing explicit request/config mode available. Show effective configuration and scope in a provider-free dry-run.
+- Keep operational settings in an explicit external config or Git-resolved local settings location. Store credentials only through the existing environment mechanism.
+- Preserve flow/instance limits, immutable packets, and explicit new-review intent. An unchanged-target invocation must offer inspect/eligible resume rather than silently buying another review.
+
+Acceptance: ordinary user supplies code target, standards, and author overview without request JSON bookkeeping; dry-run submits zero calls; missing/ambiguous input fails clearly before spending.
+
+Verification: CLI integration for initial/repeated runs, legacy mode, no-TTY behavior, linked worktrees, and budget preflight. Touchpoints: `src/cli.ts`, small input/settings modules, CLI tests, quickstart. No separate GUI or mandatory interactive wizard.
+
+### 5. Present progress, recovery, and findings
+
+Dependencies: 3; integrate with 4. Scope: three small increments: progress, diagnostics, report.
+
+- Emit actual stage transitions and elapsed waits on stderr; preserve clean machine output on stdout and quiet/non-TTY behavior. No fabricated progress percentage or ETA.
+- Explain errors in terms of what failed, what is saved, whether cost is known, and the valid next action. Display existing scheduled retry delays; long Retry-After, exhausted allowance, and uncertain transport remain distinct. The UI never adds a retry loop.
+- Lead reports with standards outcome and requested changes. Each finding shows rule/source, code location, problem, and correction; optional advice and incomplete scope are explicit. Retain detailed reconciliation and coverage artifacts.
+
+Acceptance: output exposes no secrets/author text in progress; summary agrees with validated report; uncertain submission never claims safe replay or zero cost; zero findings does not imply full assessment when coverage is missing.
+
+Verification: deterministic clock/provider tests for waits, output streams, and callback failures; terminal/Markdown escaping; report cases for required/recommended rules and unassessed paths. A presentation failure must not trigger a duplicate provider request. Touchpoints: CLI, small progress/diagnostic/presentation modules, existing orchestration events and report renderer.
+
+### 6. Check useful standards feedback end to end
+
+Dependencies: 4–5. Scope: bounded evaluation, not a new evaluation platform.
+
+Use eight human-labeled cases: clear mandatory violation; compliant counterpart; permitted exception; unsupported author defense; advisory-only rule; conflicting rules; unavailable context; unchanged clean refactor. Include naming/complexity/boundary examples with concrete local standards. Preserve failed completions in results and separate semantic quality from delivery.
+
+Acceptance: expected violations and justified exceptions are handled; clean/advisory cases do not receive invented blockers; every finding has valid rule/code evidence and actionable correction. Test interpretation against a few real changes rather than relying solely on synthetic labels.
+
+Verification: deterministic integration cases first. Proposed live confirmation: eight runs using one fixed approved model/route, normally 16 mandatory calls; at $0.02 reservation per run, reserve no more than $0.16 aggregate. Retry/repair stays inside admitted per-run bounds, unknown usage retains reservation. This is a proposed experiment cap, not a billing guarantee or a request to run now. Stop repeated same-cause failures and diagnose before more submissions.
+
+Success measures: starts completed without intervention; correctly applied standards; false positives on compliant code; human usefulness/adjudication; elapsed time; reported and unknown cost. No bug-recall/fuzzing benchmark in this milestone. Old bug fixtures still protect legacy behavior but do not define the new product's success.
+
+## Verification and release discipline
+
+TDD is available for contract/trust-boundary and orchestration behavior. Favor observable behavior checks; do not write tests simply duplicating code or expand the suite for a formatting-only change. Run focused checks during development and `npm run check` plus `python3 -B scripts/check-ai-context.py --ci` before each implementation PR. Run additional context checks when integration metadata changes.
+
+Document the approved mode in the canonical roadmap/spec alongside contract work. Preserve legacy artifacts, blind-stage independence, known failure states, and incomplete scope. No model-backed review can promise zero false positives; human disagreement needs adjudication, not automatic suppression.
+
+Release checkpoint: a developer can supply a change, standards and overview; obtain a two-stage review; identify the applicable rule and correction; and understand failures without reading a JSONL ledger. Pilot can use a pinned local checkout; npm publication is separate because the package remains private.
+
+## Research basis and remaining uncertainty
+
+These sources inform design, not proven demand or product accuracy:
+
+- [CLI Guidelines](https://clig.dev/): simple invocation, visible progress, composable output, recoverability.
+- [NN/g: Visibility of System Status](https://www.nngroup.com/articles/visibility-system-status/): feedback that supports the next user action.
+- [Google: What to look for in code review](https://google.github.io/eng-practices/review/reviewer/looking-for.html): complexity, design, naming, comments and conventions are review topics. This product intentionally selects a narrower scope than Google's full guidance.
+- [Google: The standard of code review](https://google.github.io/eng-practices/review/reviewer/standard.html): code health and evidence over personal preference; avoid requiring perfection.
+- [Google: Writing review comments](https://google.github.io/eng-practices/review/reviewer/comments.html): reasons, useful corrections and explicit severity.
+- [Anthropic: Demystifying evals](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents): evaluate outcomes with appropriate human judgment, not only valid response shape.
+- [OpenRouter: Errors and Debugging](https://openrouter.ai/docs/api_reference/errors-and-debugging): error categories and Retry-After.
+- Local observations: [route assessment](../validation/2026-09-09-reference-scope-and-routes.md), [recovery batch](../validation/2026-09-09-call-recovery-batch.md), [pacing](../validation/2026-09-09-pacing.md). Successful transport with occasional false positives motivates separate delivery and quality measures; these were not standards-mode evaluations.
+
+Still unmeasured: first-use friction, standards-profile precision across projects, and provider reliability over time. Initial profile contents and exact CLI/schema names are implementation details to settle in slice 1, using sourced rules and existing interfaces. Scope and author-data timing are already agreed; they do not need reopening.
