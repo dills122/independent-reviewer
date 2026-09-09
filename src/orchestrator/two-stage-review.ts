@@ -962,11 +962,8 @@ export async function runTwoStageReviewV1(
       firstCallTokens,
       packet.authorPacket.claimedVerification,
     );
-    await writeFile(finalPath, jsonDocument(report), { flag: "wx", mode: 0o600 });
-    await writeFile(markdownPath, renderFinalReviewMarkdownV1(report), {
-      flag: "wx",
-      mode: 0o600,
-    });
+    await writeExclusive(finalPath, jsonDocument(report));
+    await writeExclusive(markdownPath, renderFinalReviewMarkdownV1(report));
     await appendRunEvent(runRecordPath, {
       type: "RUN_COMPLETED",
       terminalState: report.verdict,
@@ -1007,6 +1004,12 @@ async function readRunEventsV1(runRecordPath: string): Promise<Record<string, un
   });
 }
 
+/**
+ * Fast-fails a resume whose outputs already exist, before a provider call is paid for.
+ *
+ * This is a preflight, not the exclusivity guard: it cannot close the window between the check and
+ * the write. `writeExclusive` and its `flag: "wx"` are authoritative, and must stay that way.
+ */
 async function assertFileAbsent(path: string): Promise<void> {
   try {
     await access(path);
@@ -1017,6 +1020,20 @@ async function assertFileAbsent(path: string): Promise<void> {
     throw error;
   }
   throw new Error(`Final-stage resume is not allowed because ${path} already exists.`);
+}
+
+/** Creates a review output exclusively; an existing file is never overwritten. */
+async function writeExclusive(path: string, contents: string): Promise<void> {
+  try {
+    await writeFile(path, contents, { flag: "wx", mode: 0o600 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(`Refusing to overwrite an existing review output at ${path}.`, {
+        cause: error,
+      });
+    }
+    throw error;
+  }
 }
 
 /**
@@ -1256,11 +1273,8 @@ export async function resumeFinalReviewV1(
       firstCallTokens,
       packet.authorPacket.claimedVerification,
     );
-    await writeFile(finalPath, jsonDocument(report), { flag: "wx", mode: 0o600 });
-    await writeFile(markdownPath, renderFinalReviewMarkdownV1(report), {
-      flag: "wx",
-      mode: 0o600,
-    });
+    await writeExclusive(finalPath, jsonDocument(report));
+    await writeExclusive(markdownPath, renderFinalReviewMarkdownV1(report));
     await appendRunEvent(runRecordPath, {
       type: "RUN_COMPLETED",
       terminalState: report.verdict,

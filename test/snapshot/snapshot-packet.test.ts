@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -103,6 +103,44 @@ describe("snapshot packet store", () => {
       await writeFile(join(packetPath, "blobs", digest), "tampered\n");
 
       await assert.rejects(() => inspectSnapshotPacketV1(packetPath), /digest/i);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+  it("cleans up staging and keeps the existing packet when the write cannot land", async () => {
+    const { repositoryPath, request } = await arrangeCapture();
+    const packetRoot = join(repositoryPath, ".review-runs");
+    const packetPath = join(packetRoot, "packet-test");
+    try {
+      const captured = await captureGitSnapshotV1(request);
+      await writeSnapshotPacketV1(packetPath, captured, request);
+
+      await assert.rejects(
+        () => writeSnapshotPacketV1(packetPath, captured, request),
+        /already exists/,
+      );
+
+      assert.deepEqual(await readdir(packetRoot), ["packet-test"]);
+      assert.equal((await inspectSnapshotPacketV1(packetPath)).blobCount, 2);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("writes a packet even when an interrupted run left staging debris behind", async () => {
+    const { repositoryPath, request } = await arrangeCapture();
+    const packetRoot = join(repositoryPath, ".review-runs");
+    const packetPath = join(packetRoot, "packet-test");
+    try {
+      const captured = await captureGitSnapshotV1(request);
+      await mkdir(join(`${packetPath}.partial-00000000-0000-4000-8000-000000000000`, "blobs"), {
+        recursive: true,
+        mode: 0o700,
+      });
+
+      await writeSnapshotPacketV1(packetPath, captured, request);
+
+      assert.equal((await inspectSnapshotPacketV1(packetPath)).blobCount, 2);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
