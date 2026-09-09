@@ -19,6 +19,12 @@ const OPENROUTER_PUBLIC_HEADERS_V1 = {
   "content-type": "application/json",
   "x-openrouter-cache": "false",
 } as const;
+/** Ceiling on a single provider response; a review reply is orders of magnitude smaller. */
+const MAX_PROVIDER_RESPONSE_BYTES = 8 * 1024 * 1024;
+/** Nesting ceiling for credential redaction, so a hostile body cannot overflow the stack. */
+const MAX_REDACTION_DEPTH = 64;
+/** Below this length a credential is too short to search for without absurd false positives. */
+const MIN_CREDENTIAL_MATCH_LENGTH = 8;
 
 export { ProviderCallError } from "./review-provider.js";
 export type {
@@ -83,25 +89,80 @@ function normalizedUsage(value: unknown): ReviewProviderResponseV1["usage"] {
   };
 }
 
-function redactCredential(value: unknown, credential: string): unknown {
+function redactCredential(value: unknown, credential: string, depth = 0): unknown {
+  if (depth > MAX_REDACTION_DEPTH) {
+    throw new ProviderCallError(
+      "INVALID_RESPONSE",
+      `OpenRouter response nests deeper than ${MAX_REDACTION_DEPTH} levels.`,
+    );
+  }
   if (typeof value === "string") {
     return value.replaceAll(credential, "[REDACTED]");
   }
   if (Array.isArray(value)) {
-    return value.map((item) => redactCredential(item, credential));
+    return value.map((item) => redactCredential(item, credential, depth + 1));
   }
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value).map(([key, item]) => [
         key.replaceAll(credential, "[REDACTED]"),
-        redactCredential(item, credential),
+        redactCredential(item, credential, depth + 1),
       ]),
     );
   }
   return value;
 }
 
-function safeProviderErrorLabel(value: unknown): string {
+/**
+ * Reads a response body with a hard byte ceiling instead of buffering whatever arrives.
+ *
+ * The request direction is bounded by the token budget and the Git side caps its reads; this was
+ * the one unbounded direction left.
+ */
+async function readBoundedResponseText(response: Response, maxBytes: number): Promise<string> {
+  const body = response.body;
+  if (!body) {
+    const text = await response.text();
+    if (Buffer.byteLength(text, "utf8") > maxBytes) {
+      throw new ProviderCallError(
+        "INVALID_RESPONSE",
+        `OpenRouter response exceeded the ${maxBytes}-byte response cap.`,
+      );
+    }
+    return text;
+  }
+  const reader = body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  const chunks: string[] = [];
+  let byteLength = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      byteLength += value.byteLength;
+      if (byteLength > maxBytes) {
+        throw new ProviderCallError(
+          "INVALID_RESPONSE",
+          `OpenRouter response exceeded the ${maxBytes}-byte response cap after ${byteLength} bytes.`,
+        );
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  chunks.push(decoder.decode());
+  return chunks.join("");
+}
+
+/** Reports whether a provider-supplied string reflects the credential back at us. */
+function reflectsCredential(value: string, credential: string): boolean {
+  return credential.length >= MIN_CREDENTIAL_MATCH_LENGTH && value.includes(credential);
+}
+
+function safeProviderErrorLabel(value: unknown, credential: string): string {
   if (!value || typeof value !== "object") {
     return "unknown";
   }
@@ -109,8 +170,10 @@ function safeProviderErrorLabel(value: unknown): string {
   if (typeof code === "number" && Number.isFinite(code)) {
     return String(code);
   }
+  // A credential is itself alphanumeric-with-dashes, so the shape check alone would pass it
+  // through into error messages, the run ledger, and the report.
   if (typeof code === "string" && /^[A-Za-z0-9_.-]{1,80}$/.test(code)) {
-    return code;
+    return reflectsCredential(code, credential) ? "unknown" : code;
   }
   return "unknown";
 }
@@ -162,7 +225,7 @@ function providerErrorDiagnostic(
   const metadata = metadataValue && typeof metadataValue === "object" ? metadataValue : {};
   return {
     httpStatus: response.status,
-    providerErrorCode: safeProviderErrorLabel(errorObject),
+    providerErrorCode: safeProviderErrorLabel(errorObject, apiKey),
     providerMessage: boundedText((errorObject as { message?: unknown }).message, 500, apiKey),
     errorType: boundedText((metadata as { error_type?: unknown }).error_type, 80, apiKey),
     providerCode: boundedText((metadata as { provider_code?: unknown }).provider_code, 80, apiKey),
@@ -254,6 +317,10 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
   async complete(request: ReviewProviderRequestV1): Promise<ReviewProviderResponseV1> {
     const wireBody = openRouterWireBodyV2(request, this.#routing);
     let response: Response;
+    let rawBody: string;
+    // Body consumption stays inside the transport handler: fetch resolves on headers, so a
+    // provider that stalls mid-body aborts here. That is the submitted-but-unknown case
+    // TRANSPORT_UNCERTAIN exists for, and it must not be recorded as a definite failure.
     try {
       response = await this.#fetch(OPENROUTER_CHAT_COMPLETIONS_URL, {
         method: "POST",
@@ -264,7 +331,11 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
         body: wireBody,
         signal: AbortSignal.timeout(request.timeoutMs),
       });
+      rawBody = await readBoundedResponseText(response, MAX_PROVIDER_RESPONSE_BYTES);
     } catch (error) {
+      if (error instanceof ProviderCallError) {
+        throw error;
+      }
       throw new ProviderCallError(
         "TRANSPORT_UNCERTAIN",
         "OpenRouter transport failed after the request may have been submitted; it was not retried.",
@@ -272,7 +343,6 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       );
     }
 
-    const rawBody = await response.text();
     let body: unknown;
     try {
       body = JSON.parse(rawBody) as unknown;
@@ -347,6 +417,25 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
           cause: error,
           responseBody,
         },
+      );
+    }
+
+    // Error diagnostics are redacted field by field, but the success path hands its fields back
+    // unredacted: rawContent feeds the next request in the conversation, and value becomes the
+    // report. A response echoing the credential is discarded rather than partially sanitized,
+    // which would present altered evidence as an unchanged response.
+    const returnedStrings = [
+      content,
+      returnedModel,
+      nullableString(parsed.data.id),
+      nullableString(parsed.data.provider),
+    ];
+    if (
+      returnedStrings.some((candidate) => candidate && reflectsCredential(candidate, this.#apiKey))
+    ) {
+      throw new ProviderCallError(
+        "INVALID_RESPONSE",
+        "OpenRouter returned completion content that reflected the API credential.",
       );
     }
 
