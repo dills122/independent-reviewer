@@ -1149,7 +1149,7 @@ describe("two-stage review orchestrator", () => {
           budgets: {
             ...config.budgets,
             maxOutputTokensPerCall: 15_000,
-            maxTotalTokens: 73_000,
+            maxTotalTokens: 74_000,
             maxTotalCostUsd: 1,
           },
         },
