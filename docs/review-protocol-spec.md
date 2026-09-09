@@ -946,3 +946,19 @@ limitations; it does not suggest editing code or inventing standards to pass.
 Other report actions retain their existing behavior. The model still determines
 whether evidence suffices: validators enforce consistency with that declared
 assessment, not semantic truth of arbitrary prose.
+
+### First-final concern completeness (review policy v12 / standards policy v4)
+
+The final response template reserves count/index bounds before call one. After
+persisting the preliminary, the first final schema requires exactly the combined
+number of evidence gaps and limitations (`minItems` equals `maxItems`) and bounds
+kind-local indices to the available range. Its serialized size does not grow
+beyond the admitted template. Capacity covers all permitted preliminary concerns:
+24 evidence gaps plus 12 limitations. Previously the first final permitted empty
+coverage and capped total entries at 24, leaving repair to enforce completeness.
+
+Local validation still requires each (kind, index) exactly once and rejects
+omissions, duplicates, or wrong-kind references. Array counts/index bounds are
+structural guidance, not a replacement for those semantic checks. Repair and
+provider-retry budgets remain unchanged. Policy identities advance so earlier
+runs cannot resume under a changed response protocol.
