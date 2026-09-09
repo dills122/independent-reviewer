@@ -67,7 +67,10 @@ packet. Reservations are not confirmed charges.
 Skip initialization by passing `--standards`, `--author` and `--config` directly
 to `review`. The [example profile](examples/standards.javascript-typescript.json)
 contains advisory JavaScript/TypeScript rules; select or customize rules to match
-your project. Profile fields are defined by
+your project. The [GPT-OSS 120B example config](examples/review-config.gpt-oss-120b.json)
+uses an 8,192-token output allowance, validated in the targeted standards runs,
+while retaining its 160,000 total-token and $0.02 per-review limits. Run dry-run
+with your actual scope to check admission; the allowance is not a completion guarantee. Profile fields are defined by
 [standards-profile-v1](schemas/standards-profile-v1.schema.json). Rule IDs must be
 unique across selected definitions. `paths` are repository-relative Node glob
 patterns; paths with no applicable rule remain visibly unassessed. Duplicate
