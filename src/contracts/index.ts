@@ -69,10 +69,18 @@ export type {
 } from "./review-run-config.js";
 export {
   DigestV1Schema,
+  logicalLineCountV1,
+  resolveSnapshotSourceContentV1,
   SNAPSHOT_MANIFEST_V1_JSON_SCHEMA,
   SnapshotContentV1Schema,
   SnapshotManifestV1Schema,
   SnapshotPathEntryV1Schema,
   SnapshotPathV1Schema,
+  snapshotSourceContentAtV1,
 } from "./snapshot-manifest.js";
-export type { DigestV1, SnapshotContentV1, SnapshotManifestV1 } from "./snapshot-manifest.js";
+export type {
+  DigestV1,
+  SnapshotContentV1,
+  SnapshotManifestV1,
+  SnapshotPathEntryV1,
+} from "./snapshot-manifest.js";

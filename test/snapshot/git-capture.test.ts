@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -213,6 +213,87 @@ describe("captureGitSnapshotV1", () => {
         true,
       );
     } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+  it("reads the mode of the requested file when the path contains glob characters", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      await writeFile(join(repositoryPath, "a0c.txt"), "executable\n");
+      await chmod(join(repositoryPath, "a0c.txt"), 0o755);
+      await writeFile(join(repositoryPath, "a?c.txt"), "plain\n");
+      await git(repositoryPath, "add", "-A");
+      await git(repositoryPath, "commit", "-m", "add glob-shaped paths");
+      await git(repositoryPath, "switch", "-c", "feature/glob");
+      await writeFile(join(repositoryPath, "a?c.txt"), "plain changed\n");
+      await git(repositoryPath, "add", "-A");
+      await git(repositoryPath, "commit", "-m", "change the glob-shaped path");
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const entry = captured.manifest.paths.find((candidate) => candidate.path === "a?c.txt");
+
+      assert.equal(entry?.changeType, "MODIFIED");
+      assert.equal(entry?.before?.gitMode, "100644");
+      assert.equal(entry?.after?.gitMode, "100644");
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("captures the named repository even when GIT_DIR points elsewhere", async () => {
+    const target = await createRepository();
+    const decoy = await createRepository();
+    const previousGitDir = process.env.GIT_DIR;
+    const previousWorkTree = process.env.GIT_WORK_TREE;
+    try {
+      await git(target, "switch", "-c", "feature/target");
+      await writeFile(join(target, "modified.txt"), "target change\n");
+      await git(target, "add", "-A");
+      await git(target, "commit", "-m", "target change");
+      const targetHead = await git(target, "rev-parse", "HEAD");
+
+      process.env.GIT_DIR = join(decoy, ".git");
+      process.env.GIT_WORK_TREE = decoy;
+      const captured = await captureGitSnapshotV1(reviewRequest(target, "main"));
+
+      assert.equal(captured.manifest.source.headCommit, targetHead);
+      assert.equal(captured.manifest.source.branch, "feature/target");
+    } finally {
+      if (previousGitDir === undefined) {
+        delete process.env.GIT_DIR;
+      } else {
+        process.env.GIT_DIR = previousGitDir;
+      }
+      if (previousWorkTree === undefined) {
+        delete process.env.GIT_WORK_TREE;
+      } else {
+        process.env.GIT_WORK_TREE = previousWorkTree;
+      }
+      await rm(target, { recursive: true, force: true });
+      await rm(decoy, { recursive: true, force: true });
+    }
+  });
+
+  it("reports an unreadable untracked file as an omission carrying the error code", async () => {
+    if (process.getuid?.() === 0) {
+      return;
+    }
+    const repositoryPath = await createRepository();
+    const unreadablePath = join(repositoryPath, "unreadable.txt");
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/unreadable");
+      await writeFile(unreadablePath, "secret\n");
+      await chmod(unreadablePath, 0o000);
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const omission = captured.manifest.omissions.find(
+        (candidate) => candidate.scope === "unreadable.txt",
+      );
+
+      assert.equal(omission?.reason, "UNREADABLE");
+      assert.match(omission?.detail ?? "", /EACCES/);
+    } finally {
+      await chmod(unreadablePath, 0o644).catch(() => undefined);
       await rm(repositoryPath, { recursive: true, force: true });
     }
   });

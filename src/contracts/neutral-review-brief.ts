@@ -6,9 +6,11 @@ import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 import { PersistedCanonicalInputsV1Schema } from "./review-request.js";
 import {
   DigestV1Schema,
+  logicalLineCountV1,
   type SnapshotContentV1,
   SnapshotManifestV1Schema,
   SnapshotPathV1Schema,
+  resolveSnapshotSourceContentV1,
 } from "./snapshot-manifest.js";
 
 function prefixedIdentifier(prefix: "brief" | "check" | "evidence" | "hunk"): z.ZodString {
@@ -69,12 +71,6 @@ export function computeInitialEvidenceContentDigestV1(
   return sha256Utf8(content);
 }
 
-function logicalLineCount(content: string): number {
-  const lineSeparators = content.match(/\r\n|[\r\n]/g)?.length ?? 0;
-  const endsWithLineSeparator = /(?:\r\n|[\r\n])$/.test(content);
-  return lineSeparators + (endsWithLineSeparator ? 0 : 1);
-}
-
 function sameProvenance(
   left: z.infer<typeof PersistedCanonicalInputsV1Schema>["requirements"][number]["provenance"],
   right: z.infer<typeof PersistedCanonicalInputsV1Schema>["requirements"][number]["provenance"],
@@ -91,38 +87,6 @@ function sameProvenance(
     left.path === right.path &&
     left.revision === right.revision
   );
-}
-
-type SnapshotPathEntryV1 = z.infer<typeof SnapshotManifestV1Schema>["paths"][number];
-
-function sourceContentAt(
-  entry: SnapshotPathEntryV1,
-  path: string,
-  side: "BASE" | "HEAD",
-): SnapshotContentV1 | undefined {
-  switch (entry.changeType) {
-    case "ADDED":
-    case "UNTRACKED":
-      return side === "HEAD" && entry.path === path ? entry.after : undefined;
-    case "DELETED":
-      return side === "BASE" && entry.path === path ? entry.before : undefined;
-    case "MODIFIED":
-    case "TYPE_CHANGED":
-      if (entry.path !== path) {
-        return undefined;
-      }
-      return side === "BASE" ? entry.before : entry.after;
-    case "RENAMED":
-      if (side === "BASE" && entry.previousPath === path) {
-        return entry.before;
-      }
-      return side === "HEAD" && entry.path === path ? entry.after : undefined;
-    case "COPIED":
-      if (entry.previousPath === path) {
-        return entry.before;
-      }
-      return side === "HEAD" && entry.path === path ? entry.after : undefined;
-  }
 }
 
 export const NeutralReviewBriefV1Schema = z
@@ -250,7 +214,7 @@ export const NeutralReviewBriefV1Schema = z
       }
       if (
         evidence.type === "SOURCE_CONTEXT" &&
-        logicalLineCount(evidence.content) !== evidence.endLine - evidence.startLine + 1
+        logicalLineCountV1(evidence.content) !== evidence.endLine - evidence.startLine + 1
       ) {
         context.addIssue({
           code: "custom",
@@ -259,9 +223,11 @@ export const NeutralReviewBriefV1Schema = z
         });
       }
       if (evidence.type === "SOURCE_CONTEXT") {
-        const sourceContent = brief.snapshotManifest.paths
-          .map((entry) => sourceContentAt(entry, evidence.path, evidence.side))
-          .find((content) => content !== undefined);
+        const sourceContent = resolveSnapshotSourceContentV1(
+          brief.snapshotManifest.paths,
+          evidence.path,
+          evidence.side,
+        );
         if (sourceContent === undefined) {
           context.addIssue({
             code: "custom",
