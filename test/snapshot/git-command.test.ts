@@ -55,6 +55,7 @@ describe("runGit", () => {
     const repositoryPath = await createRepository();
     try {
       await execFileAsync("git", ["-C", repositoryPath, "config", "user.name", "Git Command Test"]);
+      await execFileAsync("git", ["-C", repositoryPath, "config", "commit.gpgsign", "false"]);
       await execFileAsync("git", [
         "-C",
         repositoryPath,

@@ -425,6 +425,9 @@ export async function runCliV1(
     return await resumeFinal(options, io, dependencies);
   } catch (error) {
     io.stderr(error instanceof Error ? error.message : "Unknown command failure");
+    if (error instanceof ProviderCallError && error.responseMetadata !== null) {
+      io.stderr(`Provider response metadata: ${JSON.stringify(error.responseMetadata)}`);
+    }
     if (error instanceof ProviderCallError && error.code === "TRANSPORT_UNCERTAIN") {
       return 4;
     }

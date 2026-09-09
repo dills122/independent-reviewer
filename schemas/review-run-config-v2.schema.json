@@ -23,7 +23,7 @@
       "type": "object",
       "properties": {
         "order": {
-          "minItems": 2,
+          "minItems": 1,
           "maxItems": 3,
           "type": "array",
           "items": {

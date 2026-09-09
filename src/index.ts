@@ -10,6 +10,7 @@ export type {
   ProviderCallErrorCode,
   ProviderCallErrorOptions,
   ProviderErrorDiagnosticV1,
+  ProviderResponseMetadataV1,
   ReviewMessageV1,
   ReviewProviderRequestV1,
   ReviewProviderRequestAuditV1,

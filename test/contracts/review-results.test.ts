@@ -4,11 +4,14 @@ import { resolve } from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
   FinalReviewReportV1Schema,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
   PreliminaryAssessmentV1Schema,
 } from "../../src/index.js";
+
+import { materializeFinalReviewCandidateV1 } from "../../src/report/final-review-candidate.js";
 
 const digest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
 
@@ -262,5 +265,130 @@ describe("review result contracts", () => {
 
     assert.deepEqual(preliminarySchema, PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA);
     assert.deepEqual(finalSchema, FINAL_REVIEW_REPORT_V1_JSON_SCHEMA);
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(resolve("schemas", "final-review-candidate-v1.schema.json"), "utf8"),
+      ),
+      FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
+    );
+  });
+});
+
+describe("final candidate assembly", () => {
+  const claims = [
+    {
+      command: "node checks.mjs",
+      outcome: "PASSED" as const,
+      summary: `non-owner / non‑owner / e\u0301 ${"x".repeat(600)}`,
+    },
+    { command: "npm test", outcome: "FAILED" as const, summary: "é failed" },
+  ];
+  const concerns = {
+    evidenceGaps: ["non-owner — e\u0301", "second gap"],
+    limitations: ["non-owner — e\u0301"],
+  };
+  const claim = (claimIndex: number) => ({
+    claimIndex,
+    status: "UNVERIFIED",
+    explanation: "No runner evidence.",
+  });
+  const concern = (kind: string, concernIndex: number) => ({
+    kind,
+    concernIndex,
+    disposition: "RESOLVED",
+    rationale: "Frozen evidence resolves this concern.",
+  });
+  function candidate() {
+    return {
+      ...finalReport(),
+      authorVerificationClaims: [claim(1), claim(0)],
+      preliminaryConcernDispositions: [
+        concern("LIMITATION", 0),
+        concern("EVIDENCE_GAP", 1),
+        concern("EVIDENCE_GAP", 0),
+      ],
+    };
+  }
+
+  it("inserts exact Unicode and long source text while preserving reordered judgments", () => {
+    const input = candidate();
+    const before = JSON.stringify({ input, concerns, claims });
+    const report = materializeFinalReviewCandidateV1(input, concerns, claims);
+    assert.deepEqual(
+      report.authorVerificationClaims,
+      [1, 0].map((index) => ({
+        ...claim(index),
+        command: claims[index]?.command,
+        claimedOutcome: claims[index]?.outcome,
+        claimedSummary: claims[index]?.summary,
+      })),
+    );
+    assert.deepEqual(
+      report.preliminaryConcernDispositions.map((entry) => entry.preliminaryConcern),
+      [concerns.limitations[0], concerns.evidenceGaps[1], concerns.evidenceGaps[0]],
+    );
+    assert.equal(JSON.stringify({ input, concerns, claims }), before);
+    assert.equal(FinalReviewReportV1Schema.safeParse(report).success, true);
+    assert.equal("concernIndex" in (report.preliminaryConcernDispositions[0] ?? {}), false);
+  });
+
+  it("rejects missing, duplicate, invented, negative, and cross-kind source references", () => {
+    for (const indices of [[0], [0, 0], [0, 2], [-1, 0]]) {
+      assert.throws(() =>
+        materializeFinalReviewCandidateV1(
+          { ...candidate(), authorVerificationClaims: indices.map(claim) },
+          concerns,
+          claims,
+        ),
+      );
+    }
+    for (const entries of [
+      [concern("EVIDENCE_GAP", 0)],
+      [concern("EVIDENCE_GAP", 0), concern("EVIDENCE_GAP", 0), concern("LIMITATION", 0)],
+      [concern("EVIDENCE_GAP", 0), concern("EVIDENCE_GAP", 1), concern("LIMITATION", 1)],
+      [concern("EVIDENCE_GAP", -1), concern("EVIDENCE_GAP", 1), concern("LIMITATION", 0)],
+      [concern("EVIDENCE_GAP", 0), concern("LIMITATION", 0), concern("LIMITATION", 1)],
+    ]) {
+      assert.throws(() =>
+        materializeFinalReviewCandidateV1(
+          { ...candidate(), preliminaryConcernDispositions: entries },
+          concerns,
+          claims,
+        ),
+      );
+    }
+  });
+
+  it("rejects model-supplied source text and confirmed author test claims", () => {
+    for (const extra of [
+      { claimedSummary: claims[0]?.summary },
+      { command: "npm test" },
+      { claimedOutcome: "PASSED" },
+      { status: "CONFIRMED" },
+    ]) {
+      assert.throws(() =>
+        materializeFinalReviewCandidateV1(
+          { ...candidate(), authorVerificationClaims: [{ ...claim(0), ...extra }, claim(1)] },
+          concerns,
+          claims,
+        ),
+      );
+    }
+    const input = candidate();
+    assert.ok(input.preliminaryConcernDispositions[0]);
+    Object.assign(input.preliminaryConcernDispositions[0], {
+      preliminaryConcern: concerns.limitations[0],
+    });
+    assert.throws(() => materializeFinalReviewCandidateV1(input, concerns, claims));
+  });
+
+  it("still applies report verdict refinements after assembly", () => {
+    const input = candidate();
+    assert.ok(input.preliminaryConcernDispositions[0]);
+    input.preliminaryConcernDispositions[0].disposition = "REMAINS";
+    assert.throws(
+      () => materializeFinalReviewCandidateV1(input, concerns, claims),
+      /ready verdict cannot/,
+    );
   });
 });

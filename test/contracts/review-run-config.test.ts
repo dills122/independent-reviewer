@@ -35,10 +35,13 @@ describe("review run configuration schemas", () => {
     assert.equal(ReviewRunConfigV2Schema.safeParse(invalid).success, false);
   });
 
-  it("requires two unique fallback endpoints and finite price ceilings", () => {
+  it("accepts a pinned endpoint but rejects empty or duplicate routes and unbounded prices", () => {
     const oneEndpoint = structuredClone(validConfig);
     oneEndpoint.providerRouting.order = ["provider-a/fp4"];
-    assert.equal(ReviewRunConfigV2Schema.safeParse(oneEndpoint).success, false);
+    assert.equal(ReviewRunConfigV2Schema.safeParse(oneEndpoint).success, true);
+    const empty = structuredClone(validConfig);
+    empty.providerRouting.order = [];
+    assert.equal(ReviewRunConfigV2Schema.safeParse(empty).success, false);
 
     const duplicateEndpoint = structuredClone(validConfig);
     duplicateEndpoint.providerRouting.order = ["provider-a/fp4", "provider-a/fp4"];

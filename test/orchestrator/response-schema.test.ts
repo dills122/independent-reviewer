@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
+  FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
 } from "../../src/index.js";
 import {
   constrainResponseSchemaV1,
+  constrainRepairReferencesV1,
   ResponseSchemaShapeError,
 } from "../../src/orchestrator/response-schema.js";
 
@@ -90,8 +91,42 @@ function rootProperty(schema: unknown, name: string): Record<string, unknown> {
 }
 
 describe("constrainResponseSchemaV1", () => {
+  it("pins repair concern indices and counts without mutating the first-final schema", () => {
+    const final = constrainResponseSchemaV1(FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA, options);
+    const original = JSON.stringify(final);
+    const concern = `non-owner ${"x".repeat(401)}`;
+    const repair = constrainRepairReferencesV1(final, {
+      findings: [],
+      evidenceGaps: [concern],
+      limitations: [concern],
+    });
+    assert.equal(JSON.stringify(final), original);
+    assert.equal(rootProperty(repair.schema, "preliminaryFindingDispositions").maxItems, 0);
+    assert.equal(rootProperty(repair.schema, "preliminaryConcernDispositions").maxItems, 2);
+    assert.deepEqual(collectEnums(repair.schema, "concernIndex"), [[0]]);
+    assert.deepEqual(collectEnums(repair.schema, "kind"), [["EVIDENCE_GAP", "LIMITATION"]]);
+    assert.doesNotMatch(JSON.stringify(repair.schema), /non-owner/);
+  });
+
+  it("requests author claim indices without copied text", () => {
+    const claims = [
+      {
+        command: "node access-check.mjs",
+        outcome: "PASSED" as const,
+        summary: "non-owner checks passed",
+      },
+      { command: "node second.mjs", outcome: "FAILED" as const, summary: "second check failed" },
+    ];
+    const input = { ...options, authorVerificationClaims: claims };
+    const { schema } = constrainResponseSchemaV1(FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA, input);
+    assert.deepEqual(collectEnums(schema, "claimIndex"), [[0, 1]]);
+    assert.doesNotMatch(JSON.stringify(schema), /claimedSummary|claimedOutcome|access-check/);
+    const blind = constrainResponseSchemaV1(PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA, input);
+    assert.doesNotMatch(JSON.stringify(blind.schema), /non-owner|access-check/);
+  });
+
   it("pins identities, ledgers, and evidence paths on the final schema", () => {
-    const { schema } = constrainResponseSchemaV1(FINAL_REVIEW_REPORT_V1_JSON_SCHEMA, options);
+    const { schema } = constrainResponseSchemaV1(FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA, options);
 
     const snapshotDigestValue = (
       rootProperty(schema, "snapshotDigest").properties as Record<string, { const?: string }>
@@ -109,7 +144,7 @@ describe("constrainResponseSchemaV1", () => {
 
   it("applies named array limits instead of a blanket cap", () => {
     const { schema, appliedArrayLimits } = constrainResponseSchemaV1(
-      FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
+      FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
       options,
     );
 
@@ -126,7 +161,7 @@ describe("constrainResponseSchemaV1", () => {
 
   it("keeps ledger bounds ahead of the generic array limit", () => {
     const manyPaths = Array.from({ length: 30 }, (_, index) => `src/file-${index}.ts`);
-    const { schema } = constrainResponseSchemaV1(FINAL_REVIEW_REPORT_V1_JSON_SCHEMA, {
+    const { schema } = constrainResponseSchemaV1(FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA, {
       ...options,
       changedPaths: manyPaths,
       evidencePaths: manyPaths,
@@ -138,18 +173,18 @@ describe("constrainResponseSchemaV1", () => {
     assert.equal(rootProperty(schema, "inspectedPaths"), undefined);
   });
 
-  it("widens author claim text past the generic prose ceiling", () => {
+  it("does not ask the model to reproduce long source strings", () => {
     const longCommand = `npm test -- ${"x".repeat(600)}`;
-    const { schema } = constrainResponseSchemaV1(FINAL_REVIEW_REPORT_V1_JSON_SCHEMA, {
+    const { schema } = constrainResponseSchemaV1(FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA, {
       ...options,
-      authorVerificationClaims: [{ command: longCommand, summary: "ok", exitCode: 0 }] as never,
+      authorVerificationClaims: [{ command: longCommand, summary: "ok", outcome: "PASSED" }],
     });
 
     const claims = rootProperty(schema, "authorVerificationClaims");
     const claimProperties = (claims.items as { properties: Record<string, { maxLength?: number }> })
       .properties;
-    assert.equal(claimProperties.command?.maxLength, longCommand.length);
-    assert.equal(claimProperties.claimedSummary?.maxLength, 400);
+    assert.equal(claimProperties.command, undefined);
+    assert.equal(claimProperties.claimedSummary, undefined);
   });
 
   it("bounds the preliminary schema and its inspected-path list", () => {
@@ -164,7 +199,7 @@ describe("constrainResponseSchemaV1", () => {
   });
 
   it("fails loudly when the schema no longer exposes the expected shape", () => {
-    const withoutEvidenceVariants = structuredClone(FINAL_REVIEW_REPORT_V1_JSON_SCHEMA) as {
+    const withoutEvidenceVariants = structuredClone(FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA) as {
       properties: Record<string, unknown>;
     };
     withoutEvidenceVariants.properties.findings = { type: "array", items: { type: "string" } };
@@ -180,7 +215,7 @@ describe("constrainResponseSchemaV1", () => {
   });
 
   it("refuses an array the limit table does not name", () => {
-    const withNewArray = structuredClone(FINAL_REVIEW_REPORT_V1_JSON_SCHEMA) as {
+    const withNewArray = structuredClone(FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA) as {
       properties: Record<string, unknown>;
     };
     withNewArray.properties.newLedger = { type: "array", items: { type: "string" } };

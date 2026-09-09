@@ -24,6 +24,83 @@ const providerRouting = {
 };
 
 describe("OpenRouterProviderV1", () => {
+  it("pins one endpoint without silently falling back to another provider", async () => {
+    let wire: Record<string, unknown> = {};
+    const provider = new OpenRouterProviderV1(
+      "secret-key",
+      {
+        ...providerRouting,
+        order: ["deepinfra/bf16"],
+      },
+      async (_input, init) => {
+        wire = JSON.parse(String(init?.body));
+        return Response.json({ choices: [{ finish_reason: "stop", message: { content: "{}" } }] });
+      },
+    );
+    await provider.complete(request);
+    const routing = wire.provider as Record<string, unknown>;
+    assert.deepEqual(routing.only, ["deepinfra/bf16"]);
+    assert.deepEqual(routing.order, ["deepinfra/bf16"]);
+    assert.equal(routing.allow_fallbacks, false);
+    assert.equal(routing.zdr, true);
+    assert.equal(routing.data_collection, "deny");
+  });
+
+  it("redacts rejected envelope labels and keeps invalid usage unknown", async () => {
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+      Response.json({
+        id: "secret-key",
+        model: "secret-key",
+        provider: "secret-key",
+        choices: [{ finish_reason: "secret-key", message: { content: null } }],
+        usage: { prompt_tokens: 1.5, completion_tokens: -1, total_tokens: "30", cost: -2 },
+      }),
+    );
+    await assert.rejects(
+      () => provider.complete(request),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.doesNotMatch(error.message + JSON.stringify(error.responseMetadata), /secret-key/);
+        assert.deepEqual(error.responseMetadata?.usage, {
+          promptTokens: null,
+          completionTokens: null,
+          totalTokens: null,
+          cost: null,
+        });
+        return true;
+      },
+    );
+  });
+
+  it("retains safe usage and routing when null or truncated completions are rejected", async () => {
+    for (const finishReason of ["stop", "length"]) {
+      const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+        Response.json({
+          id: "generation-rejected",
+          model: "vendor/model",
+          provider: "Mock Provider",
+          choices: [{ finish_reason: finishReason, message: { content: null } }],
+          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30, cost: 0.003 },
+        }),
+      );
+      await assert.rejects(
+        () => provider.complete(request),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderCallError);
+          assert.equal(error.code, "INVALID_RESPONSE");
+          assert.deepEqual(error.responseMetadata, {
+            responseId: "generation-rejected",
+            model: "vendor/model",
+            provider: "Mock Provider",
+            finishReason,
+            usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30, cost: 0.003 },
+          });
+          return true;
+        },
+      );
+    }
+  });
+
   it("uses strict structured output and explicit privacy and routing controls", async () => {
     let capturedInput: RequestInfo | URL | undefined;
     let capturedInit: RequestInit | undefined;
@@ -69,7 +146,7 @@ describe("OpenRouterProviderV1", () => {
     assert.equal(result.provider, "Mock Provider");
 
     const audit = provider.auditRequest(request);
-    assert.equal(audit.providerPolicyVersion, "openrouter-chat-completions-v2");
+    assert.equal(audit.providerPolicyVersion, "openrouter-chat-completions-v3");
     assert.deepEqual(audit.wireBodyDigest, sha256Utf8(String(capturedInit?.body)));
     assert.equal(audit.wireBodyBytes, Buffer.byteLength(String(capturedInit?.body), "utf8"));
     assert.notDeepEqual(

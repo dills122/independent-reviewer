@@ -1,3 +1,4 @@
+import { asFinalCandidateV2 } from "./helpers/final-candidate.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -171,8 +172,8 @@ it("composes capture and the two-stage provider flow through the review command"
 
     const calls: ReviewProviderRequestV1[] = [];
     const response = (value: unknown): ReviewProviderResponseV1 => ({
-      value,
-      rawContent: JSON.stringify(value),
+      value: asFinalCandidateV2(value),
+      rawContent: JSON.stringify(asFinalCandidateV2(value)),
       responseId: "mock-response",
       model: "mock/reviewer",
       provider: "mock",
@@ -284,6 +285,37 @@ it("composes capture and the two-stage provider flow through the review command"
       await readFile(join(packetPath, "review", "run-record.jsonl"), "utf8"),
       /RUN_COMPLETED/,
     );
+    const failedExit = await runCliV1(
+      [
+        "review",
+        "--request",
+        requestPath,
+        "--config",
+        configPath,
+        "--output",
+        `${packetPath}-failed`,
+      ],
+      io,
+      {
+        readOpenRouterApiKey: () => "test-api-key",
+        createProvider: () => ({
+          auditRequest: provider.auditRequest,
+          complete: async () => {
+            throw new ProviderCallError("INVALID_RESPONSE", "Empty completion.", {
+              responseMetadata: {
+                responseId: "failed-id",
+                model: "mock/reviewer",
+                provider: "Mock Provider",
+                finishReason: "stop",
+                usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30, cost: 0.003 },
+              },
+            });
+          },
+        }),
+      },
+    );
+    assert.equal(failedExit, 1);
+    assert.match(errors.join("\n"), /Provider response metadata:.*failed-id.*0.003/);
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });
   }
@@ -402,8 +434,8 @@ it("resumes a definite failed final stage without preparing or buying another pr
     );
 
     const makeResponse = (value: unknown): ReviewProviderResponseV1 => ({
-      value,
-      rawContent: JSON.stringify(value),
+      value: asFinalCandidateV2(value),
+      rawContent: JSON.stringify(asFinalCandidateV2(value)),
       responseId: "mock-response",
       model: "mock/reviewer",
       provider: "mock",
@@ -457,7 +489,7 @@ it("resumes a definite failed final stage without preparing or buying another pr
             providerName: "mock",
             model: "mock/reviewer",
             responseId: null,
-            retryAfter: null,
+            retryAfter: "45",
           },
         });
       },

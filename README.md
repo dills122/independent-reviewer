@@ -105,6 +105,10 @@ The review config schema is
 [`schemas/review-run-config-v2.schema.json`](schemas/review-run-config-v2.schema.json),
 which the runtime requires: `schemaVersion: 2`, a `providerRouting` block, and
 budgets including the local spend ceiling `maxTotalCostUsd`.
+`providerRouting.order` accepts one to three distinct endpoint slugs. One entry
+pins the route and disables provider fallback; two or three permit same-model
+fallback only within that list. A preferred first entry is not a pinned route.
+Privacy, structured-output requirements, and price ceilings apply in both modes.
 The command prints the final report path. The adjacent `run-record.jsonl`
 records prompt/schema and provider-policy versions, stage-input and
 credential-free wire-request digests, exact wire-body digest and byte count,
@@ -115,6 +119,21 @@ non-blocking follow-ups`, `2` means `Not ready`, `3` means `Unable to verify`,
 and `4` means the provider submission became transport-uncertain. Other input
 or execution failures use exit `1`. Request and config control files are
 excluded from captured review evidence even when placed inside the worktree.
+
+Rejected completions with a parseable envelope retain sanitized response ID,
+model, provider, finish reason, and normalized usage in `CALL_FAILED.responseMetadata`
+and CLI failure output. Sum usage across successful and failed calls when
+accounting for a run; a rejected response can still have reported cost. Missing
+or invalid telemetry is unknown, not zero. Raw private response files remain
+separate from this bounded metadata. Null or truncated completions still fail;
+they are never converted to successful reports or automatically replayed.
+
+Final provider output uses `final-review-candidate-v1`: author claims reference
+`claimIndex`; concerns reference `kind` and `concernIndex` in the corresponding
+preliminary array. The runner inserts exact original text into the unchanged
+final report format, then applies existing semantic checks. Missing, duplicate,
+or unknown references fail validation. Older response protocols require a new
+review rather than a final-stage resume.
 
 If the final stage fails with a definite provider error, the one permitted retry
 reuses the persisted blind assessment and the exact same configuration rather
@@ -134,7 +153,7 @@ request may have been billed and its outcome is unknown.
 
 ## Later scope
 
-The GitHub/GitLab adapter, arbitrary local verification workers, provider
+The GitHub/GitLab adapter, arbitrary local verification workers, model
 fallback, and broader model evaluation remain deferred until requested.
 
 ## Development context

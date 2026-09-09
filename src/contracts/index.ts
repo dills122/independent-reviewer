@@ -42,6 +42,10 @@ export {
 } from "./review-request.js";
 export type { AuthorPacketV1, CanonicalInputV1, ReviewRequestV1 } from "./review-request.js";
 export {
+  FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA,
+  FinalReviewCandidateV2Schema,
+  FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
+  FinalReviewCandidateV1Schema,
   FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
   FinalReviewReportV1Schema,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
@@ -50,6 +54,8 @@ export {
   ReviewFindingV1Schema,
 } from "./review-results.js";
 export type {
+  FinalReviewCandidateV2,
+  FinalReviewCandidateV1,
   FinalReviewReportV1,
   PreliminaryAssessmentV1,
   ReviewEvidenceV1,
