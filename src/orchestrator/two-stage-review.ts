@@ -28,6 +28,7 @@ import {
   type ReviewProviderV1,
 } from "../provider/review-provider.js";
 import { renderFinalReviewMarkdownV1 } from "../report/markdown.js";
+import { type ConstrainedResponseSchemaV1, constrainResponseSchemaV1 } from "./response-schema.js";
 import { inspectSnapshotPacketV1, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
 import { buildNeutralReviewBriefV1 } from "../transmission/neutral-brief-builder.js";
 import { compactProjectGuidanceV1 } from "../transmission/project-guidance-digest.js";
@@ -210,6 +211,8 @@ async function completeWithAudit(
   attemptNumber: number,
   provider: ReviewProviderV1,
   request: Parameters<ReviewProviderV1["complete"]>[0],
+  /** Array ceilings applied to the response schema, so a bounded review is auditable. */
+  responseArrayLimits: Record<string, number> = {},
 ): Promise<ReviewProviderResponseV1> {
   const startedAt = Date.now();
   const requestAudit = provider.auditRequest(request);
@@ -225,6 +228,7 @@ async function completeWithAudit(
     requestedModel: request.model,
     promptVersion: REVIEW_PROMPT_VERSION_V1,
     responseSchemaName: request.responseSchema.name,
+    responseArrayLimits,
     maxOutputTokens: request.maxOutputTokens,
     timeoutMs: request.timeoutMs,
   });
@@ -331,166 +335,6 @@ function allowedPaths(brief: NeutralReviewBriefV1): Set<string> {
       "previousPath" in entry ? [entry.path, entry.previousPath] : [entry.path],
     ),
   );
-}
-
-function constrainFindingEvidencePaths(schema: unknown, paths: string[]): unknown {
-  const constrained = structuredClone(schema);
-  let constrainedFields = 0;
-
-  function visit(value: unknown): void {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        visit(item);
-      }
-      return;
-    }
-    if (value === null || typeof value !== "object") {
-      return;
-    }
-    const object = value as Record<string, unknown>;
-    const propertiesValue = object.properties;
-    if (propertiesValue && typeof propertiesValue === "object") {
-      const properties = propertiesValue as Record<string, unknown>;
-      const anchor = properties.anchor;
-      const path = properties.path;
-      if (
-        anchor &&
-        typeof anchor === "object" &&
-        ((anchor as Record<string, unknown>).const === "LINE_RANGE" ||
-          (anchor as Record<string, unknown>).const === "SYMBOL") &&
-        path &&
-        typeof path === "object"
-      ) {
-        properties.path = { ...(path as Record<string, unknown>), enum: paths };
-        constrainedFields += 1;
-      }
-    }
-    for (const child of Object.values(object)) {
-      visit(child);
-    }
-  }
-
-  visit(constrained);
-  if (constrainedFields < 2 || constrainedFields % 2 !== 0) {
-    throw new Error("Provider response schema did not expose complete evidence path variants.");
-  }
-  return constrained;
-}
-
-function constrainCoverageLedgers(
-  schema: unknown,
-  changedPaths: string[],
-  canonicalInputIds: string[],
-  identities: { snapshotDigest: string; briefDigest: string },
-  authorVerificationClaims: AuthorPacketV1["claimedVerification"],
-): unknown {
-  const constrained = structuredClone(schema) as Record<string, unknown>;
-  const properties = constrained.properties as Record<string, unknown> | undefined;
-  if (!properties) {
-    throw new Error("Provider response schema does not expose root properties.");
-  }
-
-  for (const [propertyName, expectedValue] of [
-    ["snapshotDigest", identities.snapshotDigest],
-    ["briefDigest", identities.briefDigest],
-  ] as const) {
-    const digest = properties[propertyName] as Record<string, unknown> | undefined;
-    const digestProperties = digest?.properties as Record<string, unknown> | undefined;
-    const value = digestProperties?.value as Record<string, unknown> | undefined;
-    if (!value) {
-      throw new Error(`Provider response schema does not expose ${propertyName}.value.`);
-    }
-    value.const = expectedValue;
-  }
-
-  function constrainLedger(
-    propertyName: string,
-    itemPropertyName: string,
-    allowedValues: Array<string | number>,
-    required: boolean,
-  ): void {
-    const ledger = properties?.[propertyName] as Record<string, unknown> | undefined;
-    if (!ledger) {
-      if (required) {
-        throw new Error(`Provider response schema does not expose ${propertyName}.`);
-      }
-      return;
-    }
-    const items = ledger.items as Record<string, unknown> | undefined;
-    const itemProperties = items?.properties as Record<string, unknown> | undefined;
-    const itemIdentifier = itemProperties?.[itemPropertyName] as
-      | Record<string, unknown>
-      | undefined;
-    if (!itemIdentifier) {
-      throw new Error(`Provider response schema does not expose ${propertyName} identifiers.`);
-    }
-    ledger.minItems = allowedValues.length;
-    ledger.maxItems = allowedValues.length;
-    itemIdentifier.enum = allowedValues;
-  }
-
-  constrainLedger("canonicalInputCoverage", "canonicalInputId", canonicalInputIds, true);
-  constrainLedger("changedPathCoverage", "path", changedPaths, false);
-  constrainLedger(
-    "authorVerificationClaims",
-    "claimIndex",
-    authorVerificationClaims.map((_, index) => index),
-    false,
-  );
-
-  function boundProse(value: unknown): void {
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        boundProse(item);
-      }
-      return;
-    }
-    if (!value || typeof value !== "object") {
-      return;
-    }
-    const item = value as Record<string, unknown>;
-    if (item.type === "string" && item.const === undefined && item.enum === undefined) {
-      item.maxLength = 400;
-    }
-    if (item.type === "array" && item.maxItems === undefined) {
-      item.maxItems = 12;
-    }
-    for (const child of Object.values(item)) {
-      boundProse(child);
-    }
-  }
-
-  boundProse(constrained);
-
-  const verificationLedger = properties.authorVerificationClaims as
-    | Record<string, unknown>
-    | undefined;
-  const verificationItems = verificationLedger?.items as Record<string, unknown> | undefined;
-  const verificationProperties = verificationItems?.properties as
-    | Record<string, unknown>
-    | undefined;
-  const command = verificationProperties?.command as Record<string, unknown> | undefined;
-  const claimedSummary = verificationProperties?.claimedSummary as
-    | Record<string, unknown>
-    | undefined;
-  if (command && claimedSummary) {
-    command.maxLength = Math.max(
-      400,
-      ...authorVerificationClaims.map((claim) => Array.from(claim.command).length),
-    );
-    claimedSummary.maxLength = Math.max(
-      400,
-      ...authorVerificationClaims.map((claim) => Array.from(claim.summary).length),
-    );
-  }
-
-  const concernLedger = properties.preliminaryConcernDispositions as
-    | Record<string, unknown>
-    | undefined;
-  if (concernLedger) {
-    concernLedger.maxItems = 24;
-  }
-  return constrained;
 }
 
 async function assertFindingEvidenceAnchors(
@@ -781,11 +625,12 @@ async function completeFinalStageV1(
   brief: NeutralReviewBriefV1,
   preliminary: PreliminaryAssessmentV1,
   finalMessages: ReviewMessageV1[],
-  finalResponseSchema: unknown,
+  finalConstrained: ConstrainedResponseSchemaV1,
   firstCallTokens: number,
   authorVerificationClaims: AuthorPacketV1["claimedVerification"],
   costLedger: RunCostLedgerV1,
 ): Promise<FinalReviewReportV1> {
+  const finalResponseSchema = finalConstrained.schema;
   assertConversationBudget(finalMessages, config.budgets.maxConversationBytes);
   const finalInputTokens = finalInputTokenReservation(
     finalMessages.slice(0, -2),
@@ -806,17 +651,23 @@ async function completeFinalStageV1(
     "FINAL",
     "RESERVATION",
   );
-  const finalResponse = await completeWithAudit(runRecordPath, attemptNumber, provider, {
-    stage: "FINAL",
-    model: config.model,
-    maxOutputTokens: config.budgets.maxOutputTokensPerCall,
-    timeoutMs: config.budgets.timeoutMs,
-    messages: finalMessages,
-    responseSchema: {
-      name: "final_review_report_v1",
-      schema: finalResponseSchema,
+  const finalResponse = await completeWithAudit(
+    runRecordPath,
+    attemptNumber,
+    provider,
+    {
+      stage: "FINAL",
+      model: config.model,
+      maxOutputTokens: config.budgets.maxOutputTokensPerCall,
+      timeoutMs: config.budgets.timeoutMs,
+      messages: finalMessages,
+      responseSchema: {
+        name: "final_review_report_v1",
+        schema: finalResponseSchema,
+      },
     },
-  });
+    finalConstrained.appliedArrayLimits,
+  );
   await writeFile(
     join(reviewDirectory, "final-provider-response.json"),
     jsonDocument(providerRecord(finalResponse)),
@@ -888,17 +739,23 @@ async function completeFinalStageV1(
       rejectedAttemptNumber: attemptNumber,
       repairAttemptNumber: attemptNumber + 1,
     });
-    const repairResponse = await completeWithAudit(runRecordPath, attemptNumber + 1, provider, {
-      stage: "FINAL",
-      model: config.model,
-      maxOutputTokens: config.budgets.maxOutputTokensPerCall,
-      timeoutMs: config.budgets.timeoutMs,
-      messages: repairMessages,
-      responseSchema: {
-        name: "final_review_report_v1",
-        schema: finalResponseSchema,
+    const repairResponse = await completeWithAudit(
+      runRecordPath,
+      attemptNumber + 1,
+      provider,
+      {
+        stage: "FINAL",
+        model: config.model,
+        maxOutputTokens: config.budgets.maxOutputTokensPerCall,
+        timeoutMs: config.budgets.timeoutMs,
+        messages: repairMessages,
+        responseSchema: {
+          name: "final_review_report_v1",
+          schema: finalResponseSchema,
+        },
       },
-    });
+      finalConstrained.appliedArrayLimits,
+    );
     await writeFile(
       join(reviewDirectory, "final-repair-provider-response.json"),
       jsonDocument(providerRecord(repairResponse)),
@@ -983,26 +840,31 @@ export async function runTwoStageReviewV1(
     const canonicalInputIds = brief.snapshotManifest.canonicalInputs
       .map((entry) => entry.id)
       .sort();
-    const preliminaryResponseSchema = constrainCoverageLedgers(
-      constrainFindingEvidencePaths(PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA, evidencePaths),
+    const preliminaryConstrained = constrainResponseSchemaV1(
+      PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
+      {
+        evidencePaths,
+        changedPaths,
+        canonicalInputIds,
+        identities: {
+          snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
+          briefDigest: brief.briefDigest.value,
+        },
+        authorVerificationClaims: packet.authorPacket.claimedVerification,
+      },
+    );
+    const preliminaryResponseSchema = preliminaryConstrained.schema;
+    const finalConstrained = constrainResponseSchemaV1(FINAL_REVIEW_REPORT_V1_JSON_SCHEMA, {
+      evidencePaths,
       changedPaths,
       canonicalInputIds,
-      {
+      identities: {
         snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
         briefDigest: brief.briefDigest.value,
       },
-      packet.authorPacket.claimedVerification,
-    );
-    const finalResponseSchema = constrainCoverageLedgers(
-      constrainFindingEvidencePaths(FINAL_REVIEW_REPORT_V1_JSON_SCHEMA, evidencePaths),
-      changedPaths,
-      canonicalInputIds,
-      {
-        snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
-        briefDigest: brief.briefDigest.value,
-      },
-      packet.authorPacket.claimedVerification,
-    );
+      authorVerificationClaims: packet.authorPacket.claimedVerification,
+    });
+    const finalResponseSchema = finalConstrained.schema;
     assertConversationBudget(blindMessages, config.budgets.maxConversationBytes);
     const authorMessage = JSON.stringify({
       schemaVersion: 1,
@@ -1037,17 +899,23 @@ export async function runTwoStageReviewV1(
       "PRELIMINARY",
       "RESERVATION",
     );
-    const preliminaryResponse = await completeWithAudit(runRecordPath, 1, provider, {
-      stage: "PRELIMINARY",
-      model: config.model,
-      maxOutputTokens: config.budgets.maxOutputTokensPerCall,
-      timeoutMs: config.budgets.timeoutMs,
-      messages: blindMessages,
-      responseSchema: {
-        name: "preliminary_assessment_v1",
-        schema: preliminaryResponseSchema,
+    const preliminaryResponse = await completeWithAudit(
+      runRecordPath,
+      1,
+      provider,
+      {
+        stage: "PRELIMINARY",
+        model: config.model,
+        maxOutputTokens: config.budgets.maxOutputTokensPerCall,
+        timeoutMs: config.budgets.timeoutMs,
+        messages: blindMessages,
+        responseSchema: {
+          name: "preliminary_assessment_v1",
+          schema: preliminaryResponseSchema,
+        },
       },
-    });
+      preliminaryConstrained.appliedArrayLimits,
+    );
     await writeFile(
       join(reviewDirectory, "preliminary-provider-response.json"),
       jsonDocument(providerRecord(preliminaryResponse)),
@@ -1096,7 +964,7 @@ export async function runTwoStageReviewV1(
       brief,
       preliminary,
       finalMessages,
-      finalResponseSchema,
+      finalConstrained,
       firstCallTokens,
       packet.authorPacket.claimedVerification,
       costLedger,
@@ -1344,26 +1212,28 @@ export async function resumeFinalReviewV1(
   const evidencePaths = [...allowedPaths(brief)].sort();
   const changedPaths = brief.snapshotManifest.paths.map((entry) => entry.path).sort();
   const canonicalInputIds = brief.snapshotManifest.canonicalInputs.map((entry) => entry.id).sort();
-  const finalResponseSchema = constrainCoverageLedgers(
-    constrainFindingEvidencePaths(FINAL_REVIEW_REPORT_V1_JSON_SCHEMA, evidencePaths),
+  const finalConstrained = constrainResponseSchemaV1(FINAL_REVIEW_REPORT_V1_JSON_SCHEMA, {
+    evidencePaths,
     changedPaths,
     canonicalInputIds,
-    {
+    identities: {
       snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
       briefDigest: brief.briefDigest.value,
     },
-    packet.authorPacket.claimedVerification,
-  );
-  const preliminaryResponseSchema = constrainCoverageLedgers(
-    constrainFindingEvidencePaths(PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA, evidencePaths),
+    authorVerificationClaims: packet.authorPacket.claimedVerification,
+  });
+  const finalResponseSchema = finalConstrained.schema;
+  const preliminaryConstrained = constrainResponseSchemaV1(PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA, {
+    evidencePaths,
     changedPaths,
     canonicalInputIds,
-    {
+    identities: {
       snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
       briefDigest: brief.briefDigest.value,
     },
-    packet.authorPacket.claimedVerification,
-  );
+    authorVerificationClaims: packet.authorPacket.claimedVerification,
+  });
+  const preliminaryResponseSchema = preliminaryConstrained.schema;
   const preliminaryResponse: ReviewProviderResponseV1 = {
     ...preliminaryProvider,
     value: preliminaryCandidate,
@@ -1415,7 +1285,7 @@ export async function resumeFinalReviewV1(
       brief,
       preliminary,
       finalMessages,
-      finalResponseSchema,
+      finalConstrained,
       firstCallTokens,
       packet.authorPacket.claimedVerification,
       costLedger,
