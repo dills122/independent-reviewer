@@ -21,6 +21,46 @@ async function writePrivate(path, value) {
   await writeFile(path, content, { mode: 0o600 });
 }
 
+function compactProjectGuidance(guidance) {
+  const maximumCharacters = 12_000;
+  let remaining = maximumCharacters;
+  return guidance.flatMap((input) => {
+    if (remaining === 0) return [];
+    const rules = [];
+    const lines = input.content.split("\n");
+    let section = input.title;
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index].trim();
+      if (/^#{1,3}\s+/.test(line)) {
+        section = line.replace(/^#{1,3}\s+/, "");
+        continue;
+      }
+      if (!/^[-*]\s+/.test(line)) continue;
+      const parts = [line.replace(/^[-*]\s+/, "")];
+      while (index + 1 < lines.length) {
+        const continuation = lines[index + 1].trim();
+        if (!continuation || /^#{1,3}\s+/.test(continuation) || /^[-*]\s+/.test(continuation)) {
+          break;
+        }
+        parts.push(continuation);
+        index += 1;
+      }
+      const rule = {
+        ruleId: `${input.id}:R${rules.length + 1}`,
+        section,
+        text: parts.join(" "),
+      };
+      const size = JSON.stringify(rule).length;
+      if (size > remaining) break;
+      rules.push(rule);
+      remaining -= size;
+    }
+    return rules.length > 0
+      ? [{ id: input.id, title: input.title, provenance: input.provenance, rules }]
+      : [];
+  });
+}
+
 async function buildEvidence(packetPath) {
   const manifest = await json(join(packetPath, "snapshot-manifest.json"));
   const canonicalInputs = await json(join(packetPath, "canonical-inputs.json"));
@@ -40,7 +80,13 @@ async function buildEvidence(packetPath) {
     }
     changedFiles.push(captured);
   }
-  return { snapshot: manifest.source, canonicalInputs, changedFiles };
+  return {
+    snapshot: manifest.source,
+    requirements: canonicalInputs.requirements,
+    implementationPlan: canonicalInputs.implementationPlan,
+    projectGuidanceDigest: compactProjectGuidance(canonicalInputs.projectGuidance ?? []),
+    changedFiles,
+  };
 }
 
 async function run() {
@@ -61,6 +107,7 @@ async function run() {
     json(join(packetPath, "author-packet.json")),
   ]);
   await mkdir(outputPath, { mode: 0o700 });
+  await writePrivate(join(outputPath, "00-evidence.json"), evidence);
 
   const system = [
     "You are an independent senior engineer reviewing a frozen code change.",
@@ -70,8 +117,12 @@ async function run() {
   const blindPrompt = [
     "Perform a blind preliminary review using only the frozen project and change evidence below.",
     "Do not assume an author explanation. State your understanding, concrete findings with severity and evidence, and important unknowns.",
-    "Report a finding only when it is directly supported by the supplied requirements or changed code.",
+    "Report a finding only when it is directly supported by the supplied requirements, applicable project guidance, or changed code.",
+    "Treat explicit must, never, and do-not project guidance as review requirements.",
     "Do not invent requirements about tests, documentation, module format, callers, or runtime inputs.",
+    "Every guidance finding must cite the exact matching ruleId and rule text plus concrete changed-code evidence; omit it if any part is missing.",
+    "Never cite a nearby rule that does not govern the changed construct.",
+    "Do not report missing tests or documentation unless a supplied rule explicitly requires them for this change.",
     "Do not list satisfied requirements as findings. Put genuinely unavailable context under unknowns without treating it as a defect.",
     "Keep the response under 700 words.",
     "\nFROZEN REVIEW EVIDENCE\n",
@@ -81,9 +132,11 @@ async function run() {
     "Now reconcile your preliminary review with the author explanation below.",
     "Treat author statements as claims, not proof. Produce the final engineering review in plain text.",
     "The first line must be exactly READY or NOT READY with no Markdown decoration.",
-    "Use NOT READY whenever any unresolved finding means a stated requirement is not met.",
+    "Use NOT READY whenever any unresolved finding means a stated requirement or explicit project-guidance rule is not met.",
     "Use READY only when no blocking finding remains.",
     "Carry forward only findings supported by the frozen evidence; do not invent missing requirements or project conventions.",
+    "For every remaining guidance finding, cite the exact matching ruleId and rule text plus the concrete changed-code evidence; otherwise omit it.",
+    "Do not convert preliminary unknowns into final findings.",
     "Optional suggestions belong under fast follows and must not be described as required before acceptance.",
     "Before responding, make sure the verdict agrees with the rationale and conclusion.",
     "Then give the rationale, remaining findings, and optional fast follows in under 900 words.",
