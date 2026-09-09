@@ -72,6 +72,8 @@ export const ReviewRunConfigV2Schema = z
       maxConversationBytes: z.int().min(1),
       maxOutputTokensPerCall: z.int().min(1),
       maxTotalTokens: z.int().min(2),
+      /** Local ceiling in US dollars on the total spend of one run, across every model call. */
+      maxTotalCostUsd: z.number().positive().max(1_000),
       timeoutMs: z.int().min(1).max(300_000),
     }),
   })

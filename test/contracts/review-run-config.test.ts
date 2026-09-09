@@ -35,6 +35,7 @@ const validConfig = {
     maxConversationBytes: 1_000_000,
     maxOutputTokensPerCall: 4_000,
     maxTotalTokens: 20_000,
+    maxTotalCostUsd: 1,
     timeoutMs: 120_000,
   },
 };

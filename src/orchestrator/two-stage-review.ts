@@ -109,6 +109,102 @@ function normalizedError(error: unknown): {
   return normalized;
 }
 
+/** OpenRouter unit prices are expressed in dollars per million tokens. */
+const TOKENS_PER_UNIT_PRICE_V1 = 1_000_000;
+
+type ReviewRunConfigV2 = z.infer<typeof ReviewRunConfigV2Schema>;
+
+/** Upper bound in dollars for a known token split at the configured unit-price ceiling. */
+function priceCeilingCostUsd(
+  promptTokens: number,
+  completionTokens: number,
+  config: ReviewRunConfigV2,
+): number {
+  const { prompt, completion, request } = config.providerRouting.maxPrice;
+  return (
+    (promptTokens / TOKENS_PER_UNIT_PRICE_V1) * prompt +
+    (completionTokens / TOKENS_PER_UNIT_PRICE_V1) * completion +
+    request
+  );
+}
+
+/**
+ * Upper bound in dollars for a reservation whose prompt/completion split is not yet known: every
+ * reserved token is priced at the dearer of the two ceilings.
+ */
+function reservationCostUsd(reservedTokens: number, config: ReviewRunConfigV2): number {
+  const { prompt, completion, request } = config.providerRouting.maxPrice;
+  return (reservedTokens / TOKENS_PER_UNIT_PRICE_V1) * Math.max(prompt, completion) + request;
+}
+
+/**
+ * What a completed call cost. Unknown cost is never treated as zero: it falls back to the
+ * unit-price ceiling over reported tokens, and to the reservation where tokens are missing too.
+ */
+function callCostUsd(
+  response: ReviewProviderResponseV1,
+  config: ReviewRunConfigV2,
+  reservedInputTokens: number,
+): number {
+  if (response.usage.cost !== null) {
+    return response.usage.cost;
+  }
+  return priceCeilingCostUsd(
+    response.usage.promptTokens ?? reservedInputTokens,
+    response.usage.completionTokens ?? config.budgets.maxOutputTokensPerCall,
+    config,
+  );
+}
+
+/**
+ * Tracks run spend against budgets.maxTotalCostUsd. maxPrice bounds unit rates on the provider
+ * side and maxTotalTokens bounds tokens, but neither bounds the bill for one run: the same token
+ * budget is a different amount of money on a different model.
+ */
+class RunCostLedgerV1 {
+  #spentUsd = 0;
+
+  constructor(private readonly ceilingUsd: number) {}
+
+  get spentUsd(): number {
+    return this.#spentUsd;
+  }
+
+  record(costUsd: number): void {
+    this.#spentUsd += costUsd;
+  }
+
+  exceededBy(additionalUsd: number): number {
+    return this.#spentUsd + additionalUsd - this.ceilingUsd;
+  }
+}
+
+/** Aborts before or after a call when the run cost ceiling is crossed, and records why. */
+async function assertCostBudget(
+  runRecordPath: string,
+  ledger: RunCostLedgerV1,
+  additionalUsd: number,
+  stage: "PRELIMINARY" | "FINAL",
+  phase: "RESERVATION" | "REPORTED",
+): Promise<void> {
+  if (ledger.exceededBy(additionalUsd) <= 0) {
+    return;
+  }
+  await appendRunEvent(runRecordPath, {
+    type: "BUDGET_EXHAUSTED",
+    budget: "COST",
+    stage,
+    phase,
+    spentUsd: ledger.spentUsd,
+    additionalUsd,
+  });
+  throw new Error(
+    phase === "RESERVATION"
+      ? `The remaining cost budget cannot reserve the ${stage.toLowerCase()} call.`
+      : `Provider-reported usage exceeded the total cost budget at the ${stage.toLowerCase()} stage.`,
+  );
+}
+
 async function completeWithAudit(
   runRecordPath: string,
   attemptNumber: number,
@@ -688,6 +784,7 @@ async function completeFinalStageV1(
   finalResponseSchema: unknown,
   firstCallTokens: number,
   authorVerificationClaims: AuthorPacketV1["claimedVerification"],
+  costLedger: RunCostLedgerV1,
 ): Promise<FinalReviewReportV1> {
   assertConversationBudget(finalMessages, config.budgets.maxConversationBytes);
   const finalInputTokens = finalInputTokenReservation(
@@ -702,6 +799,13 @@ async function completeFinalStageV1(
   ) {
     throw new Error("The remaining token budget cannot reserve the final review call.");
   }
+  await assertCostBudget(
+    runRecordPath,
+    costLedger,
+    reservationCostUsd(finalInputTokens + config.budgets.maxOutputTokensPerCall, config),
+    "FINAL",
+    "RESERVATION",
+  );
   const finalResponse = await completeWithAudit(runRecordPath, attemptNumber, provider, {
     stage: "FINAL",
     model: config.model,
@@ -723,6 +827,9 @@ async function completeFinalStageV1(
   if (firstCallTokens + finalCallTokens > config.budgets.maxTotalTokens) {
     throw new Error("Provider-reported usage exceeded the total token budget.");
   }
+  const finalCallCostUsd = callCostUsd(finalResponse, config, finalInputTokens);
+  await assertCostBudget(runRecordPath, costLedger, finalCallCostUsd, "FINAL", "REPORTED");
+  costLedger.record(finalCallCostUsd);
   try {
     return await parseFinal(
       finalResponse.value,
@@ -769,6 +876,13 @@ async function completeFinalStageV1(
         { cause: error },
       );
     }
+    await assertCostBudget(
+      runRecordPath,
+      costLedger,
+      reservationCostUsd(repairInputTokens + config.budgets.maxOutputTokensPerCall, config),
+      "FINAL",
+      "RESERVATION",
+    );
     await appendRunEvent(runRecordPath, {
       type: "FINAL_REPAIR_REQUESTED",
       rejectedAttemptNumber: attemptNumber,
@@ -795,6 +909,9 @@ async function completeFinalStageV1(
     if (firstCallTokens + finalCallTokens + repairCallTokens > config.budgets.maxTotalTokens) {
       throw new Error("Provider-reported usage exceeded the total token budget.");
     }
+    const repairCallCostUsd = callCostUsd(repairResponse, config, repairInputTokens);
+    await assertCostBudget(runRecordPath, costLedger, repairCallCostUsd, "FINAL", "REPORTED");
+    costLedger.record(repairCallCostUsd);
     try {
       return await parseFinal(
         repairResponse.value,
@@ -911,6 +1028,15 @@ export async function runTwoStageReviewV1(
         `The two-stage review requires a conservative reservation of ${requiredTokens} tokens, exceeding the ${config.budgets.maxTotalTokens}-token budget.`,
       );
     }
+    const costLedger = new RunCostLedgerV1(config.budgets.maxTotalCostUsd);
+    // Both mandatory calls are reserved up front, the same way requiredTokens reserves tokens.
+    await assertCostBudget(
+      runRecordPath,
+      costLedger,
+      reservationCostUsd(requiredTokens, config),
+      "PRELIMINARY",
+      "RESERVATION",
+    );
     const preliminaryResponse = await completeWithAudit(runRecordPath, 1, provider, {
       stage: "PRELIMINARY",
       model: config.model,
@@ -934,10 +1060,22 @@ export async function runTwoStageReviewV1(
       preliminaryDigest: sha256Utf8(jsonDocument(preliminary)),
     });
 
+    const preliminaryInputTokens = conservativeInputTokenUpperBound(
+      blindMessages,
+      preliminaryResponseSchema,
+    );
     const firstCallTokens =
       chargedTokens(preliminaryResponse) ??
-      conservativeInputTokenUpperBound(blindMessages, preliminaryResponseSchema) +
-        config.budgets.maxOutputTokensPerCall;
+      preliminaryInputTokens + config.budgets.maxOutputTokensPerCall;
+    const preliminaryCostUsd = callCostUsd(preliminaryResponse, config, preliminaryInputTokens);
+    await assertCostBudget(
+      runRecordPath,
+      costLedger,
+      preliminaryCostUsd,
+      "PRELIMINARY",
+      "REPORTED",
+    );
+    costLedger.record(preliminaryCostUsd);
 
     const finalMessages: ReviewMessageV1[] = [
       ...blindMessages,
@@ -961,6 +1099,7 @@ export async function runTwoStageReviewV1(
       finalResponseSchema,
       firstCallTokens,
       packet.authorPacket.claimedVerification,
+      costLedger,
     );
     await writeExclusive(finalPath, jsonDocument(report));
     await writeExclusive(markdownPath, renderFinalReviewMarkdownV1(report));
@@ -1229,10 +1368,17 @@ export async function resumeFinalReviewV1(
     ...preliminaryProvider,
     value: preliminaryCandidate,
   };
+  const preliminaryInputTokens = conservativeInputTokenUpperBound(
+    blindMessages,
+    preliminaryResponseSchema,
+  );
   const firstCallTokens =
     chargedTokens(preliminaryResponse) ??
-    conservativeInputTokenUpperBound(blindMessages, preliminaryResponseSchema) +
-      config.budgets.maxOutputTokensPerCall;
+    preliminaryInputTokens + config.budgets.maxOutputTokensPerCall;
+  // A resume inherits the spend of the persisted preliminary call; the ceiling covers the run,
+  // not one invocation of the CLI.
+  const costLedger = new RunCostLedgerV1(config.budgets.maxTotalCostUsd);
+  costLedger.record(callCostUsd(preliminaryResponse, config, preliminaryInputTokens));
 
   try {
     await writeFile(
@@ -1272,6 +1418,7 @@ export async function resumeFinalReviewV1(
       finalResponseSchema,
       firstCallTokens,
       packet.authorPacket.claimedVerification,
+      costLedger,
     );
     await writeExclusive(finalPath, jsonDocument(report));
     await writeExclusive(markdownPath, renderFinalReviewMarkdownV1(report));
