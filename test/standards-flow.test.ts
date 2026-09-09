@@ -172,14 +172,22 @@ for (const scenario of [
             : {
                 ruleAssessments: profile.rules.map((rule: { id: string }) => ({
                   ruleId: rule.id,
-                  status: scenario === "semantic-conflict" ? "CONFLICT" : "ASSESSED",
+                  status:
+                    scenario === "semantic-conflict"
+                      ? "CONFLICT"
+                      : scenario === "unavailable"
+                        ? "UNASSESSED"
+                        : "ASSESSED",
                   conflictingRuleIds:
                     scenario === "semantic-conflict"
                       ? profile.rules
                           .filter((other: { id: string }) => other.id !== rule.id)
                           .map((other: { id: string }) => other.id)
                       : [],
-                  explanation: "Applied selected rule.",
+                  explanation:
+                    scenario === "unavailable"
+                      ? "Required surrounding context is unavailable."
+                      : "Applied selected rule.",
                 })),
               }),
           canonicalInputCoverage: [
@@ -307,6 +315,14 @@ for (const scenario of [
         assert.match(output.join("\n"), /Standards/);
         const report = JSON.parse(await readFile(join(f.packet, "review", "final.json"), "utf8"));
         assert.equal(report.mode, "STANDARDS");
+        if (scenario === "unavailable") {
+          assert.equal(report.findings.length, 0);
+          assert.equal(report.ruleAssessments[0].status, "UNASSESSED");
+          assert.match(
+            report.nextActions.blockers[0],
+            /Supply the existing authoritative evidence/,
+          );
+        }
         if (scenario === "semantic-conflict")
           assert.deepEqual(report.nextActions.blockers, [
             "Clarify precedence, applicability, or exceptions for conflicting standards: rule_names, rule_short. Do not change code merely to satisfy one conflicting rule.",

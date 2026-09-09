@@ -930,3 +930,19 @@ the runner owns the clarification next action: resolve precedence, applicability
 or exceptions before changing code. Raw model actions remain in the saved
 candidate. Verdict, findings, and rule explanations are not rewritten. Reports
 with non-conflicted rules or findings retain their model-provided next actions.
+
+### Unassessed standards (pilot policy v3)
+
+Rule assessments also support `UNASSESSED`, with empty conflict references and an
+explanation identifying unavailable evidence. Such a rule cannot support a code
+finding, regardless of REQUIRED/RECOMMENDED enforcement. Final unassessed rules
+require UNABLE_TO_VERIFY and visible limitations. An author assertion does not
+replace missing authoritative evidence or justify inventing accepted standard
+content. Standards policy v3 prevents resuming earlier policy runs.
+
+For reports where every rule is UNASSESSED and no findings exist, the runner
+supplies the next action to provide existing authoritative evidence identified in
+limitations; it does not suggest editing code or inventing standards to pass.
+Other report actions retain their existing behavior. The model still determines
+whether evidence suffices: validators enforce consistency with that declared
+assessment, not semantic truth of arbitrary prose.

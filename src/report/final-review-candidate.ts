@@ -73,6 +73,27 @@ function materializeExpandedCandidate(
       }),
     ),
   });
+  // Missing evidence requests are review workflow, not permission to invent standards or edit code.
+  if (
+    report.schemaVersion === 2 &&
+    report.findings.length === 0 &&
+    report.ruleAssessments.every((entry) => entry.status === "UNASSESSED")
+  ) {
+    return {
+      ...report,
+      nextActions: {
+        blockers: [
+          `Supply the existing authoritative evidence identified in limitations for unassessed standards: ${report.ruleAssessments
+            .map((entry) => entry.ruleId)
+            .sort()
+            .join(
+              ", ",
+            )}. Do not change code or invent standards merely because evidence is unavailable.`,
+        ],
+        fastFollows: [],
+      },
+    };
+  }
   // Conflict-only follow-up is a runner-owned workflow action, not a code correction.
   // Preserve the model's assessment and raw candidate; never invent a winning rule.
   if (

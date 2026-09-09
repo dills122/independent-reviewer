@@ -274,7 +274,8 @@
             "type": "string",
             "enum": [
               "ASSESSED",
-              "CONFLICT"
+              "CONFLICT",
+              "UNASSESSED"
             ]
           },
           "conflictingRuleIds": {

@@ -13,7 +13,7 @@ import { contractJsonSchema } from "./standards-review.js";
 
 export const StandardsRuleAssessmentV2Schema = z.strictObject({
   ruleId: prefixedIdentifier("rule"),
-  status: z.enum(["ASSESSED", "CONFLICT"]),
+  status: z.enum(["ASSESSED", "CONFLICT", "UNASSESSED"]),
   conflictingRuleIds: z.array(prefixedIdentifier("rule")),
   explanation: NonEmptyTextSchema,
 });

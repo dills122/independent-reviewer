@@ -75,3 +75,32 @@ test("conflicting standards require complete reciprocal coverage and cannot supp
     /cannot support a code violation/,
   );
 });
+
+test("missing evidence cannot become a standards violation or a passing assessment", () => {
+  const uncertain = {
+    ...report,
+    ruleAssessments: ["rule_names", "rule_fixed"].map((ruleId) => ({
+      ruleId,
+      status: "UNASSESSED",
+      conflictingRuleIds: [],
+      explanation: "API_NAMES.md was not captured.",
+    })),
+  } as unknown as ReviewReport;
+  assert.doesNotThrow(() => assertStandardsRuleCoverage(uncertain, brief));
+  assert.throws(
+    () =>
+      assertStandardsRuleCoverage(
+        { ...uncertain, findings: [{ ruleIds: ["rule_names"] }] } as ReviewReport,
+        brief,
+      ),
+    /Unassessed/,
+  );
+  assert.throws(
+    () => assertStandardsRuleCoverage({ ...uncertain, verdict: "READY" }, brief),
+    /UNABLE_TO_VERIFY/,
+  );
+  assert.throws(
+    () => assertStandardsRuleCoverage({ ...uncertain, limitations: [] }, brief),
+    /limitations/,
+  );
+});
