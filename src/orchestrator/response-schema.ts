@@ -282,6 +282,35 @@ export function constrainResponseSchemaV1(
   return { schema: root, appliedArrayLimits };
 }
 
+/** Narrow concern scope before call two without enlarging its reserved schema. */
+export function constrainFinalConcernScopeV1(
+  final: ConstrainedResponseSchemaV1,
+  preliminary: Pick<PreliminaryAssessmentV1, "evidenceGaps" | "limitations">,
+): ConstrainedResponseSchemaV1 {
+  const schema = structuredClone(final.schema);
+  const properties = requireProperties(schema, "(root)");
+  const concerns = requireNode(
+    properties.preliminaryConcernDispositions,
+    "preliminaryConcernDispositions",
+  );
+  const count = preliminary.evidenceGaps.length + preliminary.limitations.length;
+  concerns.maxItems = Math.min(Number(concerns.maxItems), count);
+  if (count > 0) {
+    const items = requireProperties(requireNode(concerns.items, "concern.items"), "concern.items");
+    requireNode(items.kind, "concern.kind").enum = [
+      ...(preliminary.evidenceGaps.length ? ["EVIDENCE_GAP"] : []),
+      ...(preliminary.limitations.length ? ["LIMITATION"] : []),
+    ];
+  }
+  return {
+    schema,
+    appliedArrayLimits: {
+      ...final.appliedArrayLimits,
+      preliminaryConcernDispositions: Number(concerns.maxItems),
+    },
+  };
+}
+
 /**
  * Specializes the optional repair after the preliminary has been persisted. Its complete
  * schema must be included in repair admission; it is not part of the initial call reservation.

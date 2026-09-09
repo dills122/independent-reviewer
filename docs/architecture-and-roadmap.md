@@ -143,6 +143,9 @@ OpenRouter clients sharing one in-process pacing coordinator pause new requests
 for that model together, including after retry exhaustion. Separate CLI processes
 do not share this coordinator. Optional minimum request-start spacing is available
 for controlled batch comparisons and defaults to zero.
+Cost admission prices reserved input and output tokens at their respective
+provider ceilings, including each request fee, instead of pricing all tokens
+at the higher output rate.
 The retry preserves stage messages and prefers another already allowed endpoint;
 model, provider allowlist, price and privacy controls remain unchanged. Successful
 preliminary work is retained when the final call needs recovery. A
@@ -181,7 +184,8 @@ assembles `final-review-candidate-v2` references into the unchanged final report
 using exact original author-claim and preliminary-concern text, validates
 identities and evidence paths,
 requires exact changed-path/canonical-input coverage and preliminary-concern
-dispositions, validates line/symbol anchors against frozen blobs, and renders
+dispositions, narrows the first final-call concern schema to the persisted
+preliminary scope (zero concerns permits only an empty ledger), validates line/symbol anchors against frozen blobs, and renders
 the complete, presentation-safe reconciliation ledger to Markdown. Final-only
 findings require a non-empty emergence rationale while preliminary-origin
 findings structurally require a null rationale, and author-reported commands
