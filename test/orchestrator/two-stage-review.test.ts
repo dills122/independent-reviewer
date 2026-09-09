@@ -150,6 +150,7 @@ const config: ReviewRunConfigV2 = {
     maxConversationBytes: 128_000,
     maxOutputTokensPerCall: 1_000,
     maxTotalTokens: 100_000,
+    maxTotalCostUsd: 1,
     timeoutMs: 10_000,
   },
 };
@@ -1055,6 +1056,7 @@ describe("two-stage review orchestrator", () => {
             ...config.budgets,
             maxOutputTokensPerCall: 15_000,
             maxTotalTokens: 71_000,
+            maxTotalCostUsd: 1,
           },
         },
         provider,
@@ -1108,6 +1110,89 @@ describe("two-stage review orchestrator", () => {
         /token budget/i,
       );
       assert.equal(calls, 0);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("makes no provider call when the run cost ceiling cannot reserve both stages", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    let calls = 0;
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async () => {
+        calls += 1;
+        return response({});
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () =>
+          runTwoStageReviewV1(
+            packetPath,
+            { ...config, budgets: { ...config.budgets, maxTotalCostUsd: 0.000_001 } },
+            provider,
+          ),
+        /cost budget/i,
+      );
+      assert.equal(calls, 0);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("prices an unreported call cost at the routing ceiling instead of zero", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    let calls = 0;
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls += 1;
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        // 40M prompt tokens at the 0.03/M ceiling is $1.20, over the $1 run ceiling, and the
+        // provider reports no cost at all.
+        return response(
+          {
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "Initial review completed.",
+            inspectedPaths: ["reviewed.txt"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          },
+          40_000_010,
+        );
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () =>
+          runTwoStageReviewV1(
+            packetPath,
+            {
+              ...config,
+              budgets: { ...config.budgets, maxTotalTokens: 100_000_000 },
+            },
+            provider,
+          ),
+        /cost budget/i,
+      );
+      assert.equal(calls, 1);
+
+      const events = (await readFile(join(packetPath, "review", "run-record.jsonl"), "utf8"))
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const exhausted = events.find((event) => event.type === "BUDGET_EXHAUSTED");
+      assert.equal(exhausted?.budget, "COST");
+      assert.equal(exhausted?.phase, "REPORTED");
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
