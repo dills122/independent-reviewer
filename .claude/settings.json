@@ -1,0 +1,59 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CCE_PORT_FILE=/Users/dsteele/.cce/projects/independent-reviewer-1e8ff9/serve.port /Users/dsteele/.cce/hooks/cce_hook.sh SessionStart"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CCE_PORT_FILE=/Users/dsteele/.cce/projects/independent-reviewer-1e8ff9/serve.port /Users/dsteele/.cce/hooks/cce_hook.sh UserPromptSubmit"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CCE_PORT_FILE=/Users/dsteele/.cce/projects/independent-reviewer-1e8ff9/serve.port /Users/dsteele/.cce/hooks/cce_hook.sh PostToolUse"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CCE_PORT_FILE=/Users/dsteele/.cce/projects/independent-reviewer-1e8ff9/serve.port /Users/dsteele/.cce/hooks/cce_hook.sh Stop"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CCE_PORT_FILE=/Users/dsteele/.cce/projects/independent-reviewer-1e8ff9/serve.port /Users/dsteele/.cce/hooks/cce_hook.sh SessionEnd"
+          }
+        ]
+      }
+    ]
+  }
+}

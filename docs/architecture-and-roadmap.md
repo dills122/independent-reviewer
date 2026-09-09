@@ -1,6 +1,6 @@
 # Independent Reviewer — architecture and project plan
 
-Status: first local release implemented; explicitly authorized live smoke pending.
+Status: first local release implemented and exercised with controlled live smoke fixtures.
 
 The staged lifecycle, evidence surface, verification boundary, and efficiency
 requirements are refined in the
@@ -164,14 +164,20 @@ stop the run; one explicitly enabled live smoke review succeeds.
 Progress: the offline engine is complete. It builds a digest-bound neutral
 brief from the packet, fails rather than clipping an oversized initial evidence
 set, persists the raw and validated preliminary result before author delivery,
-makes exactly one reconciliation call, validates identities and evidence paths,
+makes one reconciliation call and permits at most one separately recorded
+same-model repair when a complete final candidate fails local validation,
+validates identities and evidence paths,
 requires exact changed-path/canonical-input coverage and preliminary-concern
 dispositions, validates line/symbol anchors against frozen blobs, and renders
 the complete, presentation-safe reconciliation ledger to Markdown. Final-only
-findings require an emergence rationale, and author-reported commands cannot be
-promoted to runner-confirmed evidence. Each stage specializes its provider-facing
-schema with the frozen snapshot's permitted evidence paths, while retaining local
-semantic and anchor validation. It conservatively reserves both
+findings require a non-empty emergence rationale while preliminary-origin
+findings structurally require a null rationale, and author-reported commands
+cannot be promoted to runner-confirmed evidence. Each stage specializes its provider-facing
+schema with the frozen snapshot's permitted evidence paths, exact identities,
+coverage sizes, and input-derived author-verification bounds, while retaining
+local semantic and anchor validation. Compact project guidance preserves every
+non-empty heading/list/prose block and fails before a provider call if the full
+digest cannot fit. It conservatively reserves both
 message/schema inputs and outputs before the first submission, uses that same
 token-unit reservation when retransmitting the preliminary result, and retains
 reservations when usage is missing or malformed. It also rejects a known
@@ -185,12 +191,12 @@ configured provider allowlist, hard price ceilings, ZDR-only routing,
 data-collection denial, disabled response caching, and disabled context
 compression. A definite final-stage provider 429 may be resumed once explicitly
 from the persisted preliminary assessment and exact original run configuration;
-uncertain transport and model changes are rejected. Provider failures retain
-bounded, API-key-redacted diagnostics for
-the typed error, selected route identifiers, and retry guidance without storing
-the unfiltered response body.[^or-structured][^or-routing][^or-transforms][^or-response-cache][^or-errors]
-The metered live smoke remains explicitly opt-in until a model and API key are
-supplied through the Slice 3 command.
+uncertain transport and model changes are rejected. Provider attempts retain a
+private, API-key-redacted raw response artifact before validation, while the
+append-only ledger retains only bounded diagnostics for the typed error,
+selected route identifiers, and retry guidance.[^or-structured][^or-routing][^or-transforms][^or-response-cache][^or-errors]
+Metered live review remains explicitly opt-in and requires a model, bounded
+configuration, operator authorization, and API key supplied through the Slice 3 command.
 
 ### Slice 3 — usable command and AI Central integration
 
@@ -246,14 +252,16 @@ The initial scope now includes cumulative working-tree snapshots. The base
 resolves from an explicit value, repository configuration, branch upstream, or
 remote default branch in that order and fails when still ambiguous. The shipped
 local engine uses one external reviewer conversation, an immutable blind
-assessment, a separately delivered author packet, and exactly two calls.
+assessment, a separately delivered author packet, two mandatory calls, and at
+most one same-model final-output repair.
 Interactive author ask-backs and a named-check executor remain protocol
 extensions rather than first-release requirements. Token efficiency is a
 first-class correctness constraint; required evidence cannot be silently
 omitted to fit a budget.
 
-No metered external review or bot publication was performed during planning or
-implementation; a live smoke review remains explicit and operator-authorized.
+Controlled metered smoke fixtures exercised known-bad, clean, and steering-rule
+changes with the normal output cap. They validate transport and orchestration,
+not general review accuracy. Bot publication remains deferred.
 
 [^or-structured]: OpenRouter, [Structured Outputs](https://openrouter.ai/docs/guides/features/structured-outputs).
 [^or-routing]: OpenRouter, [Provider Routing](https://openrouter.ai/docs/guides/routing/provider-selection).

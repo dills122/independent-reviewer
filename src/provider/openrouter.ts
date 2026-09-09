@@ -27,38 +27,79 @@ export type {
   ProviderErrorDiagnosticV1,
 } from "./review-provider.js";
 
-const TokenUsageSchema = z
+const OpenRouterResponseSchema = z
   .object({
-    prompt_tokens: z.int().nonnegative().optional(),
-    completion_tokens: z.int().nonnegative().optional(),
-    total_tokens: z.int().nonnegative().optional(),
-    cost: z.number().nonnegative().optional(),
+    id: z.unknown().optional(),
+    model: z.unknown().optional(),
+    provider: z.unknown().optional(),
+    choices: z
+      .array(
+        z
+          .object({
+            finish_reason: z.unknown().optional(),
+            message: z.object({ content: z.unknown() }).passthrough(),
+          })
+          .passthrough(),
+      )
+      .min(1),
+    usage: z.unknown().optional(),
   })
-  .superRefine((usage, context) => {
-    if (
-      usage.prompt_tokens !== undefined &&
-      usage.completion_tokens !== undefined &&
-      usage.total_tokens !== undefined &&
-      usage.prompt_tokens + usage.completion_tokens !== usage.total_tokens
-    ) {
-      context.addIssue({ code: "custom", message: "token usage totals are inconsistent" });
-    }
-  });
+  .passthrough();
 
-const OpenRouterResponseSchema = z.object({
-  id: z.string().optional(),
-  model: z.string(),
-  provider: z.string().optional(),
-  choices: z
-    .array(
-      z.object({
-        finish_reason: z.string().nullable(),
-        message: z.object({ content: z.string() }),
-      }),
-    )
-    .min(1),
-  usage: TokenUsageSchema.optional(),
-});
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function nullableNonnegativeInteger(value: unknown): number | null {
+  return Number.isSafeInteger(value) && (value as number) >= 0 ? (value as number) : null;
+}
+
+function nullableNonnegativeNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function normalizedUsage(value: unknown): ReviewProviderResponseV1["usage"] {
+  const usage = value && typeof value === "object" ? value : {};
+  const promptTokens = nullableNonnegativeInteger(
+    (usage as { prompt_tokens?: unknown }).prompt_tokens,
+  );
+  const completionTokens = nullableNonnegativeInteger(
+    (usage as { completion_tokens?: unknown }).completion_tokens,
+  );
+  let totalTokens = nullableNonnegativeInteger((usage as { total_tokens?: unknown }).total_tokens);
+  if (
+    promptTokens !== null &&
+    completionTokens !== null &&
+    totalTokens !== null &&
+    promptTokens + completionTokens !== totalTokens
+  ) {
+    totalTokens = null;
+  }
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    cost: nullableNonnegativeNumber((usage as { cost?: unknown }).cost),
+  };
+}
+
+function redactCredential(value: unknown, credential: string): unknown {
+  if (typeof value === "string") {
+    return value.replaceAll(credential, "[REDACTED]");
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactCredential(item, credential));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key.replaceAll(credential, "[REDACTED]"),
+        redactCredential(item, credential),
+      ]),
+    );
+  }
+  return value;
+}
 
 function safeProviderErrorLabel(value: unknown): string {
   if (!value || typeof value !== "object") {
@@ -231,16 +272,18 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       );
     }
 
+    const rawBody = await response.text();
     let body: unknown;
     try {
-      body = await response.json();
+      body = JSON.parse(rawBody) as unknown;
     } catch (error) {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         `OpenRouter returned a non-JSON response (HTTP ${response.status}).`,
-        { cause: error },
+        { cause: error, responseBody: rawBody.replaceAll(this.#apiKey, "[REDACTED]") },
       );
     }
+    const responseBody = redactCredential(body, this.#apiKey);
 
     // OpenRouter can report generation errors inside an HTTP 200 response.
     // https://openrouter.ai/docs/api_reference/errors-and-debugging
@@ -249,12 +292,14 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       const diagnostic = providerErrorDiagnostic(body, providerError, response, this.#apiKey);
       throw new ProviderCallError("PROVIDER_ERROR", providerErrorMessage(diagnostic), {
         diagnostic,
+        responseBody,
       });
     }
     if (!response.ok) {
       throw new ProviderCallError(
         "PROVIDER_ERROR",
         `OpenRouter request failed (HTTP ${response.status}).`,
+        { responseBody },
       );
     }
 
@@ -263,6 +308,7 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         "OpenRouter response did not match the expected envelope.",
+        { responseBody },
       );
     }
     const choice = parsed.data.choices[0];
@@ -270,24 +316,36 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         `OpenRouter response did not complete normally (finish reason: ${choice?.finish_reason ?? "missing"}).`,
+        { responseBody },
       );
     }
-    if (parsed.data.model !== request.model) {
+    const content = choice.message.content;
+    if (typeof content !== "string" || content.trim().length === 0) {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
-        `OpenRouter returned a different model than requested (${parsed.data.model}).`,
+        "OpenRouter response did not contain usable completion content.",
+        { responseBody },
+      );
+    }
+    const returnedModel = nullableString(parsed.data.model);
+    if (returnedModel !== null && returnedModel !== request.model) {
+      throw new ProviderCallError(
+        "INVALID_RESPONSE",
+        `OpenRouter returned a different model than requested (${returnedModel}).`,
+        { responseBody },
       );
     }
 
     let value: unknown;
     try {
-      value = JSON.parse(choice.message.content) as unknown;
+      value = JSON.parse(content) as unknown;
     } catch (error) {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         "OpenRouter returned malformed structured JSON.",
         {
           cause: error,
+          responseBody,
         },
       );
     }
@@ -295,16 +353,12 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
     const usage = parsed.data.usage;
     return {
       value,
-      rawContent: choice.message.content,
-      responseId: parsed.data.id ?? null,
-      model: parsed.data.model,
-      provider: parsed.data.provider ?? null,
-      usage: {
-        promptTokens: usage?.prompt_tokens ?? null,
-        completionTokens: usage?.completion_tokens ?? null,
-        totalTokens: usage?.total_tokens ?? null,
-        cost: usage?.cost ?? null,
-      },
+      rawContent: content,
+      responseId: nullableString(parsed.data.id),
+      model: returnedModel,
+      provider: nullableString(parsed.data.provider),
+      usage: normalizedUsage(usage),
+      rawResponseBody: responseBody,
     };
   }
 }

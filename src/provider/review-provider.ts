@@ -20,17 +20,21 @@ export interface ProviderErrorDiagnosticV1 {
 
 export interface ProviderCallErrorOptions extends ErrorOptions {
   readonly diagnostic?: ProviderErrorDiagnosticV1;
+  /** Credential-redacted provider response retained for private failure diagnostics. */
+  readonly responseBody?: unknown;
 }
 
 export class ProviderCallError extends Error {
   readonly code: ProviderCallErrorCode;
   readonly diagnostic: ProviderErrorDiagnosticV1 | null;
+  readonly responseBody: unknown | null;
 
   constructor(code: ProviderCallErrorCode, message: string, options?: ProviderCallErrorOptions) {
     super(message, options);
     this.name = "ProviderCallError";
     this.code = code;
     this.diagnostic = options?.diagnostic ?? null;
+    this.responseBody = options?.responseBody ?? null;
   }
 }
 
@@ -65,6 +69,8 @@ export interface ReviewProviderResponseV1 {
     totalTokens: number | null;
     cost: number | null;
   };
+  /** Credential-redacted provider envelope for private attempt diagnostics. */
+  rawResponseBody?: unknown;
 }
 
 export interface ReviewProviderRequestAuditV1 {

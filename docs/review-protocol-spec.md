@@ -1,7 +1,7 @@
 # Review protocol technical specification
 
-Status: accepted protocol; minimal two-call local release implemented, with the
-explicitly listed interactive and verification extensions deferred.
+Status: accepted protocol; minimal two-stage local release implemented and
+smoke-tested, with the explicitly listed interactive and verification extensions deferred.
 
 This specification turns the independent-review workflow in
 [`docs/architecture-and-roadmap.md`](architecture-and-roadmap.md) into an
@@ -18,7 +18,8 @@ repository target, neutral task context, and a separate author explanation in
 one invocation. The engine must give a fresh external reviewer the neutral
 material first, durably record its preliminary assessment, and only then expose
 the author explanation. The first release supplies a complete bounded evidence
-packet and returns a validated readiness report in exactly two calls. Later
+packet and returns a validated readiness report in two mandatory calls, with at
+most one same-model repair for a complete locally invalid final candidate. Later
 protocol extensions may let the same reviewer request additional bounded
 evidence, configured local verification, and at most three author follow-up
 rounds.
@@ -206,14 +207,14 @@ Request `base` and `head` values are Git revision expressions to be resolved by
 the snapshot builder; they are not persisted branch-name fields.
 
 The author packet may be absent during provider-free `prepare`. The current
-two-call `review` command requires it before the blind call and fails preflight
+two-stage `review` command requires it before the blind call and fails preflight
 when it is missing. Entering `AWAITING_AUTHOR` after preliminary persistence is
 part of the deferred interactive/resume extension.
 
 Implementation status: `ReviewRequestV1Schema` enforces this request
 boundary, including a separately typed optional author packet, cumulative
 working-tree defaults, contextual canonical-input kinds, and review-instance
-bounds. Snapshot capture and the two-call orchestrator now preserve that
+bounds. Snapshot capture and the two-stage orchestrator now preserve that
 separation at runtime; a mock-provider integration test proves that author
 content is absent from the preliminary request and that the validated
 preliminary artifact is durable before the author packet is delivered.
@@ -459,9 +460,11 @@ TypeScript Responses surface is currently beta.[^or-client][^or-responses]
 Strict structured output is a transport aid, not a trust boundary. Syntax,
 schema, lifecycle, semantic, and evidence-anchor validation still occur
 locally. Before each stage, the orchestrator specializes the versioned structural
-schema with an enum of paths from the frozen snapshot for every finding-evidence
-path. The specialized schema is included in token admission and the audited wire
-digest; local side, existence, and anchor validation remains authoritative.[^or-structured]
+schema with frozen path and coverage enums, exact snapshot/brief digest
+constants, exact coverage-ledger sizes, input-derived bounds for copied author
+verification fields, and small-change bounds for generated prose. The specialized
+schema is included in token admission and the audited wire digest; local side,
+existence, anchor, and cross-field semantic validation remains authoritative.[^or-structured]
 
 The orchestrator's append-only run record stores requested and returned
 model/provider metadata, request IDs, validated token usage, cost when available,
@@ -471,11 +474,12 @@ credential-free wire-request digest. The adapter builds the audited body with
 the same deterministic function used for transmission. The ledger does not
 persist message content, credentials, or the wire body itself, claim metadata
 the provider did not return, or enable request-body debug echo in normal
-operation. Failed OpenRouter calls retain only an allowlisted diagnostic:
+operation. Each HTTP response is first retained as a separate private raw
+artifact so rejected envelopes and complete invalid candidates remain
+inspectable. The active API key is recursively redacted from that artifact.
+Failure events in the ledger retain only an allowlisted diagnostic:
 HTTP/provider codes, canonical error type, bounded provider message, returned
-provider/model/response identifiers, and `Retry-After` when present. The active
-API key is redacted from those fields before they reach the CLI or ledger; all
-other error metadata is discarded.[^or-metadata][^or-errors]
+provider/model/response identifiers, and `Retry-After` when present.[^or-metadata][^or-errors]
 
 ### Author ask-backs
 
@@ -588,6 +592,10 @@ zero.
    plan, and policy—not from author emphasis.
 4. Send compact manifests, stable IDs, changed hunks, and only the surrounding
    context needed to understand those hunks.
+   Project guidance is compacted into heading-scoped blocks: explicit list
+   rules retain stable `R` identifiers and other non-empty guidance retains
+   stable `C` identifiers. If the complete digest cannot fit its fixed budget,
+   fail before a provider call instead of omitting guidance.
 5. Let the reviewer pull additional frozen evidence through bounded tools and
    batch independent requests into one continuation.
 6. Refer to prior artifacts and IDs instead of retransmitting large text in
@@ -612,7 +620,9 @@ zero.
    call two.
 10. Reconcile each reservation against complete, non-negative integer provider
     usage with a consistent prompt-plus-completion total, and record cost when
-    available. The OpenRouter adapter rejects malformed usage envelopes.
+    available. Optional malformed or inconsistent usage telemetry is normalized
+    to unknown so the conservative reservation remains in force without
+    discarding an otherwise usable review response.
 
 For small targets, the initial brief may contain the entire textual diff. For a
 target that exceeds the initial-context budget, the engine must either use the
@@ -801,13 +811,15 @@ decisions before live use.
    and review-configuration contracts with generated schemas.
 2. Complete: canonical identities, base resolution, cumulative working-tree
    capture, packet inspection, and bounded initial evidence.
-3. Complete: persisted exactly-two-call orchestrator against a mock provider,
+3. Complete: persisted two-stage orchestrator against a mock provider, with at
+   most one separately recorded final-output repair,
    including author withholding, conservative token admission, coverage and
    source-anchor validation, full Markdown reconciliation, and run-attempt
    records.
 4. Complete offline: OpenRouter adapter, composed CLI, bounded same-model
    provider fallback, one-shot final-stage resume, and AI Central workflow
-   integration. The explicitly authorized low-cost live smoke is pending.
+   integration. Controlled low-cost live fixtures now cover known-bad, clean,
+   and steering-rule changes under the normal output cap.
 5. Deferred: broader/distributed resumability, interactive evidence calls,
    named verification, author ask-backs, and hosting adapters.
 

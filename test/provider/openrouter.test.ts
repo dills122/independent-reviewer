@@ -53,6 +53,7 @@ describe("OpenRouterProviderV1", () => {
     assert.equal(headers.get("authorization"), "Bearer secret-key");
     assert.equal(headers.get("x-openrouter-cache"), "false");
     const body = JSON.parse(String(capturedInit?.body)) as Record<string, unknown>;
+    assert.equal(body.max_tokens, 500);
     assert.deepEqual(body.provider, {
       order: ["provider-a/fp4", "provider-b/bf16"],
       only: ["provider-a/fp4", "provider-b/bf16"],
@@ -126,6 +127,8 @@ describe("OpenRouterProviderV1", () => {
         assert.match(providerMessage, /\.\.\.$/);
         assert.ok(providerMessage.length <= 500);
         assert.doesNotMatch(JSON.stringify(error.diagnostic), /ignored_untrusted_field/);
+        assert.doesNotMatch(JSON.stringify(error.responseBody), /secret-key/);
+        assert.match(JSON.stringify(error.responseBody), /\[REDACTED\]/);
         return true;
       },
     );
@@ -175,23 +178,81 @@ describe("OpenRouterProviderV1", () => {
     );
   });
 
-  it("rejects fractional or internally inconsistent token usage", async () => {
-    for (const usage of [
-      { prompt_tokens: 20.5, completion_tokens: 5, total_tokens: 25.5 },
-      { prompt_tokens: 20, completion_tokens: 5, total_tokens: 0 },
-    ]) {
-      const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
-        Response.json({
-          choices: [{ finish_reason: "stop", message: { content: '{"ok":true}' } }],
-          usage,
-        }),
-      );
+  it("accepts optional envelope metadata and ignores unusable telemetry", async () => {
+    const rawResponseBody = {
+      choices: [
+        {
+          finish_reason: "stop",
+          message: { content: '{"ok":true}', ignored_annotation: "provider-specific" },
+          ignored_choice_field: true,
+        },
+      ],
+      usage: {
+        prompt_tokens: 20.5,
+        completion_tokens: 5,
+        total_tokens: 25.5,
+        cost: "unknown",
+      },
+      ignored_envelope_field: true,
+    };
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+      Response.json(rawResponseBody),
+    );
 
-      await assert.rejects(
-        () => provider.complete(request),
-        (error: unknown) => error instanceof ProviderCallError && error.code === "INVALID_RESPONSE",
-      );
-    }
+    const result = await provider.complete(request);
+
+    assert.equal(result.model, null);
+    assert.equal(result.provider, null);
+    assert.deepEqual(result.usage, {
+      promptTokens: null,
+      completionTokens: 5,
+      totalTokens: null,
+      cost: null,
+    });
+    assert.deepEqual(result.rawResponseBody, rawResponseBody);
+  });
+
+  it("retains the raw provider body when the usable completion content is missing", async () => {
+    const rawResponseBody = {
+      id: "generation-invalid",
+      model: "vendor/model",
+      choices: [{ finish_reason: "stop", message: { content: null } }],
+      provider_extension: { useful_for_diagnosis: true },
+    };
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+      Response.json(rawResponseBody),
+    );
+
+    await assert.rejects(
+      () => provider.complete(request),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.code, "INVALID_RESPONSE");
+        assert.match(error.message, /usable completion content/i);
+        assert.deepEqual(error.responseBody, rawResponseBody);
+        return true;
+      },
+    );
+  });
+
+  it("reports truncation before inspecting missing completion content", async () => {
+    const rawResponseBody = {
+      model: "vendor/model",
+      choices: [{ finish_reason: "length", message: { content: null } }],
+    };
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+      Response.json(rawResponseBody),
+    );
+
+    await assert.rejects(
+      () => provider.complete(request),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.match(error.message, /finish reason: length/i);
+        assert.deepEqual(error.responseBody, rawResponseBody);
+        return true;
+      },
+    );
   });
 
   it("rejects a response from a different model", async () => {
