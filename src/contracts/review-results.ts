@@ -1,19 +1,10 @@
 import * as z from "zod";
 
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
+import { CanonicalInputIdSchema, NonEmptyTextSchema, prefixedIdentifier } from "./primitives.js";
 import { DigestV1Schema, SnapshotPathV1Schema } from "./snapshot-manifest.js";
 
-const NonEmptyTextSchema = z.string().min(1);
-const FindingIdSchema = z
-  .string()
-  .min(9)
-  .max(128)
-  .regex(/^finding_[A-Za-z0-9][A-Za-z0-9_-]*$/, "must use the finding_ identifier prefix");
-const CanonicalInputIdSchema = z
-  .string()
-  .min(7)
-  .max(128)
-  .regex(/^input_[A-Za-z0-9][A-Za-z0-9_-]*$/, "must use the input_ identifier prefix");
+const FindingIdSchema = prefixedIdentifier("finding");
 
 const LineRangeEvidenceV1Schema = z
   .strictObject({

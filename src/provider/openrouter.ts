@@ -43,14 +43,14 @@ const OpenRouterResponseSchema = z
         z
           .object({
             finish_reason: z.unknown().optional(),
-            message: z.object({ content: z.unknown() }).passthrough(),
+            message: z.looseObject({ content: z.unknown() }),
           })
-          .passthrough(),
+          .loose(),
       )
       .min(1),
     usage: z.unknown().optional(),
   })
-  .passthrough();
+  .loose();
 
 function nullableString(value: unknown): string | null {
   return typeof value === "string" ? value : null;

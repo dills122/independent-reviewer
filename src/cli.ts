@@ -13,6 +13,7 @@ import {
 import { resumeFinalReviewV1, runTwoStageReviewV1 } from "./orchestrator/two-stage-review.js";
 import { OpenRouterProviderV1, ProviderCallError } from "./provider/openrouter.js";
 import type { ReviewProviderV1 } from "./provider/review-provider.js";
+import { VERDICT_LABELS_V1 } from "./report/markdown.js";
 import {
   captureGitSnapshotV1,
   isPathIgnoredV1,
@@ -202,13 +203,6 @@ async function prepare(options: Map<string, string | true>, io: CliIoV1): Promis
   io.stdout(`Visible exclusions: ${captured.manifest.exclusions.length}`);
 }
 
-const verdictLabels: Record<FinalReviewReportV1["verdict"], string> = {
-  READY: "Ready",
-  READY_WITH_FOLLOW_UPS: "Ready with non-blocking follow-ups",
-  NOT_READY: "Not ready",
-  UNABLE_TO_VERIFY: "Unable to verify",
-};
-
 export function reviewOutcomeExitCodeV1(verdict: FinalReviewReportV1["verdict"]): number {
   if (verdict === "NOT_READY") {
     return 2;
@@ -236,7 +230,7 @@ async function review(
   await warnUnignoredPacketLocation(prepared.repositoryRoot, prepared.packetPath, io);
   io.stdout(`Prepared snapshot packet: ${prepared.packetPath}`);
   const result = await runTwoStageReviewV1(prepared.packetPath, config, provider);
-  io.stdout(`Verdict: ${verdictLabels[result.report.verdict]}`);
+  io.stdout(`Verdict: ${VERDICT_LABELS_V1[result.report.verdict]}`);
   io.stdout(`Report: ${result.markdownPath}`);
   return reviewOutcomeExitCodeV1(result.report.verdict);
 }
@@ -259,7 +253,7 @@ async function resumeFinal(
     config,
     provider,
   );
-  io.stdout(`Verdict: ${verdictLabels[result.report.verdict]}`);
+  io.stdout(`Verdict: ${VERDICT_LABELS_V1[result.report.verdict]}`);
   io.stdout(`Report: ${result.markdownPath}`);
   return reviewOutcomeExitCodeV1(result.report.verdict);
 }

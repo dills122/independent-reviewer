@@ -90,7 +90,9 @@ node dist/src/cli.js review \
 ```
 
 The review config schema is
-[`schemas/review-run-config-v1.schema.json`](schemas/review-run-config-v1.schema.json).
+[`schemas/review-run-config-v2.schema.json`](schemas/review-run-config-v2.schema.json),
+which the runtime requires: `schemaVersion: 2`, a `providerRouting` block, and
+budgets including the local spend ceiling `maxTotalCostUsd`.
 The command prints the final report path. The adjacent `run-record.jsonl`
 records prompt/schema and provider-policy versions, stage-input and
 credential-free wire-request digests, exact wire-body digest and byte count,

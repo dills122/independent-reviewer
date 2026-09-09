@@ -3,6 +3,7 @@ import * as z from "zod";
 import { computeCanonicalInputDigestV1 } from "./canonical-input-identity.js";
 import { sha256Utf8 } from "./canonical-json.js";
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
+import { CanonicalInputIdSchema, NonEmptyTextSchema, prefixedIdentifier } from "./primitives.js";
 import { PersistedCanonicalInputsV1Schema } from "./review-request.js";
 import {
   DigestV1Schema,
@@ -12,24 +13,6 @@ import {
   SnapshotPathV1Schema,
   resolveSnapshotSourceContentV1,
 } from "./snapshot-manifest.js";
-
-function prefixedIdentifier(prefix: "brief" | "check" | "evidence" | "hunk"): z.ZodString {
-  return z
-    .string()
-    .min(prefix.length + 2)
-    .max(128)
-    .regex(
-      new RegExp(`^${prefix}_[A-Za-z0-9][A-Za-z0-9_-]*$`),
-      `must use the ${prefix}_ identifier prefix`,
-    );
-}
-
-const NonEmptyTextSchema = z.string().min(1);
-const CanonicalInputIdSchema = z
-  .string()
-  .min(7)
-  .max(128)
-  .regex(/^input_[A-Za-z0-9][A-Za-z0-9_-]*$/, "must use the input_ identifier prefix");
 
 const CanonicalStatementV1Schema = z.strictObject({
   text: NonEmptyTextSchema,
@@ -111,6 +94,12 @@ export const NeutralReviewBriefV1Schema = z
         paths: z.array(SnapshotPathV1Schema),
       }),
     ),
+    /**
+     * Reserved for a future evidence service. v1 always transmits both arrays empty: the reviewer
+     * receives one fixed payload and can request nothing, so no code path populates them. The
+     * shape stays in v1 because it is folded into briefDigest; removing it would change the
+     * identity of every brief.
+     */
     capabilities: z.strictObject({
       evidenceOperations: z.array(
         z.enum(["READ_SNAPSHOT_FILE", "READ_DIFF", "SEARCH_SNAPSHOT", "READ_CANONICAL_INPUT"]),

@@ -7,10 +7,7 @@ import {
   FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
 } from "../src/contracts/review-results.js";
-import {
-  REVIEW_RUN_CONFIG_V1_JSON_SCHEMA,
-  REVIEW_RUN_CONFIG_V2_JSON_SCHEMA,
-} from "../src/contracts/review-run-config.js";
+import { REVIEW_RUN_CONFIG_V2_JSON_SCHEMA } from "../src/contracts/review-run-config.js";
 import { SNAPSHOT_MANIFEST_V1_JSON_SCHEMA } from "../src/contracts/snapshot-manifest.js";
 
 const schemaDirectory = resolve("schemas");
@@ -21,7 +18,6 @@ const schemaArtifacts = [
   ["neutral-review-brief-v1.schema.json", NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA],
   ["preliminary-assessment-v1.schema.json", PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA],
   ["review-request-v1.schema.json", REVIEW_REQUEST_V1_JSON_SCHEMA],
-  ["review-run-config-v1.schema.json", REVIEW_RUN_CONFIG_V1_JSON_SCHEMA],
   ["review-run-config-v2.schema.json", REVIEW_RUN_CONFIG_V2_JSON_SCHEMA],
   ["snapshot-manifest-v1.schema.json", SNAPSHOT_MANIFEST_V1_JSON_SCHEMA],
 ] as const;

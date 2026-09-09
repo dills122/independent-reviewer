@@ -1,23 +1,12 @@
 import * as z from "zod";
 
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
-
-function prefixedIdentifier(prefix: "config" | "flow" | "input"): z.ZodString {
-  return z
-    .string()
-    .min(prefix.length + 2)
-    .max(128)
-    .regex(
-      new RegExp(`^${prefix}_[A-Za-z0-9][A-Za-z0-9_-]*$`),
-      `must use the ${prefix}_ identifier prefix`,
-    );
-}
+import { NonEmptyTextSchema, prefixedIdentifier } from "./primitives.js";
 
 const ConfigReferenceSchema = prefixedIdentifier("config");
 export const FlowIdSchema = prefixedIdentifier("flow");
 const InputIdSchema = prefixedIdentifier("input");
 
-const NonEmptyTextSchema = z.string().min(1);
 const LocalPathSchema = NonEmptyTextSchema.refine(
   (value) => !value.includes("\0"),
   "must not contain a NUL byte",

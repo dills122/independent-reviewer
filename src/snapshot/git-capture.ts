@@ -3,7 +3,9 @@ import { lstat, readFile, readlink, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, relative } from "node:path";
 
 import {
+  compareUtf16,
   computeCanonicalInputDigestV1,
+  sha256BytesDigestV1,
   digestCanonicalJson,
   finalizeSnapshotManifestV1,
   ReviewRequestV1Schema,
@@ -85,17 +87,6 @@ interface CollectedState {
 
 const DEFAULT_MAX_FILE_BYTES = 512 * 1024;
 const DEFAULT_MAX_ATTEMPTS = 2;
-
-function compareUtf16(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function sha256Bytes(bytes: Uint8Array): DigestV1 {
-  return {
-    algorithm: "SHA256",
-    value: createHash("sha256").update(bytes).digest("hex"),
-  };
-}
 
 /** Whole basenames that carry credentials by convention. */
 const SECRET_FILENAMES_V1 = new Set([
@@ -295,7 +286,7 @@ function capturedSideFromBytes(
   if (bytes.length > maxFileBytes) {
     return "SIZE_LIMIT";
   }
-  const digest = sha256Bytes(bytes);
+  const digest = sha256BytesDigestV1(bytes);
   const byteLength = bytes.length;
   // The content union pairs `kind` with `gitMode`, so the symlink case stays a separate literal.
   const content =
@@ -855,7 +846,7 @@ export async function captureGitSnapshotV1(
       remoteResult.exitCode === 0
         ? decodeGitText(remoteResult.stdout)
         : decodeGitText((await runGit(repositoryPath, ["rev-parse", "--absolute-git-dir"])).stdout);
-    const repositoryId = `repo_${sha256Bytes(Buffer.from(repositoryIdentitySource)).value.slice(0, 24)}`;
+    const repositoryId = `repo_${sha256BytesDigestV1(Buffer.from(repositoryIdentitySource)).value.slice(0, 24)}`;
     const canonicalInputs = [
       ...request.canonicalInputs.requirements,
       request.canonicalInputs.implementationPlan,
