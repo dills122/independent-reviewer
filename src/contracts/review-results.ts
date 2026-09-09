@@ -66,25 +66,16 @@ export const ReviewFindingV1Schema = z.strictObject({
   correction: NonEmptyTextSchema,
 });
 
-const FinalReviewFindingV1Schema = ReviewFindingV1Schema.extend({
-  origin: z.enum(["PRELIMINARY", "FINAL_ONLY"]),
-  emergenceRationale: NonEmptyTextSchema.nullable(),
-}).superRefine((finding, context) => {
-  if (finding.origin === "FINAL_ONLY" && finding.emergenceRationale === null) {
-    context.addIssue({
-      code: "custom",
-      message: "a final-only finding must explain why it emerged after the blind stage",
-      path: ["emergenceRationale"],
-    });
-  }
-  if (finding.origin === "PRELIMINARY" && finding.emergenceRationale !== null) {
-    context.addIssue({
-      code: "custom",
-      message: "a preliminary-origin finding must use a null emergence rationale",
-      path: ["emergenceRationale"],
-    });
-  }
-});
+const FinalReviewFindingV1Schema = z.discriminatedUnion("origin", [
+  ReviewFindingV1Schema.extend({
+    origin: z.literal("PRELIMINARY"),
+    emergenceRationale: z.null(),
+  }),
+  ReviewFindingV1Schema.extend({
+    origin: z.literal("FINAL_ONLY"),
+    emergenceRationale: NonEmptyTextSchema,
+  }),
+]);
 
 function requireUniqueFindingIds(
   findings: Array<z.infer<typeof ReviewFindingV1Schema>>,

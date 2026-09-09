@@ -30,7 +30,15 @@ async function capturedText(
   if (!content || content.kind === "UNSUPPORTED") {
     return "<absent>";
   }
-  return Buffer.from(await readSnapshotBlobV1(packetPath, content.digest)).toString("utf8");
+  const source = Buffer.from(await readSnapshotBlobV1(packetPath, content.digest)).toString("utf8");
+  if (source.length === 0) {
+    return "";
+  }
+  const lines = source.split(/\r\n|[\r\n]/);
+  if (lines.at(-1) === "") {
+    lines.pop();
+  }
+  return lines.map((line, index) => `${index + 1} | ${line}`).join("\n");
 }
 
 /**

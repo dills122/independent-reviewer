@@ -30,6 +30,18 @@ function valueAtPath(value: unknown, path: Array<string | number>): unknown {
   return current;
 }
 
+function findingEvidenceVariants(responseSchema: unknown): unknown[] {
+  const findingItems = valueAtPath(responseSchema, ["properties", "findings", "items"]);
+  assert.ok(findingItems !== null && typeof findingItems === "object");
+  const alternatives = (findingItems as Record<string, unknown>).oneOf;
+  const findingSchemas = Array.isArray(alternatives) ? alternatives : [findingItems];
+  return findingSchemas.flatMap((findingSchema) => {
+    const variants = valueAtPath(findingSchema, ["properties", "evidence", "items", "anyOf"]);
+    assert.ok(Array.isArray(variants));
+    return variants;
+  });
+}
+
 function mockAuditRequest(providerRequest: ReviewProviderRequestV1) {
   return {
     providerPolicyVersion: "mock-provider-v1",
@@ -46,6 +58,7 @@ async function git(repositoryPath: string, ...args: string[]): Promise<void> {
 async function arrangePacket(
   includeExcludedPath = false,
   authorIntent = "AUTHOR_SECRET: make the requested change.",
+  projectGuidanceContent?: string,
 ): Promise<{ repositoryPath: string; packetPath: string }> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-flow-"));
   await git(repositoryPath, "init", "--initial-branch=main");
@@ -87,7 +100,18 @@ async function arrangePacket(
         content: "Change the reviewed file.",
         provenance: { type: "INLINE" as const, label: "flow test" },
       },
-      projectGuidance: [],
+      projectGuidance:
+        projectGuidanceContent === undefined
+          ? []
+          : [
+              {
+                id: "input_style",
+                kind: "PROJECT_GUIDANCE" as const,
+                title: "TypeScript style",
+                content: projectGuidanceContent,
+                provenance: { type: "INLINE" as const, label: "flow test style" },
+              },
+            ],
     },
     authorPacket: {
       schemaVersion: 1 as const,
@@ -206,12 +230,24 @@ describe("two-stage review orchestrator", () => {
         calls.push(providerRequest);
         if (providerRequest.stage === "PRELIMINARY") {
           assert.doesNotMatch(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
+          const blindEvidence = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+          assert.deepEqual(blindEvidence.requiredCoverage, {
+            changedPaths: ["reviewed.txt"],
+            canonicalInputIds: ["input_requirement", "input_plan"],
+          });
+          assert.match(
+            blindEvidence.initialEvidence[0].content,
+            /--- BASE\/reviewed\.txt\n1 \| before/,
+          );
+          assert.match(
+            blindEvidence.initialEvidence[0].content,
+            /\+\+\+ HEAD\/reviewed\.txt\n1 \| after/,
+          );
           return response({
             schemaVersion: 1,
             stage: "PRELIMINARY",
-            snapshotDigest: JSON.parse(providerRequest.messages[1]?.content ?? "{}")
-              .snapshotManifest.snapshotDigest,
-            briefDigest: JSON.parse(providerRequest.messages[1]?.content ?? "{}").briefDigest,
+            snapshotDigest: blindEvidence.snapshotManifest.snapshotDigest,
+            briefDigest: blindEvidence.briefDigest,
             summary: "The one-file change is understandable.",
             inspectedPaths: ["reviewed.txt"],
             canonicalInputCoverage: canonicalInputCoverage(),
@@ -282,20 +318,172 @@ describe("two-stage review orchestrator", () => {
         assert.deepEqual(event.credentialFreeWireRequestDigest, mockDigest);
       }
       for (const call of calls) {
-        const evidenceVariants = valueAtPath(call.responseSchema.schema, [
-          "properties",
-          "findings",
-          "items",
-          "properties",
-          "evidence",
-          "items",
-          "anyOf",
-        ]);
-        assert.ok(Array.isArray(evidenceVariants));
+        const frozenEvidence = JSON.parse(call.messages[1]?.content ?? "{}");
+        assert.equal(
+          valueAtPath(call.responseSchema.schema, [
+            "properties",
+            "snapshotDigest",
+            "properties",
+            "value",
+            "const",
+          ]),
+          frozenEvidence.snapshotManifest.snapshotDigest.value,
+        );
+        assert.equal(
+          valueAtPath(call.responseSchema.schema, [
+            "properties",
+            "briefDigest",
+            "properties",
+            "value",
+            "const",
+          ]),
+          frozenEvidence.briefDigest.value,
+        );
+        const evidenceVariants = findingEvidenceVariants(call.responseSchema.schema);
         for (const variant of evidenceVariants) {
           assert.deepEqual(valueAtPath(variant, ["properties", "path", "enum"]), ["reviewed.txt"]);
         }
+        const canonicalCoverage = valueAtPath(call.responseSchema.schema, [
+          "properties",
+          "canonicalInputCoverage",
+        ]) as Record<string, unknown>;
+        assert.equal(canonicalCoverage.minItems, 2);
+        assert.equal(canonicalCoverage.maxItems, 2);
+        assert.deepEqual(
+          valueAtPath(canonicalCoverage, ["items", "properties", "canonicalInputId", "enum"]),
+          ["input_plan", "input_requirement"],
+        );
+        assert.equal(
+          valueAtPath(call.responseSchema.schema, ["properties", "summary", "maxLength"]),
+          400,
+        );
+        assert.equal(
+          valueAtPath(call.responseSchema.schema, ["properties", "findings", "maxItems"]),
+          12,
+        );
+        if (call.stage === "FINAL") {
+          const changedPathCoverage = valueAtPath(call.responseSchema.schema, [
+            "properties",
+            "changedPathCoverage",
+          ]) as Record<string, unknown>;
+          assert.equal(changedPathCoverage.minItems, 1);
+          assert.equal(changedPathCoverage.maxItems, 1);
+          assert.deepEqual(
+            valueAtPath(changedPathCoverage, ["items", "properties", "path", "enum"]),
+            ["reviewed.txt"],
+          );
+        }
       }
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs one complete invalid final candidate without repeating the preliminary", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    const calls: ReviewProviderRequestV1[] = [];
+    const finding = {
+      id: "finding_repair",
+      severity: "P1" as const,
+      title: "Changed behavior",
+      scenario: "The changed path returns a different value.",
+      impact: "The requirement is not met.",
+      evidence: [
+        {
+          path: "reviewed.txt",
+          anchor: "LINE_RANGE" as const,
+          side: "HEAD" as const,
+          startLine: 1,
+          endLine: 1,
+          detail: "The new value is visible on the first line.",
+        },
+      ],
+      correction: "Restore the required behavior.",
+    };
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls.push(providerRequest);
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        if (providerRequest.stage === "PRELIMINARY") {
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "The behavior change is not ready.",
+            inspectedPaths: ["reviewed.txt"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [finding],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        const isRepair = JSON.stringify(providerRequest.messages).includes("FINAL_OUTPUT_REPAIR");
+        const finalFinding = {
+          ...finding,
+          origin: "PRELIMINARY",
+          emergenceRationale: isRepair ? null : "This must be null for preliminary findings.",
+        };
+        return response({
+          schemaVersion: 1,
+          stage: "FINAL",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "The behavior change remains unresolved.",
+          findings: [finalFinding],
+          preliminaryFindingDispositions: [
+            {
+              preliminaryFindingId: "finding_repair",
+              disposition: "RETAINED",
+              finalFindingId: "finding_repair",
+              rationale: "The author packet does not resolve the changed behavior.",
+            },
+          ],
+          ...finalCoverage(),
+          authorClaims: [],
+          limitations: [],
+          verdict: "NOT_READY",
+          nextActions: { blockers: ["Restore the required behavior."], fastFollows: [] },
+        });
+      },
+    };
+
+    try {
+      const result = await runTwoStageReviewV1(packetPath, config, provider);
+
+      assert.equal(result.report.verdict, "NOT_READY");
+      assert.equal(calls.length, 3);
+      assert.deepEqual(
+        calls.map((call) => call.stage),
+        ["PRELIMINARY", "FINAL", "FINAL"],
+      );
+      assert.match(JSON.stringify(calls[2]?.messages), /FINAL_OUTPUT_REPAIR/);
+      assert.match(JSON.stringify(calls[2]?.messages), /expected null/);
+      await readFile(join(packetPath, "review", "final-provider-response.json"), "utf8");
+      await readFile(join(packetPath, "review", "final-repair-provider-response.json"), "utf8");
+      const events = (await readFile(result.runRecordPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      assert.deepEqual(
+        events.map((event) => event.type),
+        [
+          "RUN_STARTED",
+          "CALL_STARTED",
+          "CALL_SUCCEEDED",
+          "PRELIMINARY_PERSISTED",
+          "AUTHOR_DELIVERED",
+          "CALL_STARTED",
+          "CALL_SUCCEEDED",
+          "FINAL_CANDIDATE_REJECTED",
+          "FINAL_REPAIR_REQUESTED",
+          "CALL_STARTED",
+          "CALL_SUCCEEDED",
+          "RUN_COMPLETED",
+        ],
+      );
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
@@ -357,6 +545,67 @@ describe("two-stage review orchestrator", () => {
       assert.equal(events[2]?.error.code, "TRANSPORT_UNCERTAIN");
       assert.equal(events[3]?.terminalState, "TRANSPORT_UNCERTAIN");
       assert.doesNotMatch(JSON.stringify(events), /AUTHOR_SECRET/);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("persists a private raw provider response before recording a rejected attempt", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    const rawResponseBody = {
+      id: "generation-invalid",
+      choices: [{ finish_reason: "stop", message: { content: null } }],
+    };
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async () => {
+        throw new ProviderCallError("INVALID_RESPONSE", "No usable completion content.", {
+          responseBody: rawResponseBody,
+        });
+      },
+    };
+
+    try {
+      await assert.rejects(() => runTwoStageReviewV1(packetPath, config, provider));
+      assert.deepEqual(
+        JSON.parse(
+          await readFile(
+            join(packetPath, "review", "provider-response-attempt-1.raw.json"),
+            "utf8",
+          ),
+        ),
+        rawResponseBody,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("sends compact rule-addressable project guidance to the reviewer", async () => {
+    const guidance = [
+      "# TypeScript",
+      "This prose is context that should not be retransmitted verbatim.",
+      "## Types",
+      "- Use primitive `string` rather than boxed `String`.",
+      "- Never use `var`; use `const` or `let`.",
+    ].join("\n");
+    const { repositoryPath, packetPath } = await arrangePacket(false, "AUTHOR_SECRET", guidance);
+    let blindEvidence = "";
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        blindEvidence = providerRequest.messages[1]?.content ?? "";
+        throw new ProviderCallError("INVALID_RESPONSE", "Stop after capturing the prompt.");
+      },
+    };
+
+    try {
+      await assert.rejects(() => runTwoStageReviewV1(packetPath, config, provider));
+      assert.match(blindEvidence, /projectGuidanceDigest/);
+      assert.match(blindEvidence, /input_style:R1/);
+      assert.match(blindEvidence, /Use primitive `string` rather than boxed `String`\./);
+      assert.match(blindEvidence, /input_style:R2/);
+      assert.doesNotMatch(blindEvidence, /This prose is context/);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
@@ -717,7 +966,7 @@ describe("two-stage review orchestrator", () => {
           budgets: {
             ...config.budgets,
             maxOutputTokensPerCall: 15_000,
-            maxTotalTokens: 67_000,
+            maxTotalTokens: 71_000,
           },
         },
         provider,

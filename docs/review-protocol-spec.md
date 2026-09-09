@@ -459,9 +459,10 @@ TypeScript Responses surface is currently beta.[^or-client][^or-responses]
 Strict structured output is a transport aid, not a trust boundary. Syntax,
 schema, lifecycle, semantic, and evidence-anchor validation still occur
 locally. Before each stage, the orchestrator specializes the versioned structural
-schema with an enum of paths from the frozen snapshot for every finding-evidence
-path. The specialized schema is included in token admission and the audited wire
-digest; local side, existence, and anchor validation remains authoritative.[^or-structured]
+schema with frozen path and coverage enums, exact snapshot/brief digest
+constants, exact coverage-ledger sizes, and small-change output bounds. The specialized schema is included in token
+admission and the audited wire digest; local side, existence, anchor, and
+cross-field semantic validation remains authoritative.[^or-structured]
 
 The orchestrator's append-only run record stores requested and returned
 model/provider metadata, request IDs, validated token usage, cost when available,
@@ -471,11 +472,12 @@ credential-free wire-request digest. The adapter builds the audited body with
 the same deterministic function used for transmission. The ledger does not
 persist message content, credentials, or the wire body itself, claim metadata
 the provider did not return, or enable request-body debug echo in normal
-operation. Failed OpenRouter calls retain only an allowlisted diagnostic:
+operation. Each HTTP response is first retained as a separate private raw
+artifact so rejected envelopes and complete invalid candidates remain
+inspectable. The active API key is recursively redacted from that artifact.
+Failure events in the ledger retain only an allowlisted diagnostic:
 HTTP/provider codes, canonical error type, bounded provider message, returned
-provider/model/response identifiers, and `Retry-After` when present. The active
-API key is redacted from those fields before they reach the CLI or ledger; all
-other error metadata is discarded.[^or-metadata][^or-errors]
+provider/model/response identifiers, and `Retry-After` when present.[^or-metadata][^or-errors]
 
 ### Author ask-backs
 
@@ -612,7 +614,9 @@ zero.
    call two.
 10. Reconcile each reservation against complete, non-negative integer provider
     usage with a consistent prompt-plus-completion total, and record cost when
-    available. The OpenRouter adapter rejects malformed usage envelopes.
+    available. Optional malformed or inconsistent usage telemetry is normalized
+    to unknown so the conservative reservation remains in force without
+    discarding an otherwise usable review response.
 
 For small targets, the initial brief may contain the entire textual diff. For a
 target that exceeds the initial-context budget, the engine must either use the

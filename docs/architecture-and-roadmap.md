@@ -164,12 +164,15 @@ stop the run; one explicitly enabled live smoke review succeeds.
 Progress: the offline engine is complete. It builds a digest-bound neutral
 brief from the packet, fails rather than clipping an oversized initial evidence
 set, persists the raw and validated preliminary result before author delivery,
-makes exactly one reconciliation call, validates identities and evidence paths,
+makes one reconciliation call and permits at most one separately recorded
+same-model repair when a complete final candidate fails local validation,
+validates identities and evidence paths,
 requires exact changed-path/canonical-input coverage and preliminary-concern
 dispositions, validates line/symbol anchors against frozen blobs, and renders
 the complete, presentation-safe reconciliation ledger to Markdown. Final-only
-findings require an emergence rationale, and author-reported commands cannot be
-promoted to runner-confirmed evidence. Each stage specializes its provider-facing
+findings require a non-empty emergence rationale while preliminary-origin
+findings structurally require a null rationale, and author-reported commands
+cannot be promoted to runner-confirmed evidence. Each stage specializes its provider-facing
 schema with the frozen snapshot's permitted evidence paths, while retaining local
 semantic and anchor validation. It conservatively reserves both
 message/schema inputs and outputs before the first submission, uses that same
@@ -185,10 +188,10 @@ configured provider allowlist, hard price ceilings, ZDR-only routing,
 data-collection denial, disabled response caching, and disabled context
 compression. A definite final-stage provider 429 may be resumed once explicitly
 from the persisted preliminary assessment and exact original run configuration;
-uncertain transport and model changes are rejected. Provider failures retain
-bounded, API-key-redacted diagnostics for
-the typed error, selected route identifiers, and retry guidance without storing
-the unfiltered response body.[^or-structured][^or-routing][^or-transforms][^or-response-cache][^or-errors]
+uncertain transport and model changes are rejected. Provider attempts retain a
+private, API-key-redacted raw response artifact before validation, while the
+append-only ledger retains only bounded diagnostics for the typed error,
+selected route identifiers, and retry guidance.[^or-structured][^or-routing][^or-transforms][^or-response-cache][^or-errors]
 The metered live smoke remains explicitly opt-in until a model and API key are
 supplied through the Slice 3 command.
 

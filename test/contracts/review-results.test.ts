@@ -229,6 +229,29 @@ describe("review result contracts", () => {
     assert.equal(FinalReviewReportV1Schema.safeParse(missingRationale).success, false);
   });
 
+  it("expresses final finding provenance as structural provider-schema variants", () => {
+    const findings = (
+      FINAL_REVIEW_REPORT_V1_JSON_SCHEMA as unknown as {
+        properties: { findings: { items: { oneOf?: Array<Record<string, unknown>> } } };
+      }
+    ).properties.findings.items;
+    assert.ok(findings.oneOf);
+    assert.deepEqual(
+      findings.oneOf.map((variant) => {
+        const properties = variant.properties as Record<string, Record<string, unknown>>;
+        return {
+          origin: properties.origin?.const,
+          emergenceType: properties.emergenceRationale?.type,
+          emergenceMinLength: properties.emergenceRationale?.minLength,
+        };
+      }),
+      [
+        { origin: "PRELIMINARY", emergenceType: "null", emergenceMinLength: undefined },
+        { origin: "FINAL_ONLY", emergenceType: "string", emergenceMinLength: 1 },
+      ],
+    );
+  });
+
   it("matches the committed provider-output schemas", async () => {
     const preliminarySchema = JSON.parse(
       await readFile(resolve("schemas", "preliminary-assessment-v1.schema.json"), "utf8"),
