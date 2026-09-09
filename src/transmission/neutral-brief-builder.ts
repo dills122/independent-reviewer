@@ -6,31 +6,45 @@ import {
 } from "../contracts/index.js";
 import { inspectSnapshotPacketV1, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
 
-function contentLabel(content: SnapshotContentV1 | null): string {
+/**
+ * How a captured side renders: either a standalone label, or a pointer to source bytes the caller
+ * must read from the packet. The two outcomes are distinct types so neither can be confused for
+ * the other by inspecting a string.
+ */
+type CapturedRenderingV1 =
+  | { readonly kind: "LABEL"; readonly label: string }
+  | { readonly kind: "SOURCE"; readonly content: SnapshotContentV1 };
+
+function contentRendering(content: SnapshotContentV1 | null): CapturedRenderingV1 {
   if (content === null) {
-    return "<absent>";
+    return { kind: "LABEL", label: "<absent>" };
   }
-  if (content.kind === "UNSUPPORTED") {
-    return `<unsupported ${content.gitMode}: ${content.reason}>`;
+  switch (content.kind) {
+    case "UNSUPPORTED":
+      return { kind: "LABEL", label: `<unsupported ${content.gitMode}: ${content.reason}>` };
+    case "BINARY":
+    case "SUBMODULE":
+      return {
+        kind: "LABEL",
+        label: `<${content.kind.toLowerCase()} sha256:${content.digest.value} ${content.byteLength} bytes>`,
+      };
+    case "TEXT":
+    case "SYMLINK":
+      return { kind: "SOURCE", content };
   }
-  if (content.kind === "BINARY" || content.kind === "SUBMODULE") {
-    return `<${content.kind.toLowerCase()} sha256:${content.digest.value} ${content.byteLength} bytes>`;
-  }
-  return "";
 }
 
 async function capturedText(
   packetPath: string,
   content: SnapshotContentV1 | null,
 ): Promise<string> {
-  const label = contentLabel(content);
-  if (label.length > 0) {
-    return label;
+  const rendering = contentRendering(content);
+  if (rendering.kind === "LABEL") {
+    return rendering.label;
   }
-  if (!content || content.kind === "UNSUPPORTED") {
-    return "<absent>";
-  }
-  const source = Buffer.from(await readSnapshotBlobV1(packetPath, content.digest)).toString("utf8");
+  const source = Buffer.from(
+    await readSnapshotBlobV1(packetPath, rendering.content.digest),
+  ).toString("utf8");
   if (source.length === 0) {
     return "";
   }

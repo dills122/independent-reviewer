@@ -14,6 +14,7 @@ import {
   type SnapshotManifestIdentityInputV1,
   type SnapshotManifestV1,
 } from "../contracts/index.js";
+import { mapWithConcurrencyV1 } from "./concurrency.js";
 import { decodeGitText, decodeNulFields, runGit } from "./git-command.js";
 
 export type SnapshotCaptureErrorCode =
@@ -167,6 +168,53 @@ async function indexModeAt(repositoryPath: string, path: string): Promise<string
   return singleRecordMode(records, path);
 }
 
+/**
+ * Builds the captured side shared by the tree and working-tree readers, which differ only in how
+ * `gitMode` and `bytes` were obtained.
+ *
+ * `isGenerated` is always `false`: capture-v1 has no generated-file detection, so the
+ * `GENERATED_POLICY` exclusion reason is never produced. The field and the enum member stay in the
+ * v1 contract; populating them is deferred rather than dropped.
+ */
+function capturedSideFromBytes(
+  gitMode: "100644" | "100755" | "120000",
+  bytes: Uint8Array,
+  maxFileBytes: number,
+): CapturedSide | "SIZE_LIMIT" {
+  if (bytes.length > maxFileBytes) {
+    return "SIZE_LIMIT";
+  }
+  const digest = sha256Bytes(bytes);
+  const byteLength = bytes.length;
+  // The content union pairs `kind` with `gitMode`, so the symlink case stays a separate literal.
+  const content =
+    gitMode === "120000"
+      ? ({ kind: "SYMLINK", digest, byteLength, gitMode, isGenerated: false } as const)
+      : ({ kind: contentKind(bytes), digest, byteLength, gitMode, isGenerated: false } as const);
+  return { content, bytes };
+}
+
+/** Signals a broken internal assumption of the capture engine, never a filesystem or Git failure. */
+class CaptureInvariantError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CaptureInvariantError";
+  }
+}
+
+/** Describes a read failure without echoing Git or filesystem message text into the manifest. */
+function readFailureDetail(error: unknown): string {
+  const code =
+    typeof error === "object" &&
+    error !== null &&
+    typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : undefined;
+  return code
+    ? `Unable to read captured content during snapshot capture (${code}).`
+    : "Unable to read captured content during snapshot capture.";
+}
+
 async function captureTreeSide(
   repositoryPath: string,
   revision: string,
@@ -181,27 +229,7 @@ async function captureTreeSide(
     return "UNSUPPORTED_KIND";
   }
   const bytes = (await runGit(repositoryPath, ["cat-file", "blob", `${revision}:${path}`])).stdout;
-  if (bytes.length > maxFileBytes) {
-    return "SIZE_LIMIT";
-  }
-  const digest = sha256Bytes(bytes);
-  const content =
-    gitMode === "120000"
-      ? ({
-          kind: "SYMLINK",
-          digest,
-          byteLength: bytes.length,
-          gitMode,
-          isGenerated: false,
-        } as const)
-      : ({
-          kind: contentKind(bytes),
-          digest,
-          byteLength: bytes.length,
-          gitMode,
-          isGenerated: false,
-        } as const);
-  return { content, bytes };
+  return capturedSideFromBytes(gitMode, bytes, maxFileBytes);
 }
 
 async function captureWorkingSide(
@@ -226,27 +254,7 @@ async function captureWorkingSide(
   } else {
     return "UNSUPPORTED_KIND";
   }
-  if (bytes.length > maxFileBytes) {
-    return "SIZE_LIMIT";
-  }
-  const digest = sha256Bytes(bytes);
-  const content =
-    gitMode === "120000"
-      ? ({
-          kind: "SYMLINK",
-          digest,
-          byteLength: bytes.length,
-          gitMode,
-          isGenerated: false,
-        } as const)
-      : ({
-          kind: contentKind(bytes),
-          digest,
-          byteLength: bytes.length,
-          gitMode,
-          isGenerated: false,
-        } as const);
-  return { content, bytes };
+  return capturedSideFromBytes(gitMode, bytes, maxFileBytes);
 }
 
 function parseTrackedChanges(fields: string[]): ChangeSpec[] {
@@ -386,8 +394,13 @@ async function collectState(
       });
       continue;
     }
+    // Only the reads are guarded: a failure here is a genuine Git or filesystem error and becomes an
+    // UNREADABLE omission. Everything after this block is bookkeeping, whose failures are capture
+    // bugs and must surface instead of degrading into a silently smaller snapshot.
+    let before: CapturedSide | "SIZE_LIMIT" | "UNSUPPORTED_KIND" | null;
+    let after: CapturedSide | "SIZE_LIMIT" | "UNSUPPORTED_KIND" | null;
     try {
-      const before =
+      before =
         spec.changeType === "ADDED" || spec.changeType === "UNTRACKED"
           ? null
           : await captureTreeSide(
@@ -396,91 +409,95 @@ async function collectState(
               spec.previousPath ?? spec.path,
               maxFileBytes,
             );
-      const after =
+      after =
         spec.changeType === "DELETED"
           ? null
           : captureWorkingTree
             ? await captureWorkingSide(repositoryPath, spec.path, maxFileBytes)
             : await captureTreeSide(repositoryPath, headCommit, spec.path, maxFileBytes);
-      const unavailable =
-        before === "SIZE_LIMIT" || after === "SIZE_LIMIT"
-          ? "SIZE_LIMIT"
-          : before === "UNSUPPORTED_KIND" || after === "UNSUPPORTED_KIND"
-            ? "UNSUPPORTED_KIND"
-            : undefined;
-      if (unavailable) {
-        exclusions.push({
-          path: spec.path,
-          reason: unavailable,
-          detail:
-            unavailable === "SIZE_LIMIT"
-              ? `Content exceeds the ${maxFileBytes}-byte capture limit.`
-              : "Git entry kind is not supported by capture-v1.",
-        });
-        continue;
+    } catch (error) {
+      if (error instanceof CaptureInvariantError) {
+        throw error;
       }
-      if (typeof before === "string" || typeof after === "string") {
-        throw new Error("captured content has an unresolved availability state");
-      }
-      if (before) {
-        const digest = before.content.digest;
-        if (!digest) {
-          throw new Error("captured before state has no digest");
-        }
-        blobs.set(digest.value, before.bytes);
-      }
-      if (after) {
-        const digest = after.content.digest;
-        if (!digest) {
-          throw new Error("captured after state has no digest");
-        }
-        blobs.set(digest.value, after.bytes);
-      }
-      if (spec.changeType === "ADDED" || spec.changeType === "UNTRACKED") {
-        if (!after) {
-          throw new Error("added path has no captured after state");
-        }
-        paths.push({
-          path: spec.path,
-          changeType: spec.changeType,
-          before: null,
-          after: after.content,
-        });
-        if (spec.changeType === "UNTRACKED") {
-          includedUntrackedPaths.push(spec.path);
-        }
-      } else if (spec.changeType === "DELETED") {
-        if (!before) {
-          throw new Error("deleted path has no captured before state");
-        }
-        paths.push({ path: spec.path, changeType: "DELETED", before: before.content, after: null });
-      } else if (spec.changeType === "RENAMED" || spec.changeType === "COPIED") {
-        if (!before || !after || !spec.previousPath) {
-          throw new Error("relocated path has incomplete captured states");
-        }
-        paths.push({
-          path: spec.path,
-          previousPath: spec.previousPath,
-          changeType: spec.changeType,
-          before: before.content,
-          after: after.content,
-        });
-      } else {
-        if (!before || !after) {
-          throw new Error("modified path has incomplete captured states");
-        }
-        paths.push({
-          path: spec.path,
-          changeType: spec.changeType,
-          before: before.content,
-          after: after.content,
-        });
-      }
-    } catch {
       omissions.push({
         scope: spec.path,
         reason: "UNREADABLE",
-        detail: "Unable to read captured content during snapshot capture.",
+        detail: readFailureDetail(error),
+      });
+      continue;
+    }
+    const unavailable =
+      before === "SIZE_LIMIT" || after === "SIZE_LIMIT"
+        ? "SIZE_LIMIT"
+        : before === "UNSUPPORTED_KIND" || after === "UNSUPPORTED_KIND"
+          ? "UNSUPPORTED_KIND"
+          : undefined;
+    if (unavailable) {
+      exclusions.push({
+        path: spec.path,
+        reason: unavailable,
+        detail:
+          unavailable === "SIZE_LIMIT"
+            ? `Content exceeds the ${maxFileBytes}-byte capture limit.`
+            : "Git entry kind is not supported by capture-v1.",
+      });
+      continue;
+    }
+    if (typeof before === "string" || typeof after === "string") {
+      throw new CaptureInvariantError("captured content has an unresolved availability state");
+    }
+    if (before) {
+      const digest = before.content.digest;
+      if (!digest) {
+        throw new CaptureInvariantError("captured before state has no digest");
+      }
+      blobs.set(digest.value, before.bytes);
+    }
+    if (after) {
+      const digest = after.content.digest;
+      if (!digest) {
+        throw new CaptureInvariantError("captured after state has no digest");
+      }
+      blobs.set(digest.value, after.bytes);
+    }
+    if (spec.changeType === "ADDED" || spec.changeType === "UNTRACKED") {
+      if (!after) {
+        throw new CaptureInvariantError("added path has no captured after state");
+      }
+      paths.push({
+        path: spec.path,
+        changeType: spec.changeType,
+        before: null,
+        after: after.content,
+      });
+      if (spec.changeType === "UNTRACKED") {
+        includedUntrackedPaths.push(spec.path);
+      }
+    } else if (spec.changeType === "DELETED") {
+      if (!before) {
+        throw new CaptureInvariantError("deleted path has no captured before state");
+      }
+      paths.push({ path: spec.path, changeType: "DELETED", before: before.content, after: null });
+    } else if (spec.changeType === "RENAMED" || spec.changeType === "COPIED") {
+      if (!before || !after || !spec.previousPath) {
+        throw new CaptureInvariantError("relocated path has incomplete captured states");
+      }
+      paths.push({
+        path: spec.path,
+        previousPath: spec.previousPath,
+        changeType: spec.changeType,
+        before: before.content,
+        after: after.content,
+      });
+    } else {
+      if (!before || !after) {
+        throw new CaptureInvariantError("modified path has incomplete captured states");
+      }
+      paths.push({
+        path: spec.path,
+        changeType: spec.changeType,
+        before: before.content,
+        after: after.content,
       });
     }
   }
@@ -603,18 +620,16 @@ export async function captureGitSnapshotV1(
   }
   const excludedPaths = new Set(
     (
-      await Promise.all(
-        (options.excludedFileSystemPaths ?? []).map(async (absolutePath) => {
-          if (!isAbsolute(absolutePath)) {
-            throw new TypeError("excludedFileSystemPaths entries must be absolute paths");
-          }
-          try {
-            return await realpath(absolutePath);
-          } catch {
-            return absolutePath;
-          }
-        }),
-      )
+      await mapWithConcurrencyV1(options.excludedFileSystemPaths ?? [], async (absolutePath) => {
+        if (!isAbsolute(absolutePath)) {
+          throw new TypeError("excludedFileSystemPaths entries must be absolute paths");
+        }
+        try {
+          return await realpath(absolutePath);
+        } catch {
+          return absolutePath;
+        }
+      })
     ).flatMap((absolutePath) => {
       const repositoryRelativePath = relative(repositoryPath, absolutePath);
       if (
