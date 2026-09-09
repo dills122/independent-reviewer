@@ -3,9 +3,7 @@
   "configId": "config_health_120b",
   "model": "openai/gpt-oss-120b",
   "providerRouting": {
-    "order": [
-      "baseten/fp4"
-    ],
+    "order": ["baseten/fp4"],
     "maxPrice": {
       "prompt": 0.1,
       "completion": 0.5,
