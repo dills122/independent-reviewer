@@ -65,6 +65,12 @@ export type {
   ReviewRunConfigV2,
 } from "./review-run-config.js";
 export {
+  buildInspectionReportV1,
+  INSPECTION_REPORT_V1_JSON_SCHEMA,
+  InspectionReportV1Schema,
+} from "./inspection-report.js";
+export type { InspectionReportV1 } from "./inspection-report.js";
+export {
   jsonDocument,
   sha256BytesDigestV1,
   sha256BytesHex,

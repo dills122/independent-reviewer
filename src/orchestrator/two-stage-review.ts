@@ -238,10 +238,13 @@ async function completeWithAudit(
         { flag: "wx", mode: 0o600 },
       );
     }
+    // Enforcement point for the model-match rule. The OpenRouter adapter checks the same thing
+    // against its own wire response; this check covers any ReviewProviderV1 implementation, so
+    // the two messages name their layer to say which one fired.
     if (response.model !== null && response.model !== request.model) {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
-        `The provider returned a different model than requested (${response.model}).`,
+        `The review provider returned a different model than requested (${response.model}).`,
       );
     }
     await appendRunEvent(runRecordPath, {

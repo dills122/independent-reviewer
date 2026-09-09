@@ -3,9 +3,14 @@
 import { readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
+
+import * as z from "zod";
 
 import {
+  buildInspectionReportV1,
   type FinalReviewReportV1,
+  type InspectionReportV1,
   type OpenRouterProviderRoutingV1,
   ReviewRequestV1Schema,
   ReviewRunConfigV2Schema,
@@ -25,6 +30,9 @@ export interface CliIoV1 {
   stdout(message: string): void;
   stderr(message: string): void;
 }
+
+/** Kept in step with package.json by the version test. */
+const CLI_VERSION_V1 = "0.0.0";
 
 const processIo: CliIoV1 = {
   stdout: (message) => process.stdout.write(`${message}\n`),
@@ -47,23 +55,139 @@ interface PreparedPacketV1 {
   repositoryRoot: string;
 }
 
-function parseOptions(args: string[]): Map<string, string | true> {
+interface CommandOptionSpecV1 {
+  type: "string" | "boolean";
+  description: string;
+  required?: boolean;
+}
+
+interface CommandSpecV1 {
+  summary: string;
+  options: Record<string, CommandOptionSpecV1>;
+}
+
+const COMMAND_SPECS_V1: Record<string, CommandSpecV1> = {
+  prepare: {
+    summary: "Capture a frozen snapshot packet without contacting a provider.",
+    options: {
+      request: { type: "string", description: "Path to the review request JSON.", required: true },
+      base: { type: "string", description: "Override base ref resolution." },
+      output: { type: "string", description: "Packet directory (default <repo>/.review-runs)." },
+      exclude: { type: "string", description: "Comma-separated glob patterns to exclude." },
+    },
+  },
+  inspect: {
+    summary: "Validate a packet and report what it contains.",
+    options: {
+      packet: { type: "string", description: "Path to the snapshot packet.", required: true },
+      json: { type: "boolean", description: "Emit the versioned inspection report as JSON." },
+    },
+  },
+  review: {
+    summary: "Prepare a packet and run the complete two-stage review.",
+    options: {
+      request: { type: "string", description: "Path to the review request JSON.", required: true },
+      config: { type: "string", description: "Path to the review run config.", required: true },
+      base: { type: "string", description: "Override base ref resolution." },
+      output: { type: "string", description: "Packet directory (default <repo>/.review-runs)." },
+      exclude: { type: "string", description: "Comma-separated glob patterns to exclude." },
+    },
+  },
+  "resume-final": {
+    summary: "Retry only a final stage that failed with a definite provider error.",
+    options: {
+      packet: { type: "string", description: "Path to the snapshot packet.", required: true },
+      config: { type: "string", description: "Path to the review run config.", required: true },
+    },
+  },
+};
+
+function usageText(command?: string): string {
+  const commands = Object.keys(COMMAND_SPECS_V1);
+  if (!command || !COMMAND_SPECS_V1[command]) {
+    const lines = [
+      `Usage: independent-reviewer <${commands.join("|")}> [options]`,
+      "",
+      "Commands:",
+      ...commands.map((name) => `  ${name.padEnd(14)}${COMMAND_SPECS_V1[name]?.summary ?? ""}`),
+      "",
+      "Run 'independent-reviewer <command> --help' for command options.",
+      "Set OPENROUTER_API_KEY in the environment for 'review' and 'resume-final'.",
+    ];
+    return lines.join("\n");
+  }
+  const spec = COMMAND_SPECS_V1[command];
+  const lines = [
+    `Usage: independent-reviewer ${command} [options]`,
+    "",
+    spec.summary,
+    "",
+    "Options:",
+  ];
+  for (const [name, option] of Object.entries(spec.options)) {
+    const valueHint = option.type === "string" ? " <value>" : "";
+    const requirement = option.required ? " (required)" : "";
+    lines.push(`  --${name}${valueHint}`.padEnd(24) + `${option.description}${requirement}`);
+  }
+  lines.push("  --help".padEnd(24) + "Print this message.");
+  return lines.join("\n");
+}
+
+/**
+ * Parses one command's arguments with `node:util`, which supports `--flag=value` and `--`, and
+ * reports a dash-leading value precisely instead of claiming the value is missing.
+ *
+ * Every option is collected as a list so a repeated flag is rejected rather than silently taking
+ * the last one: the configuration this tool runs on is digest-bound, and quietly preferring the
+ * second `--config` is the wrong default.
+ */
+function parseCommandOptions(command: string, args: string[]): Map<string, string | true> {
+  const spec = COMMAND_SPECS_V1[command];
+  if (!spec) {
+    throw new Error(usageText());
+  }
+  const parseOptionsConfig = Object.fromEntries(
+    Object.entries(spec.options).map(([name, option]) => [
+      name,
+      { type: option.type, multiple: true } as const,
+    ]),
+  );
+  let parsed: ReturnType<typeof parseArgs>;
+  try {
+    parsed = parseArgs({
+      args,
+      options: { ...parseOptionsConfig, help: { type: "boolean" } },
+      allowPositionals: false,
+      strict: true,
+    });
+  } catch (error) {
+    throw new Error(
+      `${error instanceof Error ? error.message : "Invalid arguments"}\n\n${usageText(command)}`,
+    );
+  }
+
   const options = new Map<string, string | true>();
-  for (let index = 0; index < args.length; index += 1) {
-    const option = args[index];
-    if (!option?.startsWith("--")) {
-      throw new Error(`Unexpected argument: ${option ?? ""}`);
-    }
-    if (option === "--json") {
-      options.set(option, true);
+  for (const [name, values] of Object.entries(parsed.values)) {
+    if (!Array.isArray(values)) {
+      if (values === true) {
+        options.set(`--${name}`, true);
+      }
       continue;
     }
-    const value = args[index + 1];
-    if (!value || value.startsWith("--")) {
-      throw new Error(`Missing value for ${option}`);
+    if (values.length > 1) {
+      throw new Error(`Option --${name} was given ${values.length} times; give it once.`);
     }
-    options.set(option, value);
-    index += 1;
+    const value = values[0];
+    if (typeof value === "string") {
+      options.set(`--${name}`, value);
+    } else if (value === true) {
+      options.set(`--${name}`, true);
+    }
+  }
+  for (const [name, option] of Object.entries(spec.options)) {
+    if (option.required && !options.has(`--${name}`)) {
+      throw new Error(`Missing required option --${name}\n\n${usageText(command)}`);
+    }
   }
   return options;
 }
@@ -76,32 +200,41 @@ function requiredOption(options: Map<string, string | true>, name: string): stri
   return value;
 }
 
-function assertAllowedOptions(options: Map<string, string | true>, allowed: string[]): void {
-  for (const option of options.keys()) {
-    if (!allowed.includes(option)) {
-      throw new Error(`Unknown option ${option}`);
-    }
-  }
-}
-
-function formatInspection(inspected: Awaited<ReturnType<typeof inspectSnapshotPacketV1>>): string {
+/** The human-readable view of the same validated report the JSON view emits. */
+function formatInspection(report: InspectionReportV1): string {
   const lines = [
-    `Snapshot: ${inspected.manifest.snapshotDigest.value}`,
-    `Base: ${inspected.manifest.source.baseCommit}`,
-    `Head: ${inspected.manifest.source.headCommit}`,
-    `Changes: ${inspected.manifest.paths.length}`,
+    `Snapshot: ${report.snapshotManifest.snapshotDigest.value}`,
+    `Base: ${report.snapshotManifest.source.baseCommit}`,
+    `Head: ${report.snapshotManifest.source.headCommit}`,
+    `Config: ${report.reviewConfigRef}`,
+    `Changes: ${report.snapshotManifest.paths.length}`,
   ];
-  for (const entry of inspected.manifest.paths) {
+  for (const entry of report.snapshotManifest.paths) {
     lines.push(`${entry.changeType} ${entry.path}`);
   }
-  lines.push(`Exclusions: ${inspected.manifest.exclusions.length}`);
-  for (const exclusion of inspected.manifest.exclusions) {
+  lines.push(`Exclusions: ${report.snapshotManifest.exclusions.length}`);
+  for (const exclusion of report.snapshotManifest.exclusions) {
     lines.push(`${exclusion.reason} ${exclusion.path}`);
   }
-  lines.push(`Omissions: ${inspected.manifest.omissions.length}`);
-  lines.push(`Captured blobs: ${inspected.blobCount}`);
-  lines.push(`Author packet: ${inspected.authorPacket ? "stored separately" : "not provided"}`);
+  lines.push(`Omissions: ${report.snapshotManifest.omissions.length}`);
+  lines.push(`Canonical inputs: ${report.canonicalInputs.requirements.length + 1}`);
+  lines.push(`Captured blobs: ${report.blobCount}`);
+  lines.push(`Author packet: ${report.authorPacketPresent ? "stored separately" : "not provided"}`);
   return lines.join("\n");
+}
+
+/** Loads the pinned config and constructs the provider for the two commands that call one. */
+async function resolveLiveReviewContextV1(
+  options: Map<string, string | true>,
+  dependencies: CliDependenciesV1,
+): Promise<{ config: z.infer<typeof ReviewRunConfigV2Schema>; provider: ReviewProviderV1 }> {
+  const apiKey = dependencies.readOpenRouterApiKey();
+  if (!apiKey || apiKey.trim().length === 0) {
+    throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
+  }
+  const configPath = resolve(requiredOption(options, "--config"));
+  const config = ReviewRunConfigV2Schema.parse(JSON.parse(await readFile(configPath, "utf8")));
+  return { config, provider: dependencies.createProvider(apiKey, config.providerRouting) };
 }
 
 async function preparePacket(
@@ -194,7 +327,6 @@ async function warnUnignoredPacketLocation(
 }
 
 async function prepare(options: Map<string, string | true>, io: CliIoV1): Promise<void> {
-  assertAllowedOptions(options, ["--request", "--base", "--output", "--exclude"]);
   const { captured, packetPath, repositoryRoot } = await preparePacket(options);
   await warnUnignoredPacketLocation(repositoryRoot, packetPath, io);
   io.stdout(`Prepared snapshot packet: ${packetPath}`);
@@ -218,14 +350,7 @@ async function review(
   io: CliIoV1,
   dependencies: CliDependenciesV1,
 ): Promise<number> {
-  assertAllowedOptions(options, ["--request", "--config", "--base", "--output", "--exclude"]);
-  const apiKey = dependencies.readOpenRouterApiKey();
-  if (!apiKey || apiKey.trim().length === 0) {
-    throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
-  }
-  const configPath = resolve(requiredOption(options, "--config"));
-  const config = ReviewRunConfigV2Schema.parse(JSON.parse(await readFile(configPath, "utf8")));
-  const provider = dependencies.createProvider(apiKey, config.providerRouting);
+  const { config, provider } = await resolveLiveReviewContextV1(options, dependencies);
   const prepared = await preparePacket(options, config.configId);
   await warnUnignoredPacketLocation(prepared.repositoryRoot, prepared.packetPath, io);
   io.stdout(`Prepared snapshot packet: ${prepared.packetPath}`);
@@ -240,14 +365,7 @@ async function resumeFinal(
   io: CliIoV1,
   dependencies: CliDependenciesV1,
 ): Promise<number> {
-  assertAllowedOptions(options, ["--packet", "--config"]);
-  const apiKey = dependencies.readOpenRouterApiKey();
-  if (!apiKey || apiKey.trim().length === 0) {
-    throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
-  }
-  const configPath = resolve(requiredOption(options, "--config"));
-  const config = ReviewRunConfigV2Schema.parse(JSON.parse(await readFile(configPath, "utf8")));
-  const provider = dependencies.createProvider(apiKey, config.providerRouting);
+  const { config, provider } = await resolveLiveReviewContextV1(options, dependencies);
   const result = await resumeFinalReviewV1(
     resolve(requiredOption(options, "--packet")),
     config,
@@ -259,23 +377,13 @@ async function resumeFinal(
 }
 
 async function inspect(options: Map<string, string | true>, io: CliIoV1): Promise<void> {
-  assertAllowedOptions(options, ["--packet", "--json"]);
   const inspected = await inspectSnapshotPacketV1(resolve(requiredOption(options, "--packet")));
+  const report = buildInspectionReportV1(inspected);
   if (options.get("--json") === true) {
-    io.stdout(
-      JSON.stringify(
-        {
-          snapshotManifest: inspected.manifest,
-          canonicalInputs: inspected.canonicalInputs,
-          authorPacketPresent: inspected.authorPacket !== undefined,
-        },
-        null,
-        2,
-      ),
-    );
+    io.stdout(JSON.stringify(report, null, 2));
     return;
   }
-  io.stdout(formatInspection(inspected));
+  io.stdout(formatInspection(report));
 }
 
 export async function runCliV1(
@@ -284,8 +392,25 @@ export async function runCliV1(
   dependencies: CliDependenciesV1 = processDependencies,
 ): Promise<number> {
   const [command, ...optionArgs] = args;
+  // Help and version answer on stdout with exit 0: they are the successful outcome of the
+  // request, not a failure to parse it.
+  if (command === undefined || command === "--help" || command === "-h" || command === "help") {
+    io.stdout(usageText());
+    return 0;
+  }
+  if (command === "--version" || command === "-v") {
+    io.stdout(CLI_VERSION_V1);
+    return 0;
+  }
   try {
-    const options = parseOptions(optionArgs);
+    if (!COMMAND_SPECS_V1[command]) {
+      throw new Error(`Unknown command ${command}\n\n${usageText()}`);
+    }
+    if (optionArgs.includes("--help") || optionArgs.includes("-h")) {
+      io.stdout(usageText(command));
+      return 0;
+    }
+    const options = parseCommandOptions(command, optionArgs);
     if (command === "prepare") {
       await prepare(options, io);
       return 0;
@@ -297,10 +422,7 @@ export async function runCliV1(
     if (command === "review") {
       return await review(options, io, dependencies);
     }
-    if (command === "resume-final") {
-      return await resumeFinal(options, io, dependencies);
-    }
-    throw new Error("Usage: independent-reviewer <prepare|inspect|review|resume-final> [options]");
+    return await resumeFinal(options, io, dependencies);
   } catch (error) {
     io.stderr(error instanceof Error ? error.message : "Unknown command failure");
     if (error instanceof ProviderCallError && error.code === "TRANSPORT_UNCERTAIN") {

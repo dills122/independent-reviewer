@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { INSPECTION_REPORT_V1_JSON_SCHEMA } from "../src/contracts/inspection-report.js";
 import { NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA } from "../src/contracts/neutral-review-brief.js";
 import { REVIEW_REQUEST_V1_JSON_SCHEMA } from "../src/contracts/review-request.js";
 import {
@@ -19,6 +20,7 @@ const schemaArtifacts = [
   ["preliminary-assessment-v1.schema.json", PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA],
   ["review-request-v1.schema.json", REVIEW_REQUEST_V1_JSON_SCHEMA],
   ["review-run-config-v2.schema.json", REVIEW_RUN_CONFIG_V2_JSON_SCHEMA],
+  ["inspection-report-v1.schema.json", INSPECTION_REPORT_V1_JSON_SCHEMA],
   ["snapshot-manifest-v1.schema.json", SNAPSHOT_MANIFEST_V1_JSON_SCHEMA],
 ] as const;
 
