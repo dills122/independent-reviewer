@@ -222,6 +222,38 @@ function finalCoverage() {
   };
 }
 
+function collectArrayLimits(schema: unknown, propertyName: string): number[] {
+  const limits: number[] = [];
+  const visit = (value: unknown, name?: string): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item, name);
+      }
+      return;
+    }
+    if (!value || typeof value !== "object") {
+      return;
+    }
+    const node = value as Record<string, unknown>;
+    if (name === propertyName && node.type === "array" && typeof node.maxItems === "number") {
+      limits.push(node.maxItems);
+    }
+    const properties = node.properties;
+    if (properties && typeof properties === "object") {
+      for (const [key, child] of Object.entries(properties)) {
+        visit(child, key);
+      }
+    }
+    for (const [key, child] of Object.entries(node)) {
+      if (key !== "properties") {
+        visit(child, name);
+      }
+    }
+  };
+  visit(schema);
+  return limits;
+}
+
 describe("two-stage review orchestrator", () => {
   it("persists the blind assessment before revealing the author packet", async () => {
     const { repositoryPath, packetPath } = await arrangePacket();
@@ -296,6 +328,12 @@ describe("two-stage review orchestrator", () => {
         .trim()
         .split("\n")
         .map((line) => JSON.parse(line));
+      // The applied limits are recorded with the call that used them, so a bounded review is
+      // auditable from the run record alone.
+      for (const started of events.filter((event) => event.type === "CALL_STARTED")) {
+        assert.equal(started.responseArrayLimits.findings, 40);
+        assert.equal(started.responseArrayLimits.evidence, 8);
+      }
       assert.deepEqual(
         events.map((event) => event.type),
         [
@@ -359,10 +397,21 @@ describe("two-stage review orchestrator", () => {
           valueAtPath(call.responseSchema.schema, ["properties", "summary", "maxLength"]),
           400,
         );
+        // Named per-array limits, not a blanket cap: a reviewer must be able to report more than
+        // a dozen findings, and each finding more than a dozen pieces of evidence.
         assert.equal(
           valueAtPath(call.responseSchema.schema, ["properties", "findings", "maxItems"]),
+          40,
+        );
+        assert.equal(
+          valueAtPath(call.responseSchema.schema, ["properties", "limitations", "maxItems"]),
           12,
         );
+        // The final report's findings are a oneOf union, so evidence arrays are collected by name
+        // rather than by a single fixed path.
+        const evidenceLimits = collectArrayLimits(call.responseSchema.schema, "evidence");
+        assert.ok(evidenceLimits.length > 0);
+        assert.deepEqual(new Set(evidenceLimits), new Set([8]));
         if (call.stage === "FINAL") {
           const changedPathCoverage = valueAtPath(call.responseSchema.schema, [
             "properties",
