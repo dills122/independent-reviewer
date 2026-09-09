@@ -9,6 +9,7 @@ import {
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
   NeutralReviewBriefV1Schema,
   PreliminaryAssessmentV1Schema,
+  logicalLineCountV1,
   sha256Utf8,
   type AuthorPacketV1,
   type FinalReviewReportV1,
@@ -16,6 +17,7 @@ import {
   type PreliminaryAssessmentV1,
   type ReviewFindingV1,
   ReviewRunConfigV2Schema,
+  resolveSnapshotSourceContentV1,
   verifyNeutralReviewBriefIdentityV1,
 } from "../contracts/index.js";
 import {
@@ -395,38 +397,6 @@ function constrainCoverageLedgers(
   return constrained;
 }
 
-type SnapshotPathEntryV1 = NeutralReviewBriefV1["snapshotManifest"]["paths"][number];
-
-function sourceContentAt(entry: SnapshotPathEntryV1, path: string, side: "BASE" | "HEAD") {
-  switch (entry.changeType) {
-    case "ADDED":
-    case "UNTRACKED":
-      return side === "HEAD" && entry.path === path ? entry.after : undefined;
-    case "DELETED":
-      return side === "BASE" && entry.path === path ? entry.before : undefined;
-    case "MODIFIED":
-    case "TYPE_CHANGED":
-      if (entry.path !== path) {
-        return undefined;
-      }
-      return side === "BASE" ? entry.before : entry.after;
-    case "RENAMED":
-    case "COPIED":
-      if (side === "BASE" && entry.previousPath === path) {
-        return entry.before;
-      }
-      return side === "HEAD" && entry.path === path ? entry.after : undefined;
-  }
-}
-
-function logicalLineCount(content: string): number {
-  if (content.length === 0) {
-    return 0;
-  }
-  const separators = content.match(/\r\n|[\r\n]/g)?.length ?? 0;
-  return separators + (/(?:\r\n|[\r\n])$/.test(content) ? 0 : 1);
-}
-
 async function assertFindingEvidenceAnchors(
   findings: ReviewFindingV1[],
   brief: NeutralReviewBriefV1,
@@ -435,9 +405,11 @@ async function assertFindingEvidenceAnchors(
   const textByDigest = new Map<string, string>();
   for (const finding of findings) {
     for (const evidence of finding.evidence) {
-      const content = brief.snapshotManifest.paths
-        .map((entry) => sourceContentAt(entry, evidence.path, evidence.side))
-        .find((candidate) => candidate !== undefined);
+      const content = resolveSnapshotSourceContentV1(
+        brief.snapshotManifest.paths,
+        evidence.path,
+        evidence.side,
+      );
       if (!content) {
         throw new Error(
           `Finding evidence does not identify a captured ${evidence.side} source: ${evidence.path}`,
@@ -454,7 +426,7 @@ async function assertFindingEvidenceAnchors(
         textByDigest.set(content.digest.value, source);
       }
       if (evidence.anchor === "LINE_RANGE") {
-        if (evidence.endLine > logicalLineCount(source)) {
+        if (evidence.endLine > logicalLineCountV1(source)) {
           throw new Error(
             `Finding line range is outside the frozen source: ${evidence.path}:${evidence.startLine}-${evidence.endLine}`,
           );

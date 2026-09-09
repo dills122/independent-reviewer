@@ -273,4 +273,28 @@ describe("captureGitSnapshotV1", () => {
       await rm(decoy, { recursive: true, force: true });
     }
   });
+
+  it("reports an unreadable untracked file as an omission carrying the error code", async () => {
+    if (process.getuid?.() === 0) {
+      return;
+    }
+    const repositoryPath = await createRepository();
+    const unreadablePath = join(repositoryPath, "unreadable.txt");
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/unreadable");
+      await writeFile(unreadablePath, "secret\n");
+      await chmod(unreadablePath, 0o000);
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const omission = captured.manifest.omissions.find(
+        (candidate) => candidate.scope === "unreadable.txt",
+      );
+
+      assert.equal(omission?.reason, "UNREADABLE");
+      assert.match(omission?.detail ?? "", /EACCES/);
+    } finally {
+      await chmod(unreadablePath, 0o644).catch(() => undefined);
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
 });

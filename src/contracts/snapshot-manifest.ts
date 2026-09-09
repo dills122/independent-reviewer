@@ -341,6 +341,83 @@ export const SnapshotManifestV1Schema = z
 
 export type SnapshotManifestV1 = z.infer<typeof SnapshotManifestV1Schema>;
 export type DigestV1 = z.infer<typeof DigestV1Schema>;
+export type SnapshotPathEntryV1 = z.infer<typeof SnapshotPathEntryV1Schema>;
+
+/**
+ * Resolves the captured content a `(path, side)` citation refers to, or `undefined` when the
+ * snapshot holds no content for that pair.
+ *
+ * A snapshot records two states per entry: `before` is the BASE content at `previousPath`
+ * (RENAMED, COPIED) or at `path`, and `after` is the HEAD content at `path`.
+ *
+ * A RENAMED entry's `previousPath` resolves on BASE only — the path no longer exists on HEAD. A
+ * COPIED entry's `previousPath` resolves on both sides: the source is retained by the copy and its
+ * captured `before` bytes are its HEAD bytes too. If that source was itself modified, the manifest
+ * carries a separate entry owning the path, which `resolveSnapshotSourceContentV1` prefers.
+ */
+export function snapshotSourceContentAtV1(
+  entry: SnapshotPathEntryV1,
+  path: string,
+  side: "BASE" | "HEAD",
+): SnapshotContentV1 | undefined {
+  switch (entry.changeType) {
+    case "ADDED":
+    case "UNTRACKED":
+      return side === "HEAD" && entry.path === path ? entry.after : undefined;
+    case "DELETED":
+      return side === "BASE" && entry.path === path ? entry.before : undefined;
+    case "MODIFIED":
+    case "TYPE_CHANGED":
+      if (entry.path !== path) {
+        return undefined;
+      }
+      return side === "BASE" ? entry.before : entry.after;
+    case "RENAMED":
+      if (side === "BASE" && entry.previousPath === path) {
+        return entry.before;
+      }
+      return side === "HEAD" && entry.path === path ? entry.after : undefined;
+    case "COPIED":
+      if (entry.previousPath === path) {
+        return entry.before;
+      }
+      return side === "HEAD" && entry.path === path ? entry.after : undefined;
+  }
+}
+
+/**
+ * Resolves a `(path, side)` citation against a whole manifest. Entries that own the path directly
+ * are consulted before relocation sources, so a path that is both a copy source and separately
+ * changed resolves to the entry that actually captured it rather than to manifest order.
+ */
+export function resolveSnapshotSourceContentV1(
+  paths: readonly SnapshotPathEntryV1[],
+  path: string,
+  side: "BASE" | "HEAD",
+): SnapshotContentV1 | undefined {
+  const owned = paths.filter((entry) => entry.path === path);
+  const relocationSources = paths.filter((entry) => entry.path !== path);
+  for (const entry of [...owned, ...relocationSources]) {
+    const content = snapshotSourceContentAtV1(entry, path, side);
+    if (content !== undefined) {
+      return content;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Counts the lines a `LINE_RANGE` citation can address. Empty content has no addressable line, so
+ * any range over it is out of bounds.
+ */
+export function logicalLineCountV1(content: string): number {
+  if (content.length === 0) {
+    return 0;
+  }
+  const lineSeparators = content.match(/\r\n|[\r\n]/g)?.length ?? 0;
+  const endsWithLineSeparator = /(?:\r\n|[\r\n])$/.test(content);
+  return lineSeparators + (endsWithLineSeparator ? 0 : 1);
+}
 
 export const SNAPSHOT_MANIFEST_V1_JSON_SCHEMA = {
   $id: "urn:independent-reviewer:schema:snapshot-manifest:v1",
