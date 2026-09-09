@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -294,6 +294,94 @@ describe("captureGitSnapshotV1", () => {
       assert.match(omission?.detail ?? "", /EACCES/);
     } finally {
       await chmod(unreadablePath, 0o644).catch(() => undefined);
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+  it("excludes credential-shaped filenames and credential directories", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/secret-names");
+      await mkdir(join(repositoryPath, ".ssh"), { recursive: true });
+      await writeFile(join(repositoryPath, ".ssh", "notes.txt"), "in a credential directory\n");
+      await writeFile(join(repositoryPath, "id_ed25519"), "private key material\n");
+      await writeFile(join(repositoryPath, "terraform.tfvars"), 'token = "value"\n');
+      await writeFile(join(repositoryPath, "keystore.jks"), "binary-ish\n");
+      await writeFile(join(repositoryPath, "kept.txt"), "ordinary source\n");
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const excluded = new Set(captured.manifest.exclusions.map((entry) => entry.path));
+      const capturedPaths = new Set(captured.manifest.paths.map((entry) => entry.path));
+
+      for (const path of [".ssh/notes.txt", "id_ed25519", "terraform.tfvars", "keystore.jks"]) {
+        assert.equal(excluded.has(path), true, `${path} must be excluded`);
+        assert.equal(capturedPaths.has(path), false, `${path} must not be captured`);
+      }
+      assert.equal(capturedPaths.has("kept.txt"), true);
+      assert.equal(
+        captured.manifest.exclusions.every((entry) => entry.reason === "SECRET_POLICY"),
+        true,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes a credential pasted into ordinary source", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/secret-content");
+      await writeFile(
+        join(repositoryPath, "config.ts"),
+        'export const token = "AKIAIOSFODNN7EXAMPLE";\n',
+      );
+      await writeFile(
+        join(repositoryPath, "fixture.pem.txt"),
+        "-----BEGIN OPENSSH PRIVATE KEY-----\nbase64\n",
+      );
+      await writeFile(join(repositoryPath, "kept.txt"), "ordinary source\n");
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const byPath = new Map(
+        captured.manifest.exclusions.map((entry) => [entry.path, entry.reason]),
+      );
+      const capturedPaths = new Set(captured.manifest.paths.map((entry) => entry.path));
+      const blobs = [...captured.blobs.values()].map((bytes) =>
+        Buffer.from(bytes).toString("utf8"),
+      );
+
+      assert.equal(byPath.get("config.ts"), "SECRET_CONTENT");
+      assert.equal(byPath.get("fixture.pem.txt"), "SECRET_CONTENT");
+      assert.equal(capturedPaths.has("kept.txt"), true);
+      assert.equal(
+        blobs.some((content) => content.includes("AKIAIOSFODNN7EXAMPLE")),
+        false,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes caller-supplied path patterns", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/patterns");
+      await mkdir(join(repositoryPath, "vendor", "nested"), { recursive: true });
+      await writeFile(join(repositoryPath, "vendor", "nested", "bundle.js"), "vendored\n");
+      await writeFile(join(repositoryPath, "notes.md"), "generated\n");
+      await writeFile(join(repositoryPath, "kept.txt"), "ordinary source\n");
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"), {
+        excludedPathPatterns: ["vendor/**", "*.md"],
+      });
+      const byPath = new Map(
+        captured.manifest.exclusions.map((entry) => [entry.path, entry.reason]),
+      );
+      const capturedPaths = new Set(captured.manifest.paths.map((entry) => entry.path));
+
+      assert.equal(byPath.get("vendor/nested/bundle.js"), "USER_EXCLUDED");
+      assert.equal(byPath.get("notes.md"), "USER_EXCLUDED");
+      assert.equal(capturedPaths.has("kept.txt"), true);
+    } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
   });

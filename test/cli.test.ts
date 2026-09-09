@@ -30,6 +30,7 @@ it("prepares and inspects a snapshot packet without a provider call", async () =
     await git(repositoryPath, "config", "user.email", "cli@example.invalid");
     await git(repositoryPath, "config", "commit.gpgsign", "false");
     await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+    await writeFile(join(repositoryPath, ".gitignore"), ".review-runs/\n");
     await git(repositoryPath, "add", ".");
     await git(repositoryPath, "commit", "-m", "initial");
     await git(repositoryPath, "switch", "-c", "feature/cli");
@@ -95,6 +96,7 @@ it("composes capture and the two-stage provider flow through the review command"
     await git(repositoryPath, "config", "user.email", "cli-review@example.invalid");
     await git(repositoryPath, "config", "commit.gpgsign", "false");
     await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+    await writeFile(join(repositoryPath, ".gitignore"), ".review-runs/\n");
     await git(repositoryPath, "add", ".");
     await git(repositoryPath, "commit", "-m", "initial");
     await git(repositoryPath, "switch", "-c", "feature/cli-review");
@@ -326,6 +328,7 @@ it("resumes a definite failed final stage without preparing or buying another pr
     await git(repositoryPath, "config", "user.email", "cli-resume@example.invalid");
     await git(repositoryPath, "config", "commit.gpgsign", "false");
     await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+    await writeFile(join(repositoryPath, ".gitignore"), ".review-runs/\n");
     await git(repositoryPath, "add", ".");
     await git(repositoryPath, "commit", "-m", "initial");
     await git(repositoryPath, "switch", "-c", "feature/cli-resume");
@@ -517,6 +520,158 @@ it("resumes a definite failed final stage without preparing or buying another pr
     assert.equal(resumedCalls, 1);
     assert.match(output.join("\n"), /Verdict: Ready/);
     assert.doesNotMatch(output.join("\n"), /AUTHOR_RESUME_CONTEXT/);
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
+it("never captures a prior packet, and warns when packets are not ignored", async () => {
+  const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-cli-packets-"));
+  try {
+    await git(repositoryPath, "init", "--initial-branch=main");
+    await git(repositoryPath, "config", "user.name", "CLI Packet Test");
+    await git(repositoryPath, "config", "user.email", "cli-packet@example.invalid");
+    await git(repositoryPath, "config", "commit.gpgsign", "false");
+    await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+    await git(repositoryPath, "add", ".");
+    await git(repositoryPath, "commit", "-m", "initial");
+    await git(repositoryPath, "switch", "-c", "feature/cli-packets");
+    await writeFile(join(repositoryPath, "reviewed.txt"), "after\n");
+
+    const requestPath = join(repositoryPath, "request.json");
+    await writeFile(
+      requestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        flowId: "flow_cli_packets",
+        reviewInstance: { number: 1, maximum: 3 },
+        repository: { path: repositoryPath, base: "main" },
+        canonicalInputs: {
+          requirements: [
+            {
+              id: "input_requirement",
+              kind: "REQUIREMENTS",
+              title: "Requirement",
+              content: "Review the change.",
+              provenance: { type: "INLINE", label: "CLI packet test" },
+            },
+          ],
+          implementationPlan: {
+            id: "input_plan",
+            kind: "IMPLEMENTATION_PLAN",
+            title: "Plan",
+            content: "Prepare the packet twice.",
+            provenance: { type: "INLINE", label: "CLI packet test" },
+          },
+        },
+        authorPacket: undefined,
+        reviewConfigRef: "config_test",
+      }),
+    );
+
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: (message: string) => output.push(message),
+      stderr: (message: string) => errors.push(message),
+    };
+
+    const firstPacket = join(repositoryPath, "review-out", "first");
+    const secondPacket = join(repositoryPath, "review-out", "second");
+    assert.equal(
+      await runCliV1(["prepare", "--request", requestPath, "--output", firstPacket], io),
+      0,
+    );
+    assert.equal(
+      await runCliV1(["prepare", "--request", requestPath, "--output", secondPacket], io),
+      0,
+    );
+
+    // review-out/ is inside the worktree and not gitignored: both runs must say so.
+    assert.equal(errors.length, 2);
+    assert.match(errors[0] ?? "", /not ignored by Git/);
+
+    const manifest = JSON.parse(
+      await readFile(join(secondPacket, "snapshot-manifest.json"), "utf8"),
+    ) as { paths: { path: string }[]; exclusions: { path: string }[] };
+    assert.equal(
+      manifest.paths.some((entry) => entry.path.startsWith("review-out/")),
+      false,
+    );
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
+it("applies caller-supplied exclusion patterns from the command line", async () => {
+  const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-cli-exclude-"));
+  try {
+    await git(repositoryPath, "init", "--initial-branch=main");
+    await git(repositoryPath, "config", "user.name", "CLI Exclude Test");
+    await git(repositoryPath, "config", "user.email", "cli-exclude@example.invalid");
+    await git(repositoryPath, "config", "commit.gpgsign", "false");
+    await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+    await writeFile(join(repositoryPath, ".gitignore"), ".review-runs/\n");
+    await git(repositoryPath, "add", ".");
+    await git(repositoryPath, "commit", "-m", "initial");
+    await git(repositoryPath, "switch", "-c", "feature/cli-exclude");
+    await writeFile(join(repositoryPath, "reviewed.txt"), "after\n");
+    await writeFile(join(repositoryPath, "notes.md"), "excluded by pattern\n");
+
+    const requestPath = join(repositoryPath, "request.json");
+    await writeFile(
+      requestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        flowId: "flow_cli_exclude",
+        reviewInstance: { number: 1, maximum: 3 },
+        repository: { path: repositoryPath, base: "main" },
+        canonicalInputs: {
+          requirements: [
+            {
+              id: "input_requirement",
+              kind: "REQUIREMENTS",
+              title: "Requirement",
+              content: "Review the change.",
+              provenance: { type: "INLINE", label: "CLI exclude test" },
+            },
+          ],
+          implementationPlan: {
+            id: "input_plan",
+            kind: "IMPLEMENTATION_PLAN",
+            title: "Plan",
+            content: "Exclude a pattern.",
+            provenance: { type: "INLINE", label: "CLI exclude test" },
+          },
+        },
+        reviewConfigRef: "config_test",
+      }),
+    );
+
+    const output: string[] = [];
+    const io = { stdout: (message: string) => output.push(message), stderr: () => undefined };
+    const packetPath = join(repositoryPath, ".review-runs", "excluded");
+    assert.equal(
+      await runCliV1(
+        ["prepare", "--request", requestPath, "--output", packetPath, "--exclude", "*.md"],
+        io,
+      ),
+      0,
+    );
+
+    const manifest = JSON.parse(
+      await readFile(join(packetPath, "snapshot-manifest.json"), "utf8"),
+    ) as { paths: { path: string }[]; exclusions: { path: string; reason: string }[] };
+    assert.equal(
+      manifest.paths.some((entry) => entry.path === "notes.md"),
+      false,
+    );
+    assert.equal(
+      manifest.exclusions.some(
+        (entry) => entry.path === "notes.md" && entry.reason === "USER_EXCLUDED",
+      ),
+      true,
+    );
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });
   }

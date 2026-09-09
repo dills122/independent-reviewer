@@ -213,6 +213,7 @@ export const SnapshotManifestV1Schema = z
         path: SnapshotPathV1Schema,
         reason: z.enum([
           "SECRET_POLICY",
+          "SECRET_CONTENT",
           "PATH_POLICY",
           "SIZE_LIMIT",
           "GENERATED_POLICY",

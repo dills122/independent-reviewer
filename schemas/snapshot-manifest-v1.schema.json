@@ -1735,6 +1735,7 @@
             "type": "string",
             "enum": [
               "SECRET_POLICY",
+              "SECRET_CONTENT",
               "PATH_POLICY",
               "SIZE_LIMIT",
               "GENERATED_POLICY",

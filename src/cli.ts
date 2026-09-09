@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readFile, realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -13,7 +13,11 @@ import {
 import { resumeFinalReviewV1, runTwoStageReviewV1 } from "./orchestrator/two-stage-review.js";
 import { OpenRouterProviderV1, ProviderCallError } from "./provider/openrouter.js";
 import type { ReviewProviderV1 } from "./provider/review-provider.js";
-import { captureGitSnapshotV1 } from "./snapshot/git-capture.js";
+import {
+  captureGitSnapshotV1,
+  isPathIgnoredV1,
+  resolveRepositoryRootV1,
+} from "./snapshot/git-capture.js";
 import { inspectSnapshotPacketV1, writeSnapshotPacketV1 } from "./snapshot/snapshot-packet.js";
 
 export interface CliIoV1 {
@@ -39,6 +43,7 @@ const processDependencies: CliDependenciesV1 = {
 interface PreparedPacketV1 {
   packetPath: string;
   captured: Awaited<ReturnType<typeof captureGitSnapshotV1>>;
+  repositoryRoot: string;
 }
 
 function parseOptions(args: string[]): Map<string, string | true> {
@@ -111,25 +116,86 @@ async function preparePacket(
   }
   const base = options.get("--base");
   const configPath = options.get("--config");
+  const excludePatterns = options.get("--exclude");
+  // Packet locations are resolved before capture so the packets themselves never become evidence:
+  // a prior run's blobs, canonical inputs, and author packet would otherwise be captured as
+  // untracked files and transmitted on the next review.
+  const repositoryRoot = await resolveRepositoryRootV1(request.repository.path);
+  const requestedOutput = options.get("--output");
+  const defaultPacketRoot = join(repositoryRoot, ".review-runs");
+  const packetRoot =
+    typeof requestedOutput === "string" ? resolve(requestedOutput) : defaultPacketRoot;
+  // Sibling packets from earlier runs live beside the requested one, so the containing directory
+  // is excluded too, unless that would exclude the whole worktree.
+  const packetParent = dirname(packetRoot);
+  const packetSiblingRoot =
+    packetParent === repositoryRoot || packetParent === dirname(packetParent) ? [] : [packetParent];
   const captured = await captureGitSnapshotV1(request, {
     ...(typeof base === "string" ? { base } : {}),
     excludedFileSystemPaths: [
       requestPath,
       ...(typeof configPath === "string" ? [resolve(configPath)] : []),
+      defaultPacketRoot,
+      packetRoot,
+      ...packetSiblingRoot,
     ],
+    ...(typeof excludePatterns === "string"
+      ? { excludedPathPatterns: excludePatterns.split(",").filter((entry) => entry.length > 0) }
+      : {}),
   });
-  const requestedOutput = options.get("--output");
   const packetPath =
     typeof requestedOutput === "string"
-      ? resolve(requestedOutput)
-      : resolve(".review-runs", captured.manifest.snapshotId);
+      ? packetRoot
+      : join(defaultPacketRoot, captured.manifest.snapshotId);
   await writeSnapshotPacketV1(packetPath, captured, request);
-  return { packetPath, captured };
+  return { packetPath, captured, repositoryRoot };
+}
+
+/**
+ * Resolves symlinks on the nearest existing ancestor of a path that may not exist yet, so a
+ * not-yet-created packet directory compares correctly against a realpath-resolved worktree root.
+ */
+async function realpathNearestAncestor(path: string): Promise<string> {
+  const trailing: string[] = [];
+  let candidate = resolve(path);
+  for (;;) {
+    try {
+      return join(await realpath(candidate), ...trailing.reverse());
+    } catch {
+      const parent = dirname(candidate);
+      if (parent === candidate) {
+        return resolve(path);
+      }
+      trailing.push(basename(candidate));
+      candidate = parent;
+    }
+  }
+}
+
+/** Warns when packets are written into the reviewed worktree without being ignored by Git. */
+async function warnUnignoredPacketLocation(
+  repositoryRoot: string,
+  packetPath: string,
+  io: CliIoV1,
+): Promise<void> {
+  // Compare and query Git with symlinks resolved: on macOS a /tmp path and its /private/tmp
+  // realpath would otherwise look like different repositories.
+  const resolvedPacketPath = await realpathNearestAncestor(packetPath);
+  const relativePath = relative(repositoryRoot, resolvedPacketPath);
+  const insideWorktree =
+    relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+  if (!insideWorktree || (await isPathIgnoredV1(repositoryRoot, resolvedPacketPath))) {
+    return;
+  }
+  io.stderr(
+    `Warning: ${packetPath} is inside the reviewed worktree and is not ignored by Git. Add it to .gitignore, or a later review will capture this packet as evidence.`,
+  );
 }
 
 async function prepare(options: Map<string, string | true>, io: CliIoV1): Promise<void> {
-  assertAllowedOptions(options, ["--request", "--base", "--output"]);
-  const { captured, packetPath } = await preparePacket(options);
+  assertAllowedOptions(options, ["--request", "--base", "--output", "--exclude"]);
+  const { captured, packetPath, repositoryRoot } = await preparePacket(options);
+  await warnUnignoredPacketLocation(repositoryRoot, packetPath, io);
   io.stdout(`Prepared snapshot packet: ${packetPath}`);
   io.stdout(`Snapshot digest: ${captured.manifest.snapshotDigest.value}`);
   io.stdout(`Captured changes: ${captured.manifest.paths.length}`);
@@ -158,7 +224,7 @@ async function review(
   io: CliIoV1,
   dependencies: CliDependenciesV1,
 ): Promise<number> {
-  assertAllowedOptions(options, ["--request", "--config", "--base", "--output"]);
+  assertAllowedOptions(options, ["--request", "--config", "--base", "--output", "--exclude"]);
   const apiKey = dependencies.readOpenRouterApiKey();
   if (!apiKey || apiKey.trim().length === 0) {
     throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
@@ -167,6 +233,7 @@ async function review(
   const config = ReviewRunConfigV2Schema.parse(JSON.parse(await readFile(configPath, "utf8")));
   const provider = dependencies.createProvider(apiKey, config.providerRouting);
   const prepared = await preparePacket(options, config.configId);
+  await warnUnignoredPacketLocation(prepared.repositoryRoot, prepared.packetPath, io);
   io.stdout(`Prepared snapshot packet: ${prepared.packetPath}`);
   const result = await runTwoStageReviewV1(prepared.packetPath, config, provider);
   io.stdout(`Verdict: ${verdictLabels[result.report.verdict]}`);

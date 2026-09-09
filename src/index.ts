@@ -20,6 +20,8 @@ export type {
 export { renderFinalReviewMarkdownV1 } from "./report/markdown.js";
 export {
   captureGitSnapshotV1,
+  isPathIgnoredV1,
+  resolveRepositoryRootV1,
   SnapshotCaptureError,
 } from "./snapshot/git-capture.js";
 export type {
