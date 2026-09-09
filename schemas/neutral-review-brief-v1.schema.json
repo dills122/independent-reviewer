@@ -2467,51 +2467,6 @@
         ],
         "additionalProperties": false
       }
-    },
-    "capabilities": {
-      "type": "object",
-      "properties": {
-        "evidenceOperations": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "enum": [
-              "READ_SNAPSHOT_FILE",
-              "READ_DIFF",
-              "SEARCH_SNAPSHOT",
-              "READ_CANONICAL_INPUT"
-            ]
-          }
-        },
-        "verificationChecks": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 7,
-                "maxLength": 128,
-                "pattern": "^check_[A-Za-z0-9][A-Za-z0-9_-]*$"
-              },
-              "title": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "required": [
-              "id",
-              "title"
-            ],
-            "additionalProperties": false
-          }
-        }
-      },
-      "required": [
-        "evidenceOperations",
-        "verificationChecks"
-      ],
-      "additionalProperties": false
     }
   },
   "required": [
@@ -2523,8 +2478,7 @@
     "canonicalInputs",
     "snapshotManifest",
     "initialEvidence",
-    "coverageConstraints",
-    "capabilities"
+    "coverageConstraints"
   ],
   "additionalProperties": false
 }
