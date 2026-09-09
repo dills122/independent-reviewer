@@ -1,5 +1,6 @@
 import {
   FinalReviewCandidateV1Schema,
+  FinalReviewCandidateV2Schema,
   FinalReviewReportV1Schema,
   type AuthorPacketV1,
   type FinalReviewReportV1,
@@ -12,7 +13,9 @@ function assertCompleteIndices(indices: number[], count: number, label: string):
     new Set(indices).size !== count ||
     indices.some((index) => index >= count)
   ) {
-    throw new Error(`${label} must reference every source index exactly once.`);
+    throw new Error(
+      `${label} must reference indices ${JSON.stringify(Array.from({ length: count }, (_, index) => index))} exactly once; received ${JSON.stringify(indices)}.`,
+    );
   }
 }
 
@@ -60,4 +63,58 @@ export function materializeFinalReviewCandidateV1(
       }),
     ),
   });
+}
+
+export function materializeFinalReviewCandidateV2(
+  value: unknown,
+  preliminary: PreliminaryAssessmentV1,
+  claims: AuthorPacketV1["claimedVerification"],
+): FinalReviewReportV1 {
+  const { findings, withdrawnPreliminaryFindings, ...candidate } =
+    FinalReviewCandidateV2Schema.parse(value);
+  const expected = new Set(preliminary.findings.map((finding) => finding.id));
+  const actual = [
+    ...findings.flatMap((finding) => finding.sourceFindingIds),
+    ...withdrawnPreliminaryFindings.map((finding) => finding.preliminaryFindingId),
+  ];
+  const missing = [...expected].filter((id) => !actual.includes(id));
+  const unknown = actual.filter((id) => !expected.has(id));
+  const duplicates = actual.filter((id, index) => actual.indexOf(id) !== index);
+  if (missing.length || unknown.length || duplicates.length) {
+    throw new Error(
+      `Preliminary references: missing=${JSON.stringify(missing)}, unknown=${JSON.stringify(unknown)}, duplicate=${JSON.stringify(duplicates)}. Each source belongs to one final finding or one explicit withdrawal.`,
+    );
+  }
+  const finalFindings = findings.map(
+    ({ sourceFindingIds, reconciliationRationale, ...finding }, index) => ({
+      ...finding,
+      id: `finding_final_${index + 1}`,
+      origin: sourceFindingIds.length ? "PRELIMINARY" : "FINAL_ONLY",
+      emergenceRationale: sourceFindingIds.length ? null : reconciliationRationale,
+    }),
+  );
+  return materializeFinalReviewCandidateV1(
+    {
+      ...candidate,
+      schemaVersion: 1,
+      findings: finalFindings,
+      preliminaryFindingDispositions: [
+        ...findings.flatMap((finding, index) =>
+          finding.sourceFindingIds.map((id) => ({
+            preliminaryFindingId: id,
+            disposition: finding.sourceFindingIds.length > 1 ? "MERGED" : "REVISED",
+            finalFindingId: finalFindings[index]?.id,
+            rationale: finding.reconciliationRationale,
+          })),
+        ),
+        ...withdrawnPreliminaryFindings.map((finding) => ({
+          ...finding,
+          disposition: "WITHDRAWN",
+          finalFindingId: null,
+        })),
+      ],
+    },
+    preliminary,
+    claims,
+  );
 }

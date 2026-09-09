@@ -30,6 +30,8 @@ const DEFAULT_PROSE_MAX_LENGTH_V1 = 400;
  */
 const RESPONSE_ARRAY_LIMITS_V1: Readonly<Record<string, number>> = {
   authorClaims: 24,
+  sourceFindingIds: 40,
+  withdrawnPreliminaryFindings: 40,
   blockers: 12,
   evidence: 8,
   evidenceGaps: 24,
@@ -291,6 +293,19 @@ export function constrainRepairReferencesV1(
   const schema = structuredClone(final.schema);
   const properties = requireProperties(schema, "(root)");
   const appliedArrayLimits = { ...final.appliedArrayLimits };
+  if (properties.withdrawnPreliminaryFindings) {
+    const ids = preliminary.findings.map((finding) => finding.id);
+    visitNodes(schema, (node, name) => {
+      if (name === "sourceFindingIds" && node.type === "array") {
+        requireNode(node.items, "sourceFindingIds.items").enum = ids;
+        node.maxItems = ids.length;
+      }
+      if (name === "preliminaryFindingId") node.enum = ids;
+      if (name === "withdrawnPreliminaryFindings" && node.type === "array")
+        node.maxItems = ids.length;
+    });
+  }
+
   const pin = (name: string, field: string, values: Array<string | number>): void => {
     const ledger = requireNode(properties[name], name);
     ledger.minItems = values.length;
@@ -300,11 +315,12 @@ export function constrainRepairReferencesV1(
     const reference = requireNode(items[field], `${name}.items.${field}`);
     reference.enum = [...new Set(values)];
   };
-  pin(
-    "preliminaryFindingDispositions",
-    "preliminaryFindingId",
-    preliminary.findings.map((finding) => finding.id),
-  );
+  if (!properties.withdrawnPreliminaryFindings)
+    pin(
+      "preliminaryFindingDispositions",
+      "preliminaryFindingId",
+      preliminary.findings.map((finding) => finding.id),
+    );
   pin("preliminaryConcernDispositions", "concernIndex", [
     ...preliminary.evidenceGaps.map((_, index) => index),
     ...preliminary.limitations.map((_, index) => index),

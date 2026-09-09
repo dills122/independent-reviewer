@@ -1,3 +1,4 @@
+import { asFinalCandidateV2 } from "./helpers/final-candidate.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -171,8 +172,8 @@ it("composes capture and the two-stage provider flow through the review command"
 
     const calls: ReviewProviderRequestV1[] = [];
     const response = (value: unknown): ReviewProviderResponseV1 => ({
-      value,
-      rawContent: JSON.stringify(value),
+      value: asFinalCandidateV2(value),
+      rawContent: JSON.stringify(asFinalCandidateV2(value)),
       responseId: "mock-response",
       model: "mock/reviewer",
       provider: "mock",
@@ -433,8 +434,8 @@ it("resumes a definite failed final stage without preparing or buying another pr
     );
 
     const makeResponse = (value: unknown): ReviewProviderResponseV1 => ({
-      value,
-      rawContent: JSON.stringify(value),
+      value: asFinalCandidateV2(value),
+      rawContent: JSON.stringify(asFinalCandidateV2(value)),
       responseId: "mock-response",
       model: "mock/reviewer",
       provider: "mock",
@@ -488,7 +489,7 @@ it("resumes a definite failed final stage without preparing or buying another pr
             providerName: "mock",
             model: "mock/reviewer",
             responseId: null,
-            retryAfter: null,
+            retryAfter: "45",
           },
         });
       },

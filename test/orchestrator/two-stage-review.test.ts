@@ -1,3 +1,4 @@
+import { asFinalCandidateV2 } from "../helpers/final-candidate.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -156,6 +157,7 @@ const config: ReviewRunConfigV2 = {
 };
 
 function response(value: unknown, totalTokens = 100): ReviewProviderResponseV1 {
+  value = asFinalCandidateV2(value);
   return {
     value,
     rawContent: JSON.stringify(value),
@@ -479,7 +481,7 @@ describe("two-stage review orchestrator", () => {
           assert.deepEqual(
             valueAtPath(providerRequest.responseSchema.schema, [
               "properties",
-              "preliminaryFindingDispositions",
+              "withdrawnPreliminaryFindings",
               "items",
               "properties",
               "preliminaryFindingId",
@@ -510,7 +512,7 @@ describe("two-stage review orchestrator", () => {
           findings: [finalFinding],
           preliminaryFindingDispositions: [
             {
-              preliminaryFindingId: "finding_repair",
+              preliminaryFindingId: isRepair ? "finding_repair" : "finding_missing",
               disposition: "RETAINED",
               finalFindingId: "finding_repair",
               rationale: "The author packet does not resolve the changed behavior.",
@@ -535,7 +537,7 @@ describe("two-stage review orchestrator", () => {
         ["PRELIMINARY", "FINAL", "FINAL"],
       );
       assert.match(JSON.stringify(calls[2]?.messages), /FINAL_OUTPUT_REPAIR/);
-      assert.match(JSON.stringify(calls[2]?.messages), /expected null/);
+      assert.match(JSON.stringify(calls[2]?.messages), /finding_missing/);
       await readFile(join(packetPath, "review", "final-provider-response.json"), "utf8");
       await readFile(join(packetPath, "review", "final-repair-provider-response.json"), "utf8");
       const events = (await readFile(result.runRecordPath, "utf8"))
@@ -825,7 +827,7 @@ describe("two-stage review orchestrator", () => {
             providerName: "Mock Provider",
             model: "mock/reviewer",
             responseId: null,
-            retryAfter: null,
+            retryAfter: "45",
           },
         });
       },
@@ -1149,7 +1151,7 @@ describe("two-stage review orchestrator", () => {
           budgets: {
             ...config.budgets,
             maxOutputTokensPerCall: 15_000,
-            maxTotalTokens: 74_000,
+            maxTotalTokens: 118_000,
             maxTotalCostUsd: 1,
           },
         },
@@ -1523,4 +1525,151 @@ describe("two-stage review orchestrator", () => {
       await rm(repositoryPath, { recursive: true, force: true });
     }
   });
+});
+
+function transientFailure() {
+  return new ProviderCallError("PROVIDER_ERROR", "Temporarily unavailable", {
+    diagnostic: {
+      httpStatus: 503,
+      providerErrorCode: "503",
+      providerMessage: null,
+      errorType: null,
+      providerCode: null,
+      providerName: "mock",
+      model: null,
+      responseId: null,
+      retryAfter: "0",
+    },
+  });
+}
+
+function successfulEmptyResponse(request: ReviewProviderRequestV1) {
+  const brief = JSON.parse(request.messages[1]?.content ?? "{}");
+  const common = {
+    schemaVersion: 1,
+    stage: request.stage,
+    snapshotDigest: brief.snapshotManifest.snapshotDigest,
+    briefDigest: brief.briefDigest,
+    summary: "Reviewed source.",
+    findings: [],
+    limitations: [],
+  };
+  return response(
+    request.stage === "PRELIMINARY"
+      ? {
+          ...common,
+          inspectedPaths: ["reviewed.txt"],
+          canonicalInputCoverage: canonicalInputCoverage(),
+          evidenceGaps: [],
+          nextAction: "REQUEST_AUTHOR_PACKET",
+        }
+      : {
+          ...common,
+          ...finalCoverage(),
+          preliminaryFindingDispositions: [],
+          authorClaims: [],
+          verdict: "READY",
+          nextActions: { blockers: [], fastFollows: [] },
+        },
+  );
+}
+
+it("retries only the failed final call with identical inputs and unique attempt numbers", async () => {
+  const { repositoryPath, packetPath } = await arrangePacket();
+  const calls: ReviewProviderRequestV1[] = [];
+  const provider: ReviewProviderV1 = {
+    auditRequest: mockAuditRequest,
+    complete: async (request) => {
+      calls.push(request);
+      if (calls.length === 2) throw transientFailure();
+      return successfulEmptyResponse(request);
+    },
+  };
+  try {
+    const result = await runTwoStageReviewV1(packetPath, config, provider);
+    assert.equal(result.report.verdict, "READY");
+    assert.deepEqual(
+      calls.map((request) => request.stage),
+      ["PRELIMINARY", "FINAL", "FINAL"],
+    );
+    assert.deepEqual(calls[1], calls[2]);
+    const events = (await readFile(result.runRecordPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(
+      events.filter((e) => e.type === "CALL_STARTED").map((e) => e.attemptNumber),
+      [1, 2, 3],
+    );
+    const retry = events.find((e) => e.type === "PROVIDER_RETRY_REQUESTED");
+    assert.ok(retry.chargedFailedTokens > 0);
+    assert.ok(retry.chargedFailedCostUsd > 0);
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
+it("permits only one provider retry across both review stages", async () => {
+  const { repositoryPath, packetPath } = await arrangePacket();
+  const calls: ReviewProviderRequestV1[] = [];
+  const provider: ReviewProviderV1 = {
+    auditRequest: mockAuditRequest,
+    complete: async (request) => {
+      calls.push(request);
+      if (calls.length === 1 || request.stage === "FINAL") throw transientFailure();
+      return successfulEmptyResponse(request);
+    },
+  };
+  try {
+    await assert.rejects(
+      () => runTwoStageReviewV1(packetPath, config, provider),
+      /Temporarily unavailable/,
+    );
+    assert.deepEqual(
+      calls.map((request) => request.stage),
+      ["PRELIMINARY", "PRELIMINARY", "FINAL"],
+    );
+    assert.deepEqual(calls[0], calls[1]);
+    assert.doesNotMatch(JSON.stringify(calls[0]?.messages), /Reported by author/);
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
+it("does not retry when failed-call usage leaves insufficient tokens or cost", async () => {
+  for (const budget of ["tokens", "cost"]) {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    let calls = 0;
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async () => {
+        calls++;
+        const error = transientFailure();
+        throw new ProviderCallError("PROVIDER_ERROR", "Temporarily unavailable", {
+          ...(error.diagnostic ? { diagnostic: error.diagnostic } : {}),
+          responseMetadata: {
+            responseId: null,
+            model: null,
+            provider: null,
+            finishReason: "error",
+            usage: {
+              promptTokens: budget === "tokens" ? config.budgets.maxTotalTokens : 1,
+              completionTokens: 0,
+              totalTokens: budget === "tokens" ? config.budgets.maxTotalTokens : 1,
+              cost: budget === "cost" ? config.budgets.maxTotalCostUsd : 0,
+            },
+          },
+        });
+      },
+    };
+    try {
+      await assert.rejects(
+        () => runTwoStageReviewV1(packetPath, config, provider),
+        /remaining .*budget/,
+      );
+      assert.equal(calls, 1);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  }
 });

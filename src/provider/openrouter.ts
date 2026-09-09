@@ -1,4 +1,7 @@
 import * as z from "zod";
+import { ProviderCallPacerV1 } from "./call-pacing.js";
+
+const sharedCallPacer = new ProviderCallPacerV1();
 
 import {
   OpenRouterProviderRoutingV1Schema,
@@ -224,12 +227,38 @@ function providerErrorDiagnostic(
   const errorObject = error && typeof error === "object" ? error : {};
   const metadataValue = (errorObject as { metadata?: unknown }).metadata;
   const metadata = metadataValue && typeof metadataValue === "object" ? metadataValue : {};
+  const limitSource = boundedText(
+    (metadata as { limit_source?: unknown }).limit_source,
+    80,
+    apiKey,
+  );
+  const previous = (metadata as { previous_errors?: unknown }).previous_errors;
+  const previousErrors = Array.isArray(previous)
+    ? previous.slice(0, 3).map((entry: unknown) => {
+        const item = entry && typeof entry === "object" ? (entry as Record<string, unknown>) : {};
+        return {
+          provider: boundedText(item.provider_name, 120, apiKey),
+          code: boundedText(
+            typeof item.code === "number" ? String(item.code) : item.code,
+            80,
+            apiKey,
+          ),
+        };
+      })
+    : undefined;
   return {
+    ...(limitSource ? { limitSource } : {}),
+    ...(previousErrors ? { previousErrors } : {}),
     httpStatus: response.status,
     providerErrorCode: safeProviderErrorLabel(errorObject, apiKey),
     providerMessage: boundedText((errorObject as { message?: unknown }).message, 500, apiKey),
     errorType: boundedText((metadata as { error_type?: unknown }).error_type, 80, apiKey),
-    providerCode: boundedText((metadata as { provider_code?: unknown }).provider_code, 80, apiKey),
+    providerCode: boundedText(
+      (metadata as { provider_code?: unknown }).provider_code ??
+        (metadata as { provider_error_code?: unknown }).provider_error_code,
+      80,
+      apiKey,
+    ),
     providerName:
       boundedText((envelope as { provider?: unknown }).provider, 120, apiKey) ??
       boundedText((metadata as { provider_name?: unknown }).provider_name, 120, apiKey),
@@ -301,14 +330,21 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
   readonly #apiKey: string;
   readonly #fetch: typeof fetch;
   readonly #routing: OpenRouterProviderRoutingV1;
+  readonly #pacer: ProviderCallPacerV1;
 
-  constructor(apiKey: string, routingValue: unknown, fetchImplementation: typeof fetch = fetch) {
+  constructor(
+    apiKey: string,
+    routingValue: unknown,
+    fetchImplementation: typeof fetch = fetch,
+    pacer: ProviderCallPacerV1 = sharedCallPacer,
+  ) {
     if (apiKey.trim().length === 0) {
       throw new ProviderCallError("INVALID_CONFIGURATION", "OpenRouter API key is required.");
     }
     this.#apiKey = apiKey;
     this.#routing = OpenRouterProviderRoutingV1Schema.parse(routingValue);
     this.#fetch = fetchImplementation;
+    this.#pacer = pacer;
   }
 
   auditRequest(request: ReviewProviderRequestV1) {
@@ -327,7 +363,41 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
     };
   }
 
+  deferRequests(model: string, delayMs: number): void {
+    this.#pacer.defer(model, delayMs);
+  }
+
+  forRetry(error: ProviderCallError): ReviewProviderV1 {
+    const failed = (error.responseMetadata?.provider ?? error.diagnostic?.providerName ?? "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+    const order = [...this.#routing.order].reverse();
+    if (failed)
+      order.sort(
+        (a, b) =>
+          Number(
+            a
+              .split("/")[0]
+              ?.toLowerCase()
+              .replace(/[^a-z0-9]/g, "") === failed,
+          ) -
+          Number(
+            b
+              .split("/")[0]
+              ?.toLowerCase()
+              .replace(/[^a-z0-9]/g, "") === failed,
+          ),
+      );
+    return new OpenRouterProviderV1(
+      this.#apiKey,
+      { ...this.#routing, order },
+      this.#fetch,
+      this.#pacer,
+    );
+  }
+
   async complete(request: ReviewProviderRequestV1): Promise<ReviewProviderResponseV1> {
+    await this.#pacer.wait(request.model);
     const wireBody = openRouterWireBodyV2(request, this.#routing);
     let response: Response;
     let rawBody: string;
@@ -360,6 +430,22 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
     try {
       body = JSON.parse(rawBody) as unknown;
     } catch (error) {
+      if (!response.ok) {
+        const diagnostic = providerErrorDiagnostic(
+          {},
+          { code: response.status },
+          response,
+          this.#apiKey,
+        );
+        throw new ProviderCallError(
+          "PROVIDER_ERROR",
+          `OpenRouter request failed (HTTP ${response.status}).`,
+          {
+            diagnostic,
+            responseBody: rawBody.replaceAll(this.#apiKey, "[REDACTED]"),
+          },
+        );
+      }
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         `OpenRouter returned a non-JSON response (HTTP ${response.status}).`,
@@ -387,7 +473,15 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       throw new ProviderCallError(
         "PROVIDER_ERROR",
         `OpenRouter request failed (HTTP ${response.status}).`,
-        rejectedResponse,
+        {
+          ...rejectedResponse,
+          diagnostic: providerErrorDiagnostic(
+            body,
+            { code: response.status },
+            response,
+            this.#apiKey,
+          ),
+        },
       );
     }
 
@@ -412,7 +506,7 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         "OpenRouter response did not contain usable completion content.",
-        rejectedResponse,
+        { ...rejectedResponse, retryable: true },
       );
     }
     const returnedModel = nullableString(parsed.data.model);

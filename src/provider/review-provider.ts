@@ -16,9 +16,12 @@ export interface ProviderErrorDiagnosticV1 {
   readonly model: string | null;
   readonly responseId: string | null;
   readonly retryAfter: string | null;
+  readonly limitSource?: string;
+  readonly previousErrors?: Array<{ provider: string | null; code: string | null }>;
 }
 
 export interface ProviderCallErrorOptions extends ErrorOptions {
+  readonly retryable?: boolean;
   readonly diagnostic?: ProviderErrorDiagnosticV1;
   readonly responseMetadata?: ProviderResponseMetadataV1;
   /** Credential-redacted provider response retained for private failure diagnostics. */
@@ -27,6 +30,7 @@ export interface ProviderCallErrorOptions extends ErrorOptions {
 
 export class ProviderCallError extends Error {
   readonly code: ProviderCallErrorCode;
+  readonly retryable: boolean;
   readonly diagnostic: ProviderErrorDiagnosticV1 | null;
   readonly responseBody: unknown | null;
   readonly responseMetadata: ProviderResponseMetadataV1 | null;
@@ -35,6 +39,7 @@ export class ProviderCallError extends Error {
     super(message, options);
     this.name = "ProviderCallError";
     this.code = code;
+    this.retryable = options?.retryable ?? false;
     this.diagnostic = options?.diagnostic ?? null;
     this.responseBody = options?.responseBody ?? null;
     this.responseMetadata = options?.responseMetadata ?? null;
@@ -93,6 +98,10 @@ export interface ReviewProviderRequestAuditV1 {
 }
 
 export interface ReviewProviderV1 {
+  /** Pause new requests in the shared batch, including other review workers. */
+  deferRequests?(model: string, delayMs: number): void;
+  /** Same model and policy; may prefer another already permitted endpoint. */
+  forRetry?(error: ProviderCallError): ReviewProviderV1;
   auditRequest(request: ReviewProviderRequestV1): ReviewProviderRequestAuditV1;
   complete(request: ReviewProviderRequestV1): Promise<ReviewProviderResponseV1>;
 }

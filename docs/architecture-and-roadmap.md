@@ -133,8 +133,19 @@ For source review, propose `data_collection: "deny"` and `zdr: true`, failing wh
 
 Read the API key at runtime from environment or an external secret store. Keep it out of packets, model messages, tool results, and logs. Bound completion tokens, calls, retries, and time; use pricing estimates for preflight, record actual usage when returned, and never describe a local estimate as a guaranteed billing cap.
 
-The orchestrator owns retries and reserves the maximum permitted cost of each
-attempt plus enough capacity for a final non-ready or limitation report. A
+The orchestrator owns retries. Before the first call it reserves both mandatory
+stages plus one provider retry at the larger stage reservation. The example
+120B configuration permits 160,000 conservatively counted tokens while retaining
+its $0.02 cost ceiling. Definite 429/500/502/503/504 responses (including non-JSON
+HTTP errors) and normally terminated empty completions may retry once per run.
+A 429 without a usable Retry-After hint uses a randomized 5–10 second cooldown.
+OpenRouter clients sharing one in-process pacing coordinator pause new requests
+for that model together, including after retry exhaustion. Separate CLI processes
+do not share this coordinator. Optional minimum request-start spacing is available
+for controlled batch comparisons and defaults to zero.
+The retry preserves stage messages and prefers another already allowed endpoint;
+model, provider allowlist, price and privacy controls remain unchanged. Successful
+preliminary work is retained when the final call needs recovery. A
 possibly submitted timeout remains `TRANSPORT_UNCERTAIN`; it is not retried
 automatically. OpenRouter can return typed errors inside an HTTP `200`, so the
 adapter validates the body and finish reason rather than trusting status
@@ -166,7 +177,7 @@ brief from the packet, fails rather than clipping an oversized initial evidence
 set, persists the raw and validated preliminary result before author delivery,
 makes one reconciliation call and permits at most one separately recorded
 same-model repair when a complete final candidate fails local validation,
-assembles `final-review-candidate-v1` references into the unchanged final report
+assembles `final-review-candidate-v2` references into the unchanged final report
 using exact original author-claim and preliminary-concern text, validates
 identities and evidence paths,
 requires exact changed-path/canonical-input coverage and preliminary-concern

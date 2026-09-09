@@ -5,6 +5,7 @@ import { INSPECTION_REPORT_V1_JSON_SCHEMA } from "../src/contracts/inspection-re
 import { NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA } from "../src/contracts/neutral-review-brief.js";
 import { REVIEW_REQUEST_V1_JSON_SCHEMA } from "../src/contracts/review-request.js";
 import {
+  FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
@@ -16,6 +17,7 @@ const schemaDirectory = resolve("schemas");
 await mkdir(schemaDirectory, { recursive: true });
 
 const schemaArtifacts = [
+  ["final-review-candidate-v2.schema.json", FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA],
   ["final-review-candidate-v1.schema.json", FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA],
   ["final-review-report-v1.schema.json", FINAL_REVIEW_REPORT_V1_JSON_SCHEMA],
   ["neutral-review-brief-v1.schema.json", NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA],
