@@ -69,7 +69,11 @@ to `review`. The [example profile](examples/standards.javascript-typescript.json
 contains advisory JavaScript/TypeScript rules; select or customize rules to match
 your project. The [GPT-OSS 120B example config](examples/review-config.gpt-oss-120b.json)
 uses an 8,192-token output allowance, validated in the targeted standards runs,
-while retaining its 160,000 total-token and $0.02 per-review limits. Run dry-run
+while retaining its 160,000 total-token and $0.02 per-review limits.
+Use that CoreWeave/DeepInfra configuration for the current standards pilot. The
+pinned BaseTen example remains available for diagnosis, but repeatedly rejected
+standards final calls with 529 in our [targeted route check](docs/validation/2026-09-09-standards-provider-reliability.md).
+This is an observed route limitation, not a guarantee about future availability. Run dry-run
 with your actual scope to check admission; the allowance is not a completion guarantee. Profile fields are defined by
 [standards-profile-v1](schemas/standards-profile-v1.schema.json). Rule IDs must be
 unique across selected definitions. `paths` are repository-relative Node glob
