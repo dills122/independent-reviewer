@@ -67,6 +67,11 @@ and author packet never become evidence for the next review. If the packet
 directory is inside the reviewed worktree and is not ignored by Git, `prepare`
 and `review` warn — add it to `.gitignore`.
 
+The brief declares no reviewer capabilities: the reviewer receives one fixed
+payload and cannot request further reads, searches, or checks. An evidence
+service is deferred (see
+[ADR-005](docs/decisions/005-remove-unbuilt-reviewer-capability-declaration.md)).
+
 Capture defaults to a 512 KiB per-file limit. The following are excluded
 visibly rather than silently transmitted:
 

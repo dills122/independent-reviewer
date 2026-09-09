@@ -119,15 +119,6 @@ async function createValidBrief(): Promise<Record<string, unknown>> {
         paths: [".env"],
       },
     ],
-    capabilities: {
-      evidenceOperations: ["READ_SNAPSHOT_FILE", "READ_DIFF", "SEARCH_SNAPSHOT"],
-      verificationChecks: [
-        {
-          id: "check_application",
-          title: "Application quality gate",
-        },
-      ],
-    },
   };
 }
 
@@ -260,13 +251,11 @@ describe("NeutralReviewBriefV1Schema", () => {
     assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, false);
   });
 
-  it("rejects duplicate verification-check identifiers", async () => {
-    const brief = (await createValidBrief()) as {
-      capabilities: { verificationChecks: unknown[] };
-    };
-    const check = brief.capabilities.verificationChecks[0];
-    assert.ok(check);
-    brief.capabilities.verificationChecks.push(structuredClone(check));
+  it("rejects a brief that declares reviewer capabilities", async () => {
+    // The brief carries no capability declaration (ADR-005): a reviewer receives one fixed
+    // payload and can request nothing, so an unknown block must be refused rather than ignored.
+    const brief = (await createValidBrief()) as Record<string, unknown>;
+    brief.capabilities = { evidenceOperations: [], verificationChecks: [] };
 
     assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, false);
   });

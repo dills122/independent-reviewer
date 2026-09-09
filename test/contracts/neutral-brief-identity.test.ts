@@ -53,10 +53,6 @@ async function createBriefDraft(): Promise<Record<string, unknown>> {
     snapshotManifest: finalizeSnapshotManifestV1(snapshotDraft),
     initialEvidence: [],
     coverageConstraints: [],
-    capabilities: {
-      evidenceOperations: ["READ_SNAPSHOT_FILE", "READ_DIFF"],
-      verificationChecks: [],
-    },
   };
 }
 
@@ -65,9 +61,11 @@ describe("neutral review brief identity", () => {
     const brief = finalizeNeutralReviewBriefV1(await createBriefDraft());
 
     assert.equal(brief.briefDigest.algorithm, "SHA256");
+    // Golden identity for the v1 brief shape. It changed when the unused capabilities block was
+    // removed (ADR-005); a change here without a corresponding contract change is a regression.
     assert.equal(
       brief.briefDigest.value,
-      "5c39a00631e45822789154efc7fc2b0d5ab189b1d5d2b0d86a7f36e43e0e745f",
+      "ecbe7cd1655d10fb30c62f924cf814c830dbd3d2b6ad2180ad026290c5c7b786",
     );
     assert.equal(verifyNeutralReviewBriefIdentityV1(brief), true);
   });
@@ -97,7 +95,7 @@ describe("neutral review brief identity", () => {
 
   it("detects a changed brief after finalization", async () => {
     const brief = finalizeNeutralReviewBriefV1(await createBriefDraft());
-    brief.capabilities.evidenceOperations.push("SEARCH_SNAPSHOT");
+    brief.objective.text = "Tampered objective.";
 
     assert.equal(verifyNeutralReviewBriefIdentityV1(brief), false);
   });
