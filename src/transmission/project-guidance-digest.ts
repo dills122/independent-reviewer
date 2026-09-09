@@ -14,7 +14,7 @@ export interface ProjectGuidanceDigestEntryV1 {
   readonly truncated: boolean;
 }
 
-/** Extracts explicit Markdown list rules into a small, stable, citeable prompt digest. */
+/** Compacts every guidance block into a small, stable, citeable prompt digest. */
 export function compactProjectGuidanceV1(
   guidance: NeutralReviewBriefV1["canonicalInputs"]["projectGuidance"],
   maximumCharacters = 12_000,
@@ -29,16 +29,32 @@ export function compactProjectGuidanceV1(
     const lines = input.content.split("\n");
     let section = input.title;
     let truncated = false;
+    let explicitRuleNumber = 0;
+    let contextNumber = 0;
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index]?.trim() ?? "";
       if (/^#{1,3}\s+/.test(line)) {
         section = line.replace(/^#{1,3}\s+/, "");
+        contextNumber += 1;
+        const heading = {
+          ruleId: `${input.id}:C${contextNumber}`,
+          section,
+          text: section,
+        };
+        const headingSize = JSON.stringify(heading).length;
+        if (headingSize > remaining) {
+          truncated = true;
+          break;
+        }
+        rules.push(heading);
+        remaining -= headingSize;
         continue;
       }
-      if (!/^(?:[-*]|\d+\.)\s+/.test(line)) {
+      if (line.length === 0) {
         continue;
       }
-      const parts = [line.replace(/^(?:[-*]|\d+\.)\s+/, "")];
+      const isExplicitRule = /^(?:[-*]|\d+\.)\s+/.test(line);
+      const parts = [isExplicitRule ? line.replace(/^(?:[-*]|\d+\.)\s+/, "") : line];
       while (index + 1 < lines.length) {
         const continuation = lines[index + 1]?.trim() ?? "";
         if (
@@ -51,8 +67,14 @@ export function compactProjectGuidanceV1(
         parts.push(continuation);
         index += 1;
       }
+      if (isExplicitRule) {
+        explicitRuleNumber += 1;
+      } else {
+        contextNumber += 1;
+      }
+      const itemNumber = isExplicitRule ? explicitRuleNumber : contextNumber;
       const rule = {
-        ruleId: `${input.id}:R${rules.length + 1}`,
+        ruleId: `${input.id}:${isExplicitRule ? "R" : "C"}${itemNumber}`,
         section,
         text: parts.join(" "),
       };

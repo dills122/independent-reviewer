@@ -33,7 +33,6 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "biome lint .",
-    "review:dev": "node scripts/development-review.mjs",
     "schemas:write": "npm run build && node dist/scripts/write-json-schemas.js",
     "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
     "typecheck": "tsc --noEmit --project tsconfig.json"

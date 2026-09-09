@@ -47,7 +47,7 @@ Rendered-report tests must treat all provider text as untrusted presentation
 data and cover heading, link, backtick, list, and HTML control characters.
 Provider tests must normalize fractional or inconsistent usage to unknown, bind
 each attempt to a credential-free exact wire/body identity, and prove the preliminary
-retransmission cannot invalidate an already admitted two-call token budget.
+retransmission cannot invalidate an already admitted mandatory-call token budget.
 
 ## Committed repository gate
 

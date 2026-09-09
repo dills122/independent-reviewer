@@ -47,6 +47,15 @@ function jsonDocument(value: unknown): string {
 }
 
 function blindReviewEvidence(brief: NeutralReviewBriefV1): unknown {
+  const projectGuidanceDigest = compactProjectGuidanceV1(brief.canonicalInputs.projectGuidance);
+  const truncatedGuidanceIds = projectGuidanceDigest
+    .filter((entry) => entry.truncated)
+    .map((entry) => entry.id);
+  if (truncatedGuidanceIds.length > 0) {
+    throw new Error(
+      `Project guidance exceeds the compact transmission budget: ${truncatedGuidanceIds.join(", ")}.`,
+    );
+  }
   return {
     ...brief,
     requiredCoverage: {
@@ -57,7 +66,7 @@ function blindReviewEvidence(brief: NeutralReviewBriefV1): unknown {
       requirements: brief.canonicalInputs.requirements,
       implementationPlan: brief.canonicalInputs.implementationPlan,
     },
-    projectGuidanceDigest: compactProjectGuidanceV1(brief.canonicalInputs.projectGuidance),
+    projectGuidanceDigest,
   };
 }
 
@@ -275,6 +284,7 @@ function constrainCoverageLedgers(
   changedPaths: string[],
   canonicalInputIds: string[],
   identities: { snapshotDigest: string; briefDigest: string },
+  authorVerificationClaims: AuthorPacketV1["claimedVerification"],
 ): unknown {
   const constrained = structuredClone(schema) as Record<string, unknown>;
   const properties = constrained.properties as Record<string, unknown> | undefined;
@@ -298,7 +308,7 @@ function constrainCoverageLedgers(
   function constrainLedger(
     propertyName: string,
     itemPropertyName: string,
-    allowedValues: string[],
+    allowedValues: Array<string | number>,
     required: boolean,
   ): void {
     const ledger = properties?.[propertyName] as Record<string, unknown> | undefined;
@@ -323,6 +333,12 @@ function constrainCoverageLedgers(
 
   constrainLedger("canonicalInputCoverage", "canonicalInputId", canonicalInputIds, true);
   constrainLedger("changedPathCoverage", "path", changedPaths, false);
+  constrainLedger(
+    "authorVerificationClaims",
+    "claimIndex",
+    authorVerificationClaims.map((_, index) => index),
+    false,
+  );
 
   function boundProse(value: unknown): void {
     if (Array.isArray(value)) {
@@ -347,6 +363,35 @@ function constrainCoverageLedgers(
   }
 
   boundProse(constrained);
+
+  const verificationLedger = properties.authorVerificationClaims as
+    | Record<string, unknown>
+    | undefined;
+  const verificationItems = verificationLedger?.items as Record<string, unknown> | undefined;
+  const verificationProperties = verificationItems?.properties as
+    | Record<string, unknown>
+    | undefined;
+  const command = verificationProperties?.command as Record<string, unknown> | undefined;
+  const claimedSummary = verificationProperties?.claimedSummary as
+    | Record<string, unknown>
+    | undefined;
+  if (command && claimedSummary) {
+    command.maxLength = Math.max(
+      400,
+      ...authorVerificationClaims.map((claim) => Array.from(claim.command).length),
+    );
+    claimedSummary.maxLength = Math.max(
+      400,
+      ...authorVerificationClaims.map((claim) => Array.from(claim.summary).length),
+    );
+  }
+
+  const concernLedger = properties.preliminaryConcernDispositions as
+    | Record<string, unknown>
+    | undefined;
+  if (concernLedger) {
+    concernLedger.maxItems = 24;
+  }
   return constrained;
 }
 
@@ -857,6 +902,7 @@ export async function runTwoStageReviewV1(
         snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
         briefDigest: brief.briefDigest.value,
       },
+      packet.authorPacket.claimedVerification,
     );
     const finalResponseSchema = constrainCoverageLedgers(
       constrainFindingEvidencePaths(FINAL_REVIEW_REPORT_V1_JSON_SCHEMA, evidencePaths),
@@ -866,6 +912,7 @@ export async function runTwoStageReviewV1(
         snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
         briefDigest: brief.briefDigest.value,
       },
+      packet.authorPacket.claimedVerification,
     );
     assertConversationBudget(blindMessages, config.budgets.maxConversationBytes);
     const authorMessage = JSON.stringify({
@@ -1117,8 +1164,8 @@ export async function resumeFinalReviewV1(
     JSON.parse(await readFile(preliminaryProviderPath, "utf8")),
   );
   if (
-    preliminaryProvider.model !== config.model ||
-    preliminarySucceeded?.returnedModel !== config.model ||
+    preliminaryProvider.model !== preliminarySucceeded?.returnedModel ||
+    (preliminaryProvider.model !== null && preliminaryProvider.model !== config.model) ||
     JSON.stringify(preliminarySucceeded?.usage) !== JSON.stringify(preliminaryProvider.usage)
   ) {
     throw new Error(
@@ -1177,6 +1224,7 @@ export async function resumeFinalReviewV1(
       snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
       briefDigest: brief.briefDigest.value,
     },
+    packet.authorPacket.claimedVerification,
   );
   const preliminaryResponseSchema = constrainCoverageLedgers(
     constrainFindingEvidencePaths(PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA, evidencePaths),
@@ -1186,6 +1234,7 @@ export async function resumeFinalReviewV1(
       snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
       briefDigest: brief.briefDigest.value,
     },
+    packet.authorPacket.claimedVerification,
   );
   const preliminaryResponse: ReviewProviderResponseV1 = {
     ...preliminaryProvider,

@@ -59,6 +59,7 @@ async function arrangePacket(
   includeExcludedPath = false,
   authorIntent = "AUTHOR_SECRET: make the requested change.",
   projectGuidanceContent?: string,
+  authorVerificationSummary = "Reported by author.",
 ): Promise<{ repositoryPath: string; packetPath: string }> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-flow-"));
   await git(repositoryPath, "init", "--initial-branch=main");
@@ -123,7 +124,7 @@ async function arrangePacket(
       decisions: [],
       invariants: [],
       claimedVerification: [
-        { command: "npm test", outcome: "PASSED" as const, summary: "Reported by author." },
+        { command: "npm test", outcome: "PASSED" as const, summary: authorVerificationSummary },
       ],
       risks: [],
       knownGaps: [],
@@ -489,6 +490,63 @@ describe("two-stage review orchestrator", () => {
     }
   });
 
+  it("fits exact author verification claims in the final provider schema", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket(
+      false,
+      "AUTHOR_SECRET",
+      undefined,
+      "A".repeat(401),
+    );
+    let calls = 0;
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls += 1;
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        if (providerRequest.stage === "PRELIMINARY") {
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "The change was inspected.",
+            inspectedPaths: ["reviewed.txt"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        const verificationLedger = valueAtPath(providerRequest.responseSchema.schema, [
+          "properties",
+          "authorVerificationClaims",
+        ]) as Record<string, unknown>;
+        assert.equal(verificationLedger.minItems, 1);
+        assert.equal(verificationLedger.maxItems, 1);
+        assert.deepEqual(
+          valueAtPath(verificationLedger, ["items", "properties", "claimIndex", "enum"]),
+          [0],
+        );
+        assert.equal(
+          valueAtPath(verificationLedger, ["items", "properties", "claimedSummary", "maxLength"]),
+          401,
+        );
+        throw new ProviderCallError("INVALID_RESPONSE", "stop after schema inspection");
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () => runTwoStageReviewV1(packetPath, config, provider),
+        /stop after schema inspection/,
+      );
+      assert.equal(calls, 2);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("does not reveal author content after malformed preliminary output", async () => {
     const { repositoryPath, packetPath } = await arrangePacket();
     let calls = 0;
@@ -602,35 +660,65 @@ describe("two-stage review orchestrator", () => {
     try {
       await assert.rejects(() => runTwoStageReviewV1(packetPath, config, provider));
       assert.match(blindEvidence, /projectGuidanceDigest/);
+      assert.match(blindEvidence, /input_style:C1/);
+      assert.match(blindEvidence, /This prose is context/);
       assert.match(blindEvidence, /input_style:R1/);
       assert.match(blindEvidence, /Use primitive `string` rather than boxed `String`\./);
       assert.match(blindEvidence, /input_style:R2/);
-      assert.doesNotMatch(blindEvidence, /This prose is context/);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
   });
 
-  it("resumes only the failed final stage once after a definite provider 429", async () => {
+  it("makes no provider call when compact project guidance would be truncated", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket(
+      false,
+      "AUTHOR_SECRET",
+      `- ${"x".repeat(12_001)}`,
+    );
+    let calls = 0;
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async () => {
+        calls += 1;
+        throw new Error("must not be called");
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () => runTwoStageReviewV1(packetPath, config, provider),
+        /project guidance exceeds the compact transmission budget/i,
+      );
+      assert.equal(calls, 0);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("resumes only the failed final stage when optional model metadata is missing", async () => {
     const { repositoryPath, packetPath } = await arrangePacket();
     const firstProvider: ReviewProviderV1 = {
       auditRequest: mockAuditRequest,
       complete: async (providerRequest) => {
         const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
         if (providerRequest.stage === "PRELIMINARY") {
-          return response({
-            schemaVersion: 1,
-            stage: "PRELIMINARY",
-            snapshotDigest: brief.snapshotManifest.snapshotDigest,
-            briefDigest: brief.briefDigest,
-            summary: "The change was inspected before the final provider failure.",
-            inspectedPaths: ["reviewed.txt"],
-            canonicalInputCoverage: canonicalInputCoverage(),
-            findings: [],
-            evidenceGaps: [],
-            limitations: [],
-            nextAction: "REQUEST_AUTHOR_PACKET",
-          });
+          return {
+            ...response({
+              schemaVersion: 1,
+              stage: "PRELIMINARY",
+              snapshotDigest: brief.snapshotManifest.snapshotDigest,
+              briefDigest: brief.briefDigest,
+              summary: "The change was inspected before the final provider failure.",
+              inspectedPaths: ["reviewed.txt"],
+              canonicalInputCoverage: canonicalInputCoverage(),
+              findings: [],
+              evidenceGaps: [],
+              limitations: [],
+              nextAction: "REQUEST_AUTHOR_PACKET",
+            }),
+            model: null,
+          };
         }
         throw new ProviderCallError("PROVIDER_ERROR", "OpenRouter rate limit exceeded.", {
           diagnostic: {
