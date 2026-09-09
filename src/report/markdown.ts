@@ -1,6 +1,7 @@
 import type { FinalReviewReportV1 } from "../contracts/index.js";
 
-const verdictLabels: Record<FinalReviewReportV1["verdict"], string> = {
+/** Human-readable verdict names, shared with the CLI so the two cannot disagree. */
+export const VERDICT_LABELS_V1: Record<FinalReviewReportV1["verdict"], string> = {
   READY: "Ready",
   READY_WITH_FOLLOW_UPS: "Ready with non-blocking follow-ups",
   NOT_READY: "Not ready",
@@ -69,7 +70,7 @@ export function renderFinalReviewMarkdownV1(report: FinalReviewReportV1): string
   return [
     "# Independent review",
     "",
-    `Verdict: ${verdictLabels[report.verdict]}`,
+    `Verdict: ${VERDICT_LABELS_V1[report.verdict]}`,
     "",
     escapeMarkdown(report.summary),
     "",

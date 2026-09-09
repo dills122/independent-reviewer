@@ -676,3 +676,142 @@ it("applies caller-supplied exclusion patterns from the command line", async () 
     await rm(repositoryPath, { recursive: true, force: true });
   }
 });
+
+it("prints help and version on stdout without a packet or provider", async () => {
+  const output: string[] = [];
+  const errors: string[] = [];
+  const io = {
+    stdout: (message: string) => output.push(message),
+    stderr: (message: string) => errors.push(message),
+  };
+
+  assert.equal(await runCliV1([], io), 0);
+  assert.equal(await runCliV1(["--help"], io), 0);
+  assert.equal(await runCliV1(["review", "--help"], io), 0);
+  assert.equal(await runCliV1(["--version"], io), 0);
+
+  assert.equal(errors.length, 0);
+  const printed = output.join("\n");
+  assert.match(printed, /Usage: independent-reviewer <prepare\|inspect\|review\|resume-final>/);
+  assert.match(printed, /--config <value>.*required/);
+  assert.match(printed, /OPENROUTER_API_KEY/);
+});
+
+it("reports argument mistakes precisely instead of claiming a value is missing", async () => {
+  const errors: string[] = [];
+  const io = { stdout: () => undefined, stderr: (message: string) => errors.push(message) };
+
+  // A repeated pinned option must be rejected, not silently last-wins.
+  assert.equal(
+    await runCliV1(
+      ["review", "--request", "a.json", "--config", "a.json", "--config", "b.json"],
+      io,
+    ),
+    1,
+  );
+  assert.match(errors.at(-1) ?? "", /--config was given 2 times/);
+
+  // A dash-leading value is legal; the error says how to pass it rather than "missing value".
+  assert.equal(await runCliV1(["prepare", "--request", "--weird.json"], io), 1);
+  assert.match(errors.at(-1) ?? "", /--request=/);
+
+  assert.equal(await runCliV1(["prepare"], io), 1);
+  assert.match(errors.at(-1) ?? "", /Missing required option --request/);
+
+  assert.equal(await runCliV1(["nonsense"], io), 1);
+  assert.match(errors.at(-1) ?? "", /Unknown command nonsense/);
+});
+
+it("emits a versioned inspection report that never carries author-packet content", async () => {
+  const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-cli-inspect-"));
+  try {
+    await git(repositoryPath, "init", "--initial-branch=main");
+    await git(repositoryPath, "config", "user.name", "CLI Inspect Test");
+    await git(repositoryPath, "config", "user.email", "cli-inspect@example.invalid");
+    await git(repositoryPath, "config", "commit.gpgsign", "false");
+    await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+    await writeFile(join(repositoryPath, ".gitignore"), ".review-runs/\n");
+    await git(repositoryPath, "add", ".");
+    await git(repositoryPath, "commit", "-m", "initial");
+    await git(repositoryPath, "switch", "-c", "feature/cli-inspect");
+    await writeFile(join(repositoryPath, "reviewed.txt"), "after\n");
+
+    const requestPath = join(repositoryPath, "request.json");
+    await writeFile(
+      requestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        flowId: "flow_cli_inspect",
+        reviewInstance: { number: 1, maximum: 3 },
+        repository: { path: repositoryPath, base: "main" },
+        canonicalInputs: {
+          requirements: [
+            {
+              id: "input_requirement",
+              kind: "REQUIREMENTS",
+              title: "Requirement",
+              content: "Review the change.",
+              provenance: { type: "INLINE", label: "CLI inspect test" },
+            },
+          ],
+          implementationPlan: {
+            id: "input_plan",
+            kind: "IMPLEMENTATION_PLAN",
+            title: "Plan",
+            content: "Change one line.",
+            provenance: { type: "INLINE", label: "CLI inspect test" },
+          },
+        },
+        authorPacket: {
+          schemaVersion: 1,
+          intent: "AUTHOR_ONLY_SECRET: change the file.",
+          successCriteria: ["The line changes."],
+          planTraceability: [{ planItem: "Change one line.", implementation: "Changed it." }],
+          technicalApproach: "Replace the text.",
+          componentWalkthrough: [{ component: "reviewed.txt", changes: "Changed one line." }],
+          decisions: [],
+          invariants: [],
+          claimedVerification: [],
+          risks: [],
+          knownGaps: [],
+          challengePoints: [],
+        },
+        reviewConfigRef: "config_cli_inspect",
+      }),
+    );
+
+    const output: string[] = [];
+    const io = { stdout: (message: string) => output.push(message), stderr: () => undefined };
+    const packetPath = join(repositoryPath, ".review-runs", "inspect-test");
+    assert.equal(
+      await runCliV1(["prepare", "--request", requestPath, "--output", packetPath], io),
+      0,
+    );
+
+    output.length = 0;
+    assert.equal(await runCliV1(["inspect", "--packet", packetPath, "--json"], io), 0);
+    const report = JSON.parse(output.join("\n")) as Record<string, unknown>;
+
+    assert.deepEqual(Object.keys(report).sort(), [
+      "authorPacketPresent",
+      "blobCount",
+      "canonicalInputs",
+      "reviewConfigRef",
+      "schemaVersion",
+      "snapshotManifest",
+    ]);
+    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.authorPacketPresent, true);
+    assert.equal(report.reviewConfigRef, "config_cli_inspect");
+    // Presence is reported; content never is.
+    assert.doesNotMatch(JSON.stringify(report), /AUTHOR_ONLY_SECRET/);
+
+    output.length = 0;
+    assert.equal(await runCliV1(["inspect", "--packet", packetPath], io), 0);
+    const text = output.join("\n");
+    assert.match(text, /Author packet: stored separately/);
+    assert.doesNotMatch(text, /AUTHOR_ONLY_SECRET/);
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});

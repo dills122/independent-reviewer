@@ -7,19 +7,8 @@ import {
   PersistedReviewInstanceV1Schema,
 } from "./review-request.js";
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
+import { CanonicalInputIdSchema, NonEmptyTextSchema, prefixedIdentifier } from "./primitives.js";
 
-function prefixedIdentifier(prefix: "repo" | "snapshot"): z.ZodString {
-  return z
-    .string()
-    .min(prefix.length + 2)
-    .max(128)
-    .regex(
-      new RegExp(`^${prefix}_[A-Za-z0-9][A-Za-z0-9_-]*$`),
-      `must use the ${prefix}_ identifier prefix`,
-    );
-}
-
-const NonEmptyTextSchema = z.string().min(1);
 const GitObjectIdSchema = z
   .string()
   .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/, "must be a lowercase Git object ID");
@@ -239,11 +228,7 @@ export const SnapshotManifestV1Schema = z
     ),
     canonicalInputs: z.array(
       z.strictObject({
-        id: z
-          .string()
-          .min(7)
-          .max(128)
-          .regex(/^input_[A-Za-z0-9][A-Za-z0-9_-]*$/, "must use the input_ identifier prefix"),
+        id: CanonicalInputIdSchema,
         kind: z.enum(["REQUIREMENTS", "IMPLEMENTATION_PLAN", "PROJECT_GUIDANCE"]),
         digest: DigestV1Schema,
         provenance: CanonicalInputProvenanceV1Schema,

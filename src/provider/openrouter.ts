@@ -43,14 +43,14 @@ const OpenRouterResponseSchema = z
         z
           .object({
             finish_reason: z.unknown().optional(),
-            message: z.object({ content: z.unknown() }).passthrough(),
+            message: z.looseObject({ content: z.unknown() }),
           })
-          .passthrough(),
+          .loose(),
       )
       .min(1),
     usage: z.unknown().optional(),
   })
-  .passthrough();
+  .loose();
 
 function nullableString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
@@ -399,6 +399,8 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
     }
     const returnedModel = nullableString(parsed.data.model);
     if (returnedModel !== null && returnedModel !== request.model) {
+      // Adapter-level guard on the wire response; the orchestrator repeats the rule for any
+      // provider implementation. Distinct wording keeps a failure attributable to one layer.
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         `OpenRouter returned a different model than requested (${returnedModel}).`,

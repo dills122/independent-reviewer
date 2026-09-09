@@ -46,13 +46,20 @@ node dist/src/cli.js prepare --request ./request.json
 node dist/src/cli.js inspect --packet ./.review-runs/<snapshot-id>
 ```
 
+Run `independent-reviewer --help` for the command list, or
+`independent-reviewer <command> --help` for one command's options. Options accept
+both `--flag value` and `--flag=value`; a repeated flag is rejected rather than
+silently taking the last one.
+
 Use `--base <ref>` to override base resolution and `--output <new-directory>`
 to choose the packet directory. Packets default to `<repository root>/.review-runs/<snapshot-id>`,
 not a path relative to the current directory. `prepare` never overwrites an
 existing packet. It stores the manifest, canonical inputs, optional author
-packet, and captured blobs as separate private files. `inspect --json` prints
-the validated neutral snapshot material but only reports whether a separate
-author packet exists. The request fixture and schema show the current input
+packet, and captured blobs as separate private files. `inspect --json` prints a versioned
+[`InspectionReportV1`](schemas/inspection-report-v1.schema.json) — snapshot
+manifest, canonical inputs, blob count, config reference, and
+`authorPacketPresent`. The author packet's *existence* is reported; its content
+never is. The human-readable view is rendered from the same validated report. The request fixture and schema show the current input
 shape.
 
 Packet directories are always excluded from capture, so a previous run's blobs
@@ -90,7 +97,9 @@ node dist/src/cli.js review \
 ```
 
 The review config schema is
-[`schemas/review-run-config-v1.schema.json`](schemas/review-run-config-v1.schema.json).
+[`schemas/review-run-config-v2.schema.json`](schemas/review-run-config-v2.schema.json),
+which the runtime requires: `schemaVersion: 2`, a `providerRouting` block, and
+budgets including the local spend ceiling `maxTotalCostUsd`.
 The command prints the final report path. The adjacent `run-record.jsonl`
 records prompt/schema and provider-policy versions, stage-input and
 credential-free wire-request digests, exact wire-body digest and byte count,
@@ -101,6 +110,22 @@ non-blocking follow-ups`, `2` means `Not ready`, `3` means `Unable to verify`,
 and `4` means the provider submission became transport-uncertain. Other input
 or execution failures use exit `1`. Request and config control files are
 excluded from captured review evidence even when placed inside the worktree.
+
+If the final stage fails with a definite provider error, the one permitted retry
+reuses the persisted blind assessment and the exact same configuration rather
+than buying a second preliminary review:
+
+```sh
+node dist/src/cli.js resume-final \
+  --packet ./.review-runs/<snapshot-id> \
+  --config ./review-config.json
+```
+
+A resume is refused when the run did not reach a resumable failed final stage,
+when the configuration does not match the one the run started with, when the
+final outputs already exist, or when the single permitted resume has already
+been claimed. A transport-uncertain submission (exit `4`) is never resumed: the
+request may have been billed and its outcome is unknown.
 
 ## Later scope
 

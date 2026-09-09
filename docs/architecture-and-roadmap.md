@@ -62,7 +62,6 @@ AI Central skill                       Hosting adapter
 | AI Central skill | Capture intent, requirements, plan, and author explanation; invoke runner; reconcile returned findings. |
 | Snapshot builder | Resolve actual Git scope independently, freeze content, enumerate omissions, produce hashes and manifest. |
 | Review core | Enforce stage transitions, tool permissions, review limits, budgets, and report validation. |
-| Evidence service | Serve bounded file reads, searches, and diff context exclusively from the frozen snapshot. |
 | OpenRouter adapter | Send explicit messages, select configured model/provider policy, handle bounded transport failures, record usage. |
 | Report layer | Preserve preliminary assessment and final report, validate evidence anchors, render Markdown. |
 | Hosting adapter | Translate MR/PR state into review input and later publish results without changing review semantics. |
@@ -217,6 +216,9 @@ while retaining its original fresh-task workflow as a fallback.
 
 ### Deferred until requested
 
+- an evidence service serving bounded file reads, searches, and diff context from the
+  frozen snapshot on request (the brief's `capabilities` block is reserved for it and is
+  always transmitted empty in v1);
 - broad model comparisons or a large quality-evaluation framework;
 - isolated or containerized execution of arbitrary repository tests;
 - broader provider pools, model fallback, or distributed resumability; and

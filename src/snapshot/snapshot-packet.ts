@@ -14,6 +14,8 @@ import {
   ReviewRequestV1Schema,
   DigestV1Schema,
   SnapshotManifestV1Schema,
+  jsonDocument,
+  sha256BytesHex,
   verifySnapshotManifestIdentityV1,
   type AuthorPacketV1,
   type ReviewRequestV1,
@@ -44,10 +46,6 @@ const PacketMetadataV1Schema = z.strictObject({
     .max(128)
     .regex(/^config_[A-Za-z0-9][A-Za-z0-9_-]*$/),
 });
-
-function jsonDocument(value: unknown): string {
-  return `${JSON.stringify(value, null, 2)}\n`;
-}
 
 function contentRecords(manifest: SnapshotManifestV1): Array<{
   digest: string;
@@ -98,10 +96,6 @@ function assertCanonicalInputsMatch(
   }
 }
 
-function digestBytes(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
-}
-
 /**
  * Streams one blob through SHA-256. Verification never needs the bytes themselves, so streaming
  * keeps peak memory bounded by the concurrency limit rather than by the size of the packet.
@@ -133,7 +127,7 @@ export async function writeSnapshotPacketV1(
   const records = contentRecords(captured.manifest);
   for (const record of records) {
     const bytes = captured.blobs.get(record.digest);
-    if (!bytes || bytes.length !== record.byteLength || digestBytes(bytes) !== record.digest) {
+    if (!bytes || bytes.length !== record.byteLength || sha256BytesHex(bytes) !== record.digest) {
       throw new Error(`Captured blob ${record.digest} does not match the snapshot manifest.`);
     }
   }
@@ -238,7 +232,7 @@ export async function readSnapshotBlobV1(
 ): Promise<Uint8Array> {
   const digest = DigestV1Schema.parse(digestValue);
   const bytes = await readFile(join(packetPath, BLOBS_DIRECTORY, digest.value));
-  if (digestBytes(bytes) !== digest.value) {
+  if (sha256BytesHex(bytes) !== digest.value) {
     throw new Error(`Captured blob ${digest.value} failed digest verification.`);
   }
   return bytes;

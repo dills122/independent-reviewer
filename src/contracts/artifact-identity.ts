@@ -1,4 +1,5 @@
 import { canonicalizeJson, cloneCanonicalJson, digestCanonicalJson } from "./canonical-json.js";
+import { compareUtf16 } from "./primitives.js";
 import { type NeutralReviewBriefV1, NeutralReviewBriefV1Schema } from "./neutral-review-brief.js";
 import {
   type DigestV1,
@@ -15,10 +16,6 @@ const PLACEHOLDER_DIGEST: DigestV1 = {
 };
 
 /** Ascending lexicographic comparison of ECMAScript UTF-16 code units. */
-function compareUtf16(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
 /** Orders a set entry by its complete RFC 8785 canonical JSON serialization. */
 function compareCanonicalJsonUtf16(left: unknown, right: unknown): number {
   const serializedLeft = canonicalizeJson(left);

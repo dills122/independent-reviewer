@@ -33,6 +33,15 @@ Read `docs/architecture-and-roadmap.md`, `.codex/steering/repository-steering.md
 
 Keep changes scoped to the current request and update affected contracts and documentation together. Select installed skills only when their actual workflow applies; installation does not activate all bundles. Project instructions take precedence over shared guidance. Do not commit directly to main; use a feature branch. Do not stage, commit, publish, or send external reviews solely as part of setup.
 
+Shared contract primitives live in `src/contracts/primitives.ts` (identifier prefixes,
+non-empty text, canonical-input ids, UTF-16 ordering) and `src/contracts/json-document.ts`
+(artifact serialization and byte digests). Import them rather than re-declaring: these are
+the validation rules for digest-bound artifacts, and a copy that drifts leaves one path
+accepting artifacts the others reject. Cross-file duplication is not caught by any lint rule.
+
+Dependencies are pinned exactly, so a dependency upgrade must be checked for deprecation
+warnings in the modules that use it; no configured gate reports them.
+
 ## Available checks
 
 - Verify repository setup: `python3 -B scripts/check-ai-context.py`

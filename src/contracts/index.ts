@@ -57,16 +57,30 @@ export type {
 } from "./review-results.js";
 export {
   OpenRouterProviderRoutingV1Schema,
-  REVIEW_RUN_CONFIG_V1_JSON_SCHEMA,
   REVIEW_RUN_CONFIG_V2_JSON_SCHEMA,
-  ReviewRunConfigV1Schema,
   ReviewRunConfigV2Schema,
 } from "./review-run-config.js";
 export type {
   OpenRouterProviderRoutingV1,
-  ReviewRunConfigV1,
   ReviewRunConfigV2,
 } from "./review-run-config.js";
+export {
+  buildInspectionReportV1,
+  INSPECTION_REPORT_V1_JSON_SCHEMA,
+  InspectionReportV1Schema,
+} from "./inspection-report.js";
+export type { InspectionReportV1 } from "./inspection-report.js";
+export {
+  jsonDocument,
+  sha256BytesDigestV1,
+  sha256BytesHex,
+} from "./json-document.js";
+export {
+  CanonicalInputIdSchema,
+  compareUtf16,
+  NonEmptyTextSchema,
+  prefixedIdentifier,
+} from "./primitives.js";
 export {
   DigestV1Schema,
   logicalLineCountV1,

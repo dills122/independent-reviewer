@@ -147,6 +147,7 @@ export async function buildNeutralReviewBriefV1(
     snapshotManifest: packet.manifest,
     initialEvidence,
     coverageConstraints,
+    // Reserved contract surface: there is no evidence service in v1, so these stay empty.
     capabilities: {
       evidenceOperations: [],
       verificationChecks: [],
