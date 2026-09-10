@@ -4,7 +4,8 @@ export type ProviderCallErrorCode =
   | "INVALID_CONFIGURATION"
   | "PROVIDER_ERROR"
   | "INVALID_RESPONSE"
-  | "TRANSPORT_UNCERTAIN";
+  | "TRANSPORT_UNCERTAIN"
+  | "UNPRODUCTIVE_STREAM";
 
 export interface ProviderErrorDiagnosticV1 {
   readonly httpStatus: number;
@@ -92,6 +93,8 @@ export interface ReviewProviderResponseV1 {
 
 export interface ReviewProviderRequestAuditV1 {
   providerPolicyVersion: string;
+  /** Exact endpoint pinned for this attempt, or null when the provider may route. */
+  requestedProviderEndpoint?: string | null;
   wireBodyDigest: DigestV1;
   wireBodyBytes: number;
   credentialFreeWireRequestDigest: DigestV1;
@@ -100,8 +103,8 @@ export interface ReviewProviderRequestAuditV1 {
 export interface ReviewProviderV1 {
   /** Pause new requests in the shared batch, including other review workers. */
   deferRequests?(model: string, delayMs: number): void;
-  /** Same model and policy; may prefer another already permitted endpoint. */
-  forRetry?(error: ProviderCallError): ReviewProviderV1;
+  /** Same model and policy; null means no permitted retry target remains. */
+  forRetry?(error: ProviderCallError, request: ReviewProviderRequestV1): ReviewProviderV1 | null;
   auditRequest(request: ReviewProviderRequestV1): ReviewProviderRequestAuditV1;
   complete(request: ReviewProviderRequestV1): Promise<ReviewProviderResponseV1>;
 }

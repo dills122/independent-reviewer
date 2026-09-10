@@ -61,11 +61,11 @@ recover missing JSON fields. Value comes from making a later progress guard
 reliable: observe deltas early, preserve partial raw evidence, and abort locally
 when a calibrated JSON-aware threshold is crossed.
 
-Production streaming remains separate. Required next work: define whitespace
-progress state across JSON strings/escapes, calibrate thresholds from saved good
-outputs, map deliberate guard abort distinctly from transport uncertainty, and
-keep cost unknown when final usage is absent. Endpoint-specific cancellation
-means abort cannot be advertised as guaranteed billing termination.
+Follow-up implementation is specified in
+[`2026-09-10-openrouter-whitespace-guard-plan.md`](../plans/2026-09-10-openrouter-whitespace-guard-plan.md).
+It defines JSON string/escape state, a calibrated candidate threshold, distinct
+guard failure, conservative missing-usage accounting, and endpoint-specific
+retry. Cancellation still cannot be advertised as guaranteed billing termination.
 
 ## Primary sources
 

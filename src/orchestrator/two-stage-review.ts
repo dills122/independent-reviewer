@@ -249,6 +249,7 @@ interface ProviderRetryContextV1 {
 }
 
 function retryDelayMs(error: ProviderCallError): number | null {
+  if (error.code === "UNPRODUCTIVE_STREAM") return 0;
   const code = Number(error.diagnostic?.providerErrorCode);
   const status = error.diagnostic?.httpStatus;
   const transient = [429, 500, 502, 503, 504, 529];
@@ -292,6 +293,7 @@ async function completeWithAudit(
     stage: request.stage,
     inputDigest: sha256Utf8(JSON.stringify(request)),
     providerPolicyVersion: requestAudit.providerPolicyVersion,
+    requestedProviderEndpoint: requestAudit.requestedProviderEndpoint ?? null,
     wireBodyDigest: requestAudit.wireBodyDigest,
     wireBodyBytes: requestAudit.wireBodyBytes,
     credentialFreeWireRequestDigest: requestAudit.credentialFreeWireRequestDigest,
@@ -374,6 +376,10 @@ async function completeWithAudit(
     }
     if (retry && !retry.state.used && error instanceof ProviderCallError) {
       if (delayMs !== null) {
+        const retryProvider =
+          provider.forRetry?.(error, request) ??
+          (provider.forRetry === undefined ? provider : null);
+        if (retryProvider === null) throw error;
         const inputTokens = conservativeInputTokenUpperBound(
           request.messages,
           request.responseSchema.schema,
@@ -420,7 +426,7 @@ async function completeWithAudit(
         return completeWithAudit(
           runRecordPath,
           attemptNumber,
-          provider.forRetry?.(error) ?? provider,
+          retryProvider,
           request,
           responseArrayLimits,
           retry,

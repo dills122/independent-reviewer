@@ -133,18 +133,22 @@ Persist artifacts locally under a configured private run directory, excluded fro
 
 Use an explicit configured model ID. Do not choose an automatic model router for the first release. Select supported models based on tool calling, structured output support, context capacity, and evaluation results. Model choice stays configurable; no named model is selected by this plan.
 
-The initial adapter uses non-streaming Chat Completions with a local authoritative
-message ledger. Prompts and response schemas are stage-specific and versioned.
-The preliminary response also requests the author packet, avoiding an otherwise
-empty model turn. See
+The adapter uses non-streaming Chat Completions for the preliminary stage and
+guarded streaming for the final stage, with a local authoritative message ledger.
+Final streaming permits a JSON-aware progress guard to cancel generations that
+emit 512 consecutive formatting-whitespace characters outside strings. Prompts,
+response schemas, and provider wire policy are versioned. The preliminary
+response also requests the author packet, avoiding an otherwise empty model turn. See
 [ADR-003](decisions/003-use-versioned-budgeted-model-call-protocol.md).
 
 Use schema-constrained output when supported and validate responses locally
 regardless.[^or-structured] Set `require_parameters: true` so routing does not
 silently ignore requested capabilities. Use a configured one-to-three-endpoint
-allowlist and a hard provider price ceiling. One endpoint disables fallback for
-route isolation; multiple endpoints permit same-model fallback. Record the
-actual route; model fallback remains disabled.[^or-routing]
+allowlist and a hard provider price ceiling. Preliminary calls may use same-model
+fallback inside that allowlist. Each final attempt pins one exact endpoint with
+fallback disabled; the one permitted retry pins the next different endpoint.
+Record the requested endpoint before submission and the returned route when
+available; model fallback remains disabled.[^or-routing]
 
 Explicitly disable provider context compression because it can remove or
 truncate messages from the middle.[^or-transforms] Disable response caching for
@@ -160,7 +164,8 @@ The orchestrator owns retries. Before the first call it reserves both mandatory
 stages plus one provider retry at the larger stage reservation. The example
 120B configuration permits 160,000 conservatively counted tokens while retaining
 its $0.02 cost ceiling. Definite 429/500/502/503/504/529 responses (including non-JSON
-HTTP errors) and normally terminated empty completions may retry once per run.
+HTTP errors), normally terminated empty completions, and final streams stopped
+by the formatting-whitespace guard may retry once per run.
 A 429 or 529 without a usable Retry-After hint uses a randomized 5–10 second cooldown.
 OpenRouter clients sharing one in-process pacing coordinator pause new requests
 for that model together, including after retry exhaustion. Separate CLI processes
@@ -169,8 +174,9 @@ for controlled batch comparisons and defaults to zero.
 Cost admission prices reserved input and output tokens at their respective
 provider ceilings, including each request fee, instead of pricing all tokens
 at the higher output rate.
-The retry preserves stage messages and prefers another already allowed endpoint;
-model, provider allowlist, price and privacy controls remain unchanged. Successful
+The retry preserves stage messages. A final retry excludes the pinned failed
+endpoint and uses the next endpoint already present in the allowlist; model,
+provider allowlist, price and privacy controls remain unchanged. Successful
 preliminary work is retained when the final call needs recovery. A
 possibly submitted timeout remains `TRANSPORT_UNCERTAIN`; it is not retried
 automatically. OpenRouter can return typed errors inside an HTTP `200`, so the
@@ -232,9 +238,11 @@ data-collection denial, disabled response caching, and disabled context
 compression. A definite final-stage provider 429 may be resumed once explicitly
 from the persisted preliminary assessment and exact original run configuration;
 uncertain transport and model changes are rejected. Provider attempts retain a
-private, API-key-redacted raw response artifact before validation, while the
-append-only ledger retains only bounded diagnostics for the typed error,
-selected route identifiers, and retry guidance.[^or-structured][^or-routing][^or-transforms][^or-response-cache][^or-errors]
+private, API-key-redacted raw response artifact before validation. Guarded final
+attempts retain a bounded redacted SSE transcript and progress metrics after
+terminal handling; the artifact is intentionally not described as byte-exact or
+crash-durable. The append-only ledger retains only bounded diagnostics for the
+typed error, requested/returned route identifiers, and retry guidance.[^or-structured][^or-routing][^or-transforms][^or-response-cache][^or-errors]
 Metered live review remains explicitly opt-in and requires a model, bounded
 configuration, operator authorization, and API key supplied through the Slice 3 command.
 

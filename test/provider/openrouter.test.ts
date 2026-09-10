@@ -18,12 +18,201 @@ const request = {
   },
 };
 
+const finalRequest = {
+  ...request,
+  stage: "FINAL" as const,
+  responseSchema: { ...request.responseSchema, name: "final_review_candidate_v2" },
+};
+
+function sseResponse(events: unknown[]): Response {
+  const wire = `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`;
+  return new Response(wire, { headers: { "content-type": "text/event-stream" } });
+}
+
 const providerRouting = {
   order: ["provider-a/fp4", "provider-b/bf16"],
   maxPrice: { prompt: 0.03, completion: 0.14, request: 0 },
 };
 
 describe("OpenRouterProviderV1", () => {
+  it("streams final output on one pinned endpoint and preserves terminal usage", async () => {
+    let wire: Record<string, unknown> = {};
+    const provider = new OpenRouterProviderV1(
+      "secret-key",
+      providerRouting,
+      async (_input, init) => {
+        wire = JSON.parse(String(init?.body));
+        return sseResponse([
+          {
+            id: "generation-streamed",
+            model: "vendor/model",
+            provider: "Provider A",
+            choices: [{ delta: { content: '{"ok":' }, finish_reason: null }],
+          },
+          { choices: [{ delta: { content: "true}" }, finish_reason: null }] },
+          { choices: [{ delta: {}, finish_reason: "stop" }] },
+          {
+            choices: [],
+            usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25, cost: 0.001 },
+          },
+        ]);
+      },
+    );
+
+    const result = await provider.complete(finalRequest);
+
+    assert.equal(wire.stream, true);
+    assert.deepEqual(wire.stream_options, { include_usage: true });
+    assert.deepEqual(wire.provider, {
+      order: ["provider-a/fp4"],
+      only: ["provider-a/fp4"],
+      allow_fallbacks: false,
+      data_collection: "deny",
+      max_price: { prompt: 0.03, completion: 0.14, request: 0 },
+      require_parameters: true,
+      zdr: true,
+    });
+    assert.deepEqual(result.value, { ok: true });
+    assert.equal(result.rawContent, '{"ok":true}');
+    assert.equal(result.responseId, "generation-streamed");
+    assert.equal(result.provider, "Provider A");
+    assert.deepEqual(result.usage, {
+      promptTokens: 20,
+      completionTokens: 5,
+      totalTokens: 25,
+      cost: 0.001,
+    });
+    assert.equal(provider.auditRequest(finalRequest).requestedProviderEndpoint, "provider-a/fp4");
+    assert.equal(
+      provider.auditRequest(finalRequest).providerPolicyVersion,
+      "openrouter-chat-completions-v4",
+    );
+  });
+
+  it("aborts runaway formatting whitespace with credential-screened diagnostics", async () => {
+    let cancelled = false;
+    const event = JSON.stringify({
+      diagnostic: "secret-key",
+      choices: [{ delta: { content: `{"ok":true}${" ".repeat(512)}` }, finish_reason: null }],
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(`data: ${event}\n\n`));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const provider = new OpenRouterProviderV1(
+      "secret-key",
+      providerRouting,
+      async () => new Response(body, { headers: { "content-type": "text/event-stream" } }),
+    );
+
+    await assert.rejects(
+      () => provider.complete(finalRequest),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.code, "UNPRODUCTIVE_STREAM");
+        assert.equal(error.retryable, true);
+        assert.equal(error.responseMetadata?.provider, "provider-a/fp4");
+        assert.deepEqual(error.responseMetadata?.usage, {
+          promptTokens: null,
+          completionTokens: null,
+          totalTokens: null,
+          cost: null,
+        });
+        assert.doesNotMatch(JSON.stringify(error.responseBody), /secret-key/);
+        assert.match(JSON.stringify(error.responseBody), /\[REDACTED\]/);
+        return true;
+      },
+    );
+    assert.equal(cancelled, true);
+  });
+
+  it("does not count whitespace inside streamed JSON strings", async () => {
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+      sseResponse([
+        {
+          model: "vendor/model",
+          choices: [{ delta: { content: `{"text":"${" ".repeat(600)}` }, finish_reason: null }],
+        },
+        { choices: [{ delta: { content: '"}' }, finish_reason: "stop" }] },
+      ]),
+    );
+
+    const result = await provider.complete(finalRequest);
+    assert.deepEqual(result.value, { text: " ".repeat(600) });
+  });
+
+  it("retains partial streamed diagnostics when the body fails", async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            `data: ${JSON.stringify({
+              model: "vendor/model",
+              choices: [{ delta: { content: '{"ok":' }, finish_reason: null }],
+            })}\n\n`,
+          ),
+        );
+        controller.error(new DOMException("connection lost", "NetworkError"));
+      },
+    });
+    const provider = new OpenRouterProviderV1(
+      "secret-key",
+      providerRouting,
+      async () => new Response(body, { headers: { "content-type": "text/event-stream" } }),
+    );
+
+    await assert.rejects(
+      () => provider.complete(finalRequest),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.code, "TRANSPORT_UNCERTAIN");
+        assert.match(JSON.stringify(error.responseBody), /OPENROUTER_SSE/);
+        assert.equal(error.responseMetadata?.provider, "provider-a/fp4");
+        return true;
+      },
+    );
+  });
+
+  it("pins a final retry to a different configured endpoint", async () => {
+    let wire: Record<string, unknown> = {};
+    const provider = new OpenRouterProviderV1(
+      "secret-key",
+      providerRouting,
+      async (_input, init) => {
+        wire = JSON.parse(String(init?.body));
+        return sseResponse([
+          {
+            model: "vendor/model",
+            choices: [{ delta: { content: "{}" }, finish_reason: "stop" }],
+          },
+        ]);
+      },
+    );
+    const retry = provider.forRetry(
+      new ProviderCallError("UNPRODUCTIVE_STREAM", "stalled", { retryable: true }),
+      finalRequest,
+    );
+
+    assert.ok(retry);
+    await retry.complete(finalRequest);
+    assert.deepEqual((wire.provider as { only: string[] }).only, ["provider-b/bf16"]);
+    assert.equal(
+      new OpenRouterProviderV1(
+        "secret-key",
+        { ...providerRouting, order: ["provider-a/fp4"] },
+        async () => sseResponse([]),
+      ).forRetry(
+        new ProviderCallError("UNPRODUCTIVE_STREAM", "stalled", { retryable: true }),
+        finalRequest,
+      ),
+      null,
+    );
+  });
+
   it("pins one endpoint without silently falling back to another provider", async () => {
     let wire: Record<string, unknown> = {};
     const provider = new OpenRouterProviderV1(
@@ -146,7 +335,7 @@ describe("OpenRouterProviderV1", () => {
     assert.equal(result.provider, "Mock Provider");
 
     const audit = provider.auditRequest(request);
-    assert.equal(audit.providerPolicyVersion, "openrouter-chat-completions-v3");
+    assert.equal(audit.providerPolicyVersion, "openrouter-chat-completions-v4");
     assert.deepEqual(audit.wireBodyDigest, sha256Utf8(String(capturedInit?.body)));
     assert.equal(audit.wireBodyBytes, Buffer.byteLength(String(capturedInit?.body), "utf8"));
     assert.notDeepEqual(

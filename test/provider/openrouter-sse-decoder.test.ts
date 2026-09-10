@@ -124,4 +124,13 @@ describe("decodeOpenRouterSseV1", () => {
     assert.deepEqual(captured, [bytes]);
     assert.equal(cancelled, true);
   });
+
+  it("drains many events from one input chunk without shifting the queue", async () => {
+    const count = 10_000;
+    const wire = `${'data: {"ok":true}\n\n'.repeat(count)}data: [DONE]\n\n`;
+    const events = await collect(byteStream([new TextEncoder().encode(wire)]));
+
+    assert.equal(events.length, count + 1);
+    assert.deepEqual(events.at(-1), { kind: "DONE" });
+  });
 });

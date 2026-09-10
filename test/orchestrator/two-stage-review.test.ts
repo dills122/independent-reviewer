@@ -1610,6 +1610,117 @@ for (const status of [503, 529])
     }
   });
 
+it("persists an unproductive final stream and retries only the final on another endpoint", async () => {
+  const { repositoryPath, packetPath } = await arrangePacket();
+  const calls: Array<{ endpoint: string | null; stage: string }> = [];
+  const secondary: ReviewProviderV1 = {
+    auditRequest: (providerRequest) => ({
+      ...mockAuditRequest(providerRequest),
+      requestedProviderEndpoint: "provider-b/bf16",
+    }),
+    complete: async (providerRequest) => {
+      calls.push({ endpoint: "provider-b/bf16", stage: providerRequest.stage });
+      return successfulEmptyResponse(providerRequest);
+    },
+  };
+  const partial = {
+    schemaVersion: 1,
+    transport: "OPENROUTER_SSE",
+    requestedProviderEndpoint: "provider-a/fp4",
+    transcript: 'data: {"choices":[{"delta":{"content":"{   "}}]}\n\n',
+    partialContentCharacters: 513,
+    progress: {
+      consecutiveFormattingWhitespace: 512,
+      maximumFormattingWhitespace: 512,
+      totalCharacters: 513,
+    },
+  };
+  const primary: ReviewProviderV1 = {
+    auditRequest: (providerRequest) => ({
+      ...mockAuditRequest(providerRequest),
+      requestedProviderEndpoint: providerRequest.stage === "FINAL" ? "provider-a/fp4" : null,
+    }),
+    complete: async (providerRequest) => {
+      calls.push({
+        endpoint: providerRequest.stage === "FINAL" ? "provider-a/fp4" : null,
+        stage: providerRequest.stage,
+      });
+      if (providerRequest.stage === "FINAL") {
+        throw new ProviderCallError(
+          "UNPRODUCTIVE_STREAM",
+          "Structured output stopped making progress.",
+          {
+            retryable: true,
+            responseBody: partial,
+            responseMetadata: {
+              responseId: "generation-stalled",
+              model: config.model,
+              provider: "provider-a/fp4",
+              finishReason: null,
+              usage: {
+                promptTokens: null,
+                completionTokens: null,
+                totalTokens: null,
+                cost: null,
+              },
+            },
+          },
+        );
+      }
+      return successfulEmptyResponse(providerRequest);
+    },
+    forRetry: (error, providerRequest) => {
+      assert.equal(error.code, "UNPRODUCTIVE_STREAM");
+      assert.equal(providerRequest.stage, "FINAL");
+      return secondary;
+    },
+  };
+
+  try {
+    const result = await runTwoStageReviewV1(packetPath, config, primary);
+    assert.equal(result.report.verdict, "READY");
+    assert.deepEqual(calls, [
+      { endpoint: null, stage: "PRELIMINARY" },
+      { endpoint: "provider-a/fp4", stage: "FINAL" },
+      { endpoint: "provider-b/bf16", stage: "FINAL" },
+    ]);
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(join(packetPath, "review", "provider-response-attempt-2.raw.json"), "utf8"),
+      ),
+      partial,
+    );
+    const events = (await readFile(result.runRecordPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(
+      events
+        .filter((event) => event.type === "CALL_STARTED")
+        .map((event) => ({
+          attempt: event.attemptNumber,
+          endpoint: event.requestedProviderEndpoint,
+          stage: event.stage,
+        })),
+      [
+        { attempt: 1, endpoint: null, stage: "PRELIMINARY" },
+        { attempt: 2, endpoint: "provider-a/fp4", stage: "FINAL" },
+        { attempt: 3, endpoint: "provider-b/bf16", stage: "FINAL" },
+      ],
+    );
+    const failed = events.find((event) => event.type === "CALL_FAILED");
+    assert.equal(failed.error.code, "UNPRODUCTIVE_STREAM");
+    assert.deepEqual(failed.responseMetadata.usage, {
+      promptTokens: null,
+      completionTokens: null,
+      totalTokens: null,
+      cost: null,
+    });
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
 it("permits only one provider retry across both review stages", async () => {
   const { repositoryPath, packetPath } = await arrangePacket();
   const calls: ReviewProviderRequestV1[] = [];

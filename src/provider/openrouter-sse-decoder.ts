@@ -77,6 +77,7 @@ export async function* decodeOpenRouterSseV1(
     "maxEventBufferCharacters",
   );
   const pending: OpenRouterSseDecodedEventV1[] = [];
+  let pendingIndex = 0;
   let parseFailure: OpenRouterSseDecodeErrorV1 | undefined;
   let completed = false;
   const parser = createParser({
@@ -139,7 +140,10 @@ export async function* decodeOpenRouterSseV1(
           { cause: error },
         );
       }
-      while (pending.length > 0) yield pending.shift() as OpenRouterSseDecodedEventV1;
+      while (pendingIndex < pending.length)
+        yield pending[pendingIndex++] as OpenRouterSseDecodedEventV1;
+      pending.length = 0;
+      pendingIndex = 0;
     }
     try {
       feed(decoder.decode());
@@ -153,7 +157,8 @@ export async function* decodeOpenRouterSseV1(
         { cause: error },
       );
     }
-    while (pending.length > 0) yield pending.shift() as OpenRouterSseDecodedEventV1;
+    while (pendingIndex < pending.length)
+      yield pending[pendingIndex++] as OpenRouterSseDecodedEventV1;
     if (!completed) {
       throw new OpenRouterSseDecodeErrorV1(
         "TRUNCATED_STREAM",
