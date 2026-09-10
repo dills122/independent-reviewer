@@ -13,7 +13,7 @@
   "budgets": {
     "maxInitialEvidenceBytes": 32000,
     "maxConversationBytes": 128000,
-    "maxOutputTokensPerCall": 4096,
+    "maxOutputTokensPerCall": 8192,
     "maxTotalTokens": 160000,
     "maxTotalCostUsd": 0.02,
     "timeoutMs": 180000

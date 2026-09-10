@@ -1,30 +1,43 @@
 #!/usr/bin/env node
-
-import { readFile, realpath } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-
-import * as z from "zod";
-
+import type * as z from "zod";
 import {
-  buildInspectionReportV1,
+  createProgressOutput,
+  formatRunCost,
+  terminalReviewSummary,
+  terminalText,
+} from "./cli/review-output.js";
+import {
+  assembleStandardsRequest,
+  loadLocalSettings,
+  saveLocalSettings,
+} from "./cli/standards-input.js";
+import {
   type FinalReviewReportV1,
-  type InspectionReportV1,
   type OpenRouterProviderRoutingV1,
-  ReviewRequestV1Schema,
   ReviewRunConfigV2Schema,
 } from "./contracts/index.js";
-import { resumeFinalReviewV1, runTwoStageReviewV1 } from "./orchestrator/two-stage-review.js";
+import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
+import { canonicalInputList, ReviewRequestSchema } from "./contracts/standards-review.js";
+import { withReviewProgress } from "./orchestrator/progress.js";
+import {
+  preflightReview,
+  resumeFinalReview,
+  runTwoStageReview,
+} from "./orchestrator/two-stage-review.js";
 import { OpenRouterProviderV1, ProviderCallError } from "./provider/openrouter.js";
 import type { ReviewProviderV1 } from "./provider/review-provider.js";
-import { VERDICT_LABELS_V1 } from "./report/markdown.js";
+import { reviewVerdictLabel } from "./report/markdown.js";
 import {
   captureGitSnapshotV1,
   isPathIgnoredV1,
   resolveRepositoryRootV1,
 } from "./snapshot/git-capture.js";
-import { inspectSnapshotPacketV1, writeSnapshotPacketV1 } from "./snapshot/snapshot-packet.js";
+import { inspectSnapshotPacket, writeSnapshotPacketV1 } from "./snapshot/snapshot-packet.js";
 
 export interface CliIoV1 {
   stdout(message: string): void;
@@ -50,6 +63,8 @@ const processDependencies: CliDependenciesV1 = {
 };
 
 interface PreparedPacketV1 {
+  claim?: () => Promise<void>;
+  standards: boolean;
   packetPath: string;
   captured: Awaited<ReturnType<typeof captureGitSnapshotV1>>;
   repositoryRoot: string;
@@ -67,6 +82,19 @@ interface CommandSpecV1 {
 }
 
 const COMMAND_SPECS_V1: Record<string, CommandSpecV1> = {
+  init: {
+    summary: "Save local standards review settings without calling a provider.",
+    options: {
+      repo: { type: "string", description: "Repository (default current directory)." },
+      config: { type: "string", description: "Review configuration file.", required: true },
+      standards: {
+        type: "string",
+        description: "Selected standards profile JSON.",
+        required: true,
+      },
+      author: { type: "string", description: "Author overview or packet file.", required: true },
+    },
+  },
   prepare: {
     summary: "Capture a frozen snapshot packet without contacting a provider.",
     options: {
@@ -86,8 +114,17 @@ const COMMAND_SPECS_V1: Record<string, CommandSpecV1> = {
   review: {
     summary: "Prepare a packet and run the complete two-stage review.",
     options: {
-      request: { type: "string", description: "Path to the review request JSON.", required: true },
-      config: { type: "string", description: "Path to the review run config.", required: true },
+      repo: { type: "string", description: "Repository (default current directory)." },
+      standards: { type: "string", description: "Selected standards profile JSON." },
+      author: { type: "string", description: "Author overview Markdown or author packet JSON." },
+      "dry-run": {
+        type: "boolean",
+        description: "Validate scope and budgets without provider calls.",
+      },
+      "new-flow": { type: "boolean", description: "Explicitly start a new standards review flow." },
+      quiet: { type: "boolean", description: "Suppress progress messages." },
+      request: { type: "string", description: "Path to the review request JSON.", required: false },
+      config: { type: "string", description: "Path to the review run config.", required: false },
       base: { type: "string", description: "Override base ref resolution." },
       output: { type: "string", description: "Packet directory (default <repo>/.review-runs)." },
       exclude: { type: "string", description: "Comma-separated glob patterns to exclude." },
@@ -201,7 +238,7 @@ function requiredOption(options: Map<string, string | true>, name: string): stri
 }
 
 /** The human-readable view of the same validated report the JSON view emits. */
-function formatInspection(report: InspectionReportV1): string {
+function formatInspection(report: InspectionReport): string {
   const lines = [
     `Snapshot: ${report.snapshotManifest.snapshotDigest.value}`,
     `Base: ${report.snapshotManifest.source.baseCommit}`,
@@ -217,7 +254,7 @@ function formatInspection(report: InspectionReportV1): string {
     lines.push(`${exclusion.reason} ${exclusion.path}`);
   }
   lines.push(`Omissions: ${report.snapshotManifest.omissions.length}`);
-  lines.push(`Canonical inputs: ${report.canonicalInputs.requirements.length + 1}`);
+  lines.push(`Canonical inputs: ${canonicalInputList(report.canonicalInputs).length}`);
   lines.push(`Captured blobs: ${report.blobCount}`);
   lines.push(`Author packet: ${report.authorPacketPresent ? "stored separately" : "not provided"}`);
   return lines.join("\n");
@@ -241,8 +278,14 @@ async function preparePacket(
   options: Map<string, string | true>,
   expectedConfigId?: string,
 ): Promise<PreparedPacketV1> {
-  const requestPath = resolve(requiredOption(options, "--request"));
-  const request = ReviewRequestV1Schema.parse(JSON.parse(await readFile(requestPath, "utf8")));
+  const requestOption = options.get("--request");
+  if (requestOption && ["--standards", "--author", "--new-flow"].some((key) => options.has(key)))
+    throw new Error("Use either --request or standards/author inputs, not both.");
+  const assembled = requestOption ? undefined : await assembleStandardsRequest(options);
+  const requestPath = typeof requestOption === "string" ? resolve(requestOption) : undefined;
+  const request = assembled
+    ? assembled.request
+    : ReviewRequestSchema.parse(JSON.parse(await readFile(requestPath!, "utf8")));
   if (expectedConfigId && request.reviewConfigRef !== expectedConfigId) {
     throw new Error(
       `Review request config reference ${request.reviewConfigRef} does not match ${expectedConfigId}.`,
@@ -267,7 +310,8 @@ async function preparePacket(
   const captured = await captureGitSnapshotV1(request, {
     ...(typeof base === "string" ? { base } : {}),
     excludedFileSystemPaths: [
-      requestPath,
+      ...(requestPath ? [requestPath] : []),
+      ...(assembled?.excludedPaths ?? []),
       ...(typeof configPath === "string" ? [resolve(configPath)] : []),
       defaultPacketRoot,
       packetRoot,
@@ -282,7 +326,13 @@ async function preparePacket(
       ? packetRoot
       : join(defaultPacketRoot, captured.manifest.snapshotId);
   await writeSnapshotPacketV1(packetPath, captured, request);
-  return { packetPath, captured, repositoryRoot };
+  return {
+    packetPath,
+    captured,
+    repositoryRoot,
+    standards: request.schemaVersion === 2,
+    ...(assembled ? { claim: assembled.claim } : {}),
+  };
 }
 
 /**
@@ -350,14 +400,111 @@ async function review(
   io: CliIoV1,
   dependencies: CliDependenciesV1,
 ): Promise<number> {
+  if (!options.has("--request")) await loadLocalSettings(options);
+  if (options.has("--dry-run")) {
+    const temporary = await mkdtemp(join(tmpdir(), "independent-reviewer-preflight-"));
+    try {
+      const dryOptions = new Map(options);
+      dryOptions.set("--output", join(temporary, "packet"));
+      const config = ReviewRunConfigV2Schema.parse(
+        JSON.parse(await readFile(resolve(requiredOption(options, "--config")), "utf8")),
+      );
+      const prepared = await preparePacket(dryOptions, config.configId);
+      const admission = await preflightReview(prepared.packetPath, config);
+      io.stdout(
+        `Dry-run: ${prepared.captured.manifest.paths.length} changed paths, ${prepared.captured.manifest.exclusions.length} exclusions. No provider calls.`,
+      );
+      io.stdout(
+        `Model: ${terminalText(admission.model)}; providers: ${admission.providers.map(terminalText).join(", ")}`,
+      );
+      io.stdout(
+        `Reserved tokens: ${admission.reservedTokens}; reserved cost: $${admission.reservedCostUsd.toFixed(6)} (not a billed amount).`,
+      );
+      return 0;
+    } finally {
+      await rm(temporary, { recursive: true, force: true });
+    }
+  }
   const { config, provider } = await resolveLiveReviewContextV1(options, dependencies);
   const prepared = await preparePacket(options, config.configId);
   await warnUnignoredPacketLocation(prepared.repositoryRoot, prepared.packetPath, io);
   io.stdout(`Prepared snapshot packet: ${prepared.packetPath}`);
-  const result = await runTwoStageReviewV1(prepared.packetPath, config, provider);
-  io.stdout(`Verdict: ${VERDICT_LABELS_V1[result.report.verdict]}`);
-  io.stdout(`Report: ${result.markdownPath}`);
-  return reviewOutcomeExitCodeV1(result.report.verdict);
+  if (prepared.claim) {
+    await preflightReview(prepared.packetPath, config);
+    await prepared.claim();
+  }
+  const progress = createProgressOutput(io.stderr, !prepared.standards || options.has("--quiet"));
+  try {
+    const result = await withReviewProgress(progress.observe, () =>
+      runTwoStageReview(prepared.packetPath, config, provider),
+    );
+    io.stdout(
+      prepared.standards
+        ? terminalReviewSummary(result.report)
+        : `Verdict: ${reviewVerdictLabel(result.report)}`,
+    );
+    io.stdout(`Report: ${result.markdownPath}`);
+    if (prepared.standards) {
+      const events = (await readFile(result.runRecordPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      io.stdout(formatRunCost(events));
+    }
+    return reviewOutcomeExitCodeV1(result.report.verdict);
+  } catch (error) {
+    if (prepared.standards) {
+      io.stderr(`Review did not complete. Saved packet: ${terminalText(prepared.packetPath)}`);
+      if (error instanceof ProviderCallError && error.code === "TRANSPORT_UNCERTAIN")
+        io.stderr(
+          "Provider outcome and cost may be unknown. This submission cannot be safely replayed automatically.",
+        );
+      else {
+        let events: Record<string, unknown>[] = [];
+        try {
+          events = (await readFile(join(prepared.packetPath, "review", "run-record.jsonl"), "utf8"))
+            .trim()
+            .split("\n")
+            .map((line) => JSON.parse(line));
+        } catch {
+          /* Input/preflight may have failed before a ledger exists. */
+        }
+        const persisted = events.some((event) => event.type === "PRELIMINARY_PERSISTED");
+        io.stderr(
+          persisted
+            ? "Initial assessment is saved; the final review did not complete."
+            : "No valid initial assessment was saved. Correct the reported failure before starting another review.",
+        );
+        const eligibleShape = [
+          "RUN_STARTED",
+          "CALL_STARTED",
+          "CALL_SUCCEEDED",
+          "PRELIMINARY_PERSISTED",
+          "AUTHOR_DELIVERED",
+          "CALL_STARTED",
+          "CALL_FAILED",
+          "RUN_FAILED",
+        ];
+        if (
+          error instanceof ProviderCallError &&
+          error.diagnostic?.httpStatus === 429 &&
+          JSON.stringify(events.map((event) => event.type)) === JSON.stringify(eligibleShape)
+        ) {
+          const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+          io.stderr(
+            `A final-only retry may be available. This command revalidates eligibility: independent-reviewer resume-final --packet ${quote(prepared.packetPath)} --config ${quote(resolve(requiredOption(options, "--config")))}`,
+          );
+        } else if (persisted)
+          io.stderr(
+            "This failure has no remaining final-only resume under the current policy. No automatic new review will be started.",
+          );
+        if (events.length) io.stderr(formatRunCost(events));
+      }
+    }
+    throw error;
+  } finally {
+    progress.close();
+  }
 }
 
 async function resumeFinal(
@@ -366,19 +513,19 @@ async function resumeFinal(
   dependencies: CliDependenciesV1,
 ): Promise<number> {
   const { config, provider } = await resolveLiveReviewContextV1(options, dependencies);
-  const result = await resumeFinalReviewV1(
+  const result = await resumeFinalReview(
     resolve(requiredOption(options, "--packet")),
     config,
     provider,
   );
-  io.stdout(`Verdict: ${VERDICT_LABELS_V1[result.report.verdict]}`);
+  io.stdout(`Verdict: ${reviewVerdictLabel(result.report)}`);
   io.stdout(`Report: ${result.markdownPath}`);
   return reviewOutcomeExitCodeV1(result.report.verdict);
 }
 
 async function inspect(options: Map<string, string | true>, io: CliIoV1): Promise<void> {
-  const inspected = await inspectSnapshotPacketV1(resolve(requiredOption(options, "--packet")));
-  const report = buildInspectionReportV1(inspected);
+  const inspected = await inspectSnapshotPacket(resolve(requiredOption(options, "--packet")));
+  const report = buildInspectionReport(inspected);
   if (options.get("--json") === true) {
     io.stdout(JSON.stringify(report, null, 2));
     return;
@@ -411,6 +558,10 @@ export async function runCliV1(
       return 0;
     }
     const options = parseCommandOptions(command, optionArgs);
+    if (command === "init") {
+      io.stdout(`Saved review settings: ${await saveLocalSettings(options)}`);
+      return 0;
+    }
     if (command === "prepare") {
       await prepare(options, io);
       return 0;

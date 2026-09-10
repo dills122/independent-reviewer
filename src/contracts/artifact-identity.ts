@@ -1,6 +1,11 @@
 import { canonicalizeJson, cloneCanonicalJson, digestCanonicalJson } from "./canonical-json.js";
+import {
+  type NeutralReviewBriefV1,
+  NeutralReviewBriefV1Schema,
+  type ReviewBrief,
+  StandardsReviewBriefV2Schema,
+} from "./neutral-review-brief.js";
 import { compareUtf16 } from "./primitives.js";
-import { type NeutralReviewBriefV1, NeutralReviewBriefV1Schema } from "./neutral-review-brief.js";
 import {
   type DigestV1,
   type SnapshotManifestV1,
@@ -195,4 +200,41 @@ export function verifyNeutralReviewBriefIdentityV1(value: unknown): value is Neu
 
   const { briefDigest, ...identityInput } = parsed.data;
   return briefDigest.value === computeParsedNeutralBriefDigest(identityInput).value;
+}
+
+/** Standards briefs have a separate identity profile; legacy v1 identities are unchanged. */
+export function finalizeReviewBrief(value: unknown): ReviewBrief {
+  const cloned = cloneCanonicalJson(value);
+  if (!cloned || typeof cloned !== "object" || Array.isArray(cloned))
+    throw new TypeError("Brief must be an object.");
+  if ((cloned as Record<string, unknown>).schemaVersion !== 2)
+    return finalizeNeutralReviewBriefV1(cloned);
+  if (Object.hasOwn(cloned, "briefDigest"))
+    throw new TypeError("Brief draft must not contain briefDigest.");
+  const parsed = StandardsReviewBriefV2Schema.parse(
+    addOwnField(cloned, "briefDigest", PLACEHOLDER_DIGEST),
+  );
+  if (!verifySnapshotManifestIdentityV1(parsed.snapshotManifest))
+    throw new TypeError("Invalid snapshot identity.");
+  const { briefId: _id, briefDigest: _digest, ...content } = parsed;
+  return {
+    ...parsed,
+    briefDigest: digestCanonicalJson({
+      identityProfile: "urn:independent-reviewer:identity:standards-brief:v2",
+      content,
+    }),
+  };
+}
+export function verifyReviewBriefIdentity(value: unknown): value is ReviewBrief {
+  try {
+    const cloned = cloneCanonicalJson(value);
+    if (!cloned || typeof cloned !== "object" || Array.isArray(cloned)) return false;
+    if ((cloned as Record<string, unknown>).schemaVersion !== 2)
+      return verifyNeutralReviewBriefIdentityV1(cloned);
+    const parsed = StandardsReviewBriefV2Schema.parse(cloned);
+    const { briefDigest, ...draft } = parsed;
+    return finalizeReviewBrief(draft).briefDigest.value === briefDigest.value;
+  } catch {
+    return false;
+  }
 }

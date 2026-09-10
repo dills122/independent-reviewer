@@ -1,9 +1,12 @@
 import * as z from "zod";
-
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 import { prefixedIdentifier } from "./primitives.js";
 import { PersistedCanonicalInputsV1Schema } from "./review-request.js";
 import { SnapshotManifestV1Schema } from "./snapshot-manifest.js";
+import {
+  type ReviewCanonicalInputs,
+  StandardsCanonicalInputsV2Schema,
+} from "./standards-review.js";
 
 /**
  * The machine-readable view of a snapshot packet, as `inspect --json` emits it.
@@ -48,3 +51,27 @@ export const INSPECTION_REPORT_V1_JSON_SCHEMA = {
   $comment: STRUCTURAL_JSON_SCHEMA_COMMENT_V1,
   ...z.toJSONSchema(InspectionReportV1Schema, { target: "draft-2020-12", io: "output" }),
 };
+
+export const StandardsInspectionReportV2Schema = InspectionReportV1Schema.extend({
+  schemaVersion: z.literal(2),
+  canonicalInputs: StandardsCanonicalInputsV2Schema,
+});
+export type InspectionReport =
+  | InspectionReportV1
+  | z.infer<typeof StandardsInspectionReportV2Schema>;
+export function buildInspectionReport(
+  input: Omit<InspectionReportInputV1, "canonicalInputs"> & {
+    canonicalInputs: ReviewCanonicalInputs;
+  },
+): InspectionReport {
+  if (!("standards" in input.canonicalInputs))
+    return buildInspectionReportV1({ ...input, canonicalInputs: input.canonicalInputs });
+  return StandardsInspectionReportV2Schema.parse({
+    schemaVersion: 2,
+    reviewConfigRef: input.reviewConfigRef,
+    snapshotManifest: input.manifest,
+    canonicalInputs: input.canonicalInputs,
+    authorPacketPresent: input.authorPacket !== undefined,
+    blobCount: input.blobCount,
+  });
+}

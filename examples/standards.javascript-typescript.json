@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "name": "JavaScript/TypeScript code quality",
+  "source": "Project-selectable baseline adapted from https://google.github.io/eng-practices/review/reviewer/looking-for.html; recommendations, not universal requirements",
+  "rules": [
+    {
+      "id": "rule_readable_names",
+      "text": "Use names that communicate the role of public functions, parameters and exported values. Report a naming concern only when it creates specific ambiguity for a reader or caller, not because another name is a personal preference.",
+      "enforcement": "RECOMMENDED",
+      "paths": ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx"],
+      "exceptions": "Short conventional names in a clear local context are acceptable."
+    },
+    {
+      "id": "rule_necessary_complexity",
+      "text": "Keep control flow and abstractions understandable for the current task. Report unnecessary complexity only by identifying the concrete indirection or branching and a simpler equivalent organization; do not impose arbitrary function-length thresholds.",
+      "enforcement": "RECOMMENDED",
+      "paths": ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx"],
+      "exceptions": "Additional structure is appropriate when supplied constraints explain its present purpose."
+    },
+    {
+      "id": "rule_explanatory_comments",
+      "text": "Comments should clarify intent, constraints or non-obvious decisions. Flag a comment only when it materially misleads readers or obscures the code's intent. Do not request documentation for every symbol.",
+      "enforcement": "RECOMMENDED",
+      "paths": ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx"],
+      "exceptions": "Explanatory comments may describe how unfamiliar algorithms work."
+    }
+  ]
+}

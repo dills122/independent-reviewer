@@ -1,11 +1,18 @@
 import {
+  type AuthorPacketV1,
   FinalReviewCandidateV1Schema,
   FinalReviewCandidateV2Schema,
-  FinalReviewReportV1Schema,
-  type AuthorPacketV1,
   type FinalReviewReportV1,
+  FinalReviewReportV1Schema,
   type PreliminaryAssessmentV1,
 } from "../contracts/index.js";
+import {
+  type ReviewPreliminary,
+  type ReviewReport,
+  StandardsCandidateV2Schema,
+  StandardsExpandedCandidateV2Schema,
+  StandardsReportV2Schema,
+} from "../contracts/standards-results.js";
 
 function assertCompleteIndices(indices: number[], count: number, label: string): void {
   if (
@@ -20,12 +27,15 @@ function assertCompleteIndices(indices: number[], count: number, label: string):
 }
 
 /** Resolves source references without changing any model judgment or source text. */
-export function materializeFinalReviewCandidateV1(
+function materializeExpandedCandidate(
   value: unknown,
   preliminary: Pick<PreliminaryAssessmentV1, "evidenceGaps" | "limitations">,
   claims: AuthorPacketV1["claimedVerification"],
-): FinalReviewReportV1 {
-  const candidate = FinalReviewCandidateV1Schema.parse(value);
+  standards = false,
+): ReviewReport {
+  const candidate = standards
+    ? StandardsExpandedCandidateV2Schema.parse(value)
+    : FinalReviewCandidateV1Schema.parse(value);
   assertCompleteIndices(
     candidate.authorVerificationClaims.map((claim) => claim.claimIndex),
     claims.length,
@@ -44,7 +54,7 @@ export function materializeFinalReviewCandidateV1(
       `Preliminary ${kind} dispositions`,
     );
   }
-  return FinalReviewReportV1Schema.parse({
+  const report = (standards ? StandardsReportV2Schema : FinalReviewReportV1Schema).parse({
     ...candidate,
     authorVerificationClaims: candidate.authorVerificationClaims.map((claim) => {
       const source = claims[claim.claimIndex];
@@ -63,15 +73,61 @@ export function materializeFinalReviewCandidateV1(
       }),
     ),
   });
+  // Missing evidence requests are review workflow, not permission to invent standards or edit code.
+  if (
+    report.schemaVersion === 2 &&
+    report.findings.length === 0 &&
+    report.ruleAssessments.every((entry) => entry.status === "UNASSESSED")
+  ) {
+    return {
+      ...report,
+      nextActions: {
+        blockers: [
+          `Supply the existing authoritative evidence identified in limitations for unassessed standards: ${report.ruleAssessments
+            .map((entry) => entry.ruleId)
+            .sort()
+            .join(
+              ", ",
+            )}. Do not change code or invent standards merely because evidence is unavailable.`,
+        ],
+        fastFollows: [],
+      },
+    };
+  }
+  // Conflict-only follow-up is a runner-owned workflow action, not a code correction.
+  // Preserve the model's assessment and raw candidate; never invent a winning rule.
+  if (
+    report.schemaVersion === 2 &&
+    report.findings.length === 0 &&
+    report.ruleAssessments.every((entry) => entry.status === "CONFLICT")
+  ) {
+    const conflicts = report.ruleAssessments
+      .filter((entry) => entry.status === "CONFLICT")
+      .map((entry) => entry.ruleId)
+      .sort();
+    if (conflicts.length)
+      return {
+        ...report,
+        nextActions: {
+          blockers: [
+            `Clarify precedence, applicability, or exceptions for conflicting standards: ${conflicts.join(", ")}. Do not change code merely to satisfy one conflicting rule.`,
+          ],
+          fastFollows: [],
+        },
+      };
+  }
+  return report;
 }
 
-export function materializeFinalReviewCandidateV2(
+export function materializeFinalCandidate(
   value: unknown,
-  preliminary: PreliminaryAssessmentV1,
+  preliminary: ReviewPreliminary,
   claims: AuthorPacketV1["claimedVerification"],
-): FinalReviewReportV1 {
-  const { findings, withdrawnPreliminaryFindings, ...candidate } =
-    FinalReviewCandidateV2Schema.parse(value);
+): ReviewReport {
+  const standards = preliminary.schemaVersion === 2;
+  const { findings, withdrawnPreliminaryFindings, ...candidate } = (
+    standards ? StandardsCandidateV2Schema : FinalReviewCandidateV2Schema
+  ).parse(value);
   const expected = new Set(preliminary.findings.map((finding) => finding.id));
   const actual = [
     ...findings.flatMap((finding) => finding.sourceFindingIds),
@@ -93,10 +149,10 @@ export function materializeFinalReviewCandidateV2(
       emergenceRationale: sourceFindingIds.length ? null : reconciliationRationale,
     }),
   );
-  return materializeFinalReviewCandidateV1(
+  return materializeExpandedCandidate(
     {
       ...candidate,
-      schemaVersion: 1,
+      schemaVersion: standards ? 2 : 1,
       findings: finalFindings,
       preliminaryFindingDispositions: [
         ...findings.flatMap((finding, index) =>
@@ -116,5 +172,21 @@ export function materializeFinalReviewCandidateV2(
     },
     preliminary,
     claims,
+    standards,
   );
+}
+
+export function materializeFinalReviewCandidateV1(
+  value: unknown,
+  preliminary: Pick<PreliminaryAssessmentV1, "evidenceGaps" | "limitations">,
+  claims: AuthorPacketV1["claimedVerification"],
+): FinalReviewReportV1 {
+  return FinalReviewReportV1Schema.parse(materializeExpandedCandidate(value, preliminary, claims));
+}
+export function materializeFinalReviewCandidateV2(
+  value: unknown,
+  preliminary: PreliminaryAssessmentV1,
+  claims: AuthorPacketV1["claimedVerification"],
+): FinalReviewReportV1 {
+  return FinalReviewReportV1Schema.parse(materializeFinalCandidate(value, preliminary, claims));
 }

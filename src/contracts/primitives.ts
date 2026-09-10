@@ -16,6 +16,7 @@ export type IdentifierPrefixV1 =
   | "flow"
   | "hunk"
   | "input"
+  | "rule"
   | "repo"
   | "snapshot";
 

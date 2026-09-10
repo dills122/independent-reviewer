@@ -31,6 +31,8 @@ const DEFAULT_PROSE_MAX_LENGTH_V1 = 400;
 const RESPONSE_ARRAY_LIMITS_V1: Readonly<Record<string, number>> = {
   authorClaims: 24,
   sourceFindingIds: 40,
+  ruleIds: 12,
+  conflictingRuleIds: 12,
   withdrawnPreliminaryFindings: 40,
   blockers: 12,
   evidence: 8,
@@ -39,7 +41,7 @@ const RESPONSE_ARRAY_LIMITS_V1: Readonly<Record<string, number>> = {
   findings: 40,
   inspectedPaths: 200,
   limitations: 12,
-  preliminaryConcernDispositions: 24,
+  preliminaryConcernDispositions: 36,
   preliminaryFindingDispositions: 40,
 };
 
@@ -47,6 +49,7 @@ const RESPONSE_ARRAY_LIMITS_V1: Readonly<Record<string, number>> = {
 const PATH_ANCHORED_EVIDENCE_KINDS_V1 = new Set(["LINE_RANGE", "SYMBOL"]);
 
 export interface ConstrainResponseSchemaOptionsV1 {
+  ruleIds?: string[];
   evidencePaths: string[];
   changedPaths: string[];
   canonicalInputIds: string[];
@@ -278,7 +281,31 @@ export function constrainResponseSchemaV1(
   pinIdentityConstants(root, options.identities);
   constrainEvidencePaths(root, options.evidencePaths);
   constrainLedgers(root, options);
+  if (options.ruleIds)
+    visitNodes(root, (node, name) => {
+      if ((name === "ruleIds" || name === "conflictingRuleIds") && node.type === "array") {
+        const item = requireNode(node.items, "ruleIds.items");
+        item.enum = options.ruleIds;
+      }
+      if (name === "ruleId") node.enum = options.ruleIds;
+      if (name === "ruleAssessments" && node.type === "array") {
+        node.minItems = options.ruleIds?.length;
+        node.maxItems = options.ruleIds?.length;
+      }
+    });
   const appliedArrayLimits = boundUnspecifiedProse(root, Math.max(options.changedPaths.length, 1));
+  const concerns = optionalNode(optionalProperties(root).preliminaryConcernDispositions);
+  if (concerns) {
+    // Reserve the widest count/index digits now; actual scope only shrinks after call one.
+    concerns.minItems = concerns.maxItems;
+    const fields = requireProperties(requireNode(concerns.items, "concern.items"), "concern.items");
+    if (fields.concernIndex)
+      requireNode(fields.concernIndex, "concernIndex").maximum =
+        Math.max(
+          RESPONSE_ARRAY_LIMITS_V1.evidenceGaps ?? 0,
+          RESPONSE_ARRAY_LIMITS_V1.limitations ?? 0,
+        ) - 1;
+  }
   return { schema: root, appliedArrayLimits };
 }
 
@@ -294,7 +321,23 @@ export function constrainFinalConcernScopeV1(
     "preliminaryConcernDispositions",
   );
   const count = preliminary.evidenceGaps.length + preliminary.limitations.length;
-  concerns.maxItems = Math.min(Number(concerns.maxItems), count);
+  if (
+    count > Number(concerns.maxItems) ||
+    preliminary.evidenceGaps.length > (RESPONSE_ARRAY_LIMITS_V1.evidenceGaps ?? 0) ||
+    preliminary.limitations.length > (RESPONSE_ARRAY_LIMITS_V1.limitations ?? 0)
+  )
+    throw new ResponseSchemaShapeError(
+      "Preliminary concerns exceed the admitted final response capacity.",
+    );
+  concerns.minItems = count;
+  concerns.maxItems = count;
+  const fields = requireProperties(requireNode(concerns.items, "concern.items"), "concern.items");
+  if (fields.concernIndex)
+    requireNode(fields.concernIndex, "concernIndex").maximum = Math.max(
+      0,
+      preliminary.evidenceGaps.length - 1,
+      preliminary.limitations.length - 1,
+    );
   if (count > 0) {
     const items = requireProperties(requireNode(concerns.items, "concern.items"), "concern.items");
     requireNode(items.kind, "concern.kind").enum = [
@@ -317,7 +360,9 @@ export function constrainFinalConcernScopeV1(
  */
 export function constrainRepairReferencesV1(
   final: ConstrainedResponseSchemaV1,
-  preliminary: Pick<PreliminaryAssessmentV1, "findings" | "evidenceGaps" | "limitations">,
+  preliminary: Pick<PreliminaryAssessmentV1, "evidenceGaps" | "limitations"> & {
+    findings: { id: string }[];
+  },
 ): ConstrainedResponseSchemaV1 {
   const schema = structuredClone(final.schema);
   const properties = requireProperties(schema, "(root)");

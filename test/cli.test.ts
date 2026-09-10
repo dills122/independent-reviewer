@@ -1,20 +1,19 @@
-import { asFinalCandidateV2 } from "./helpers/final-candidate.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { it } from "node:test";
-
+import { promisify } from "node:util";
+import { reviewOutcomeExitCodeV1, runCliV1 } from "../src/cli.js";
+import type { OpenRouterProviderRoutingV1 } from "../src/index.js";
 import {
   ProviderCallError,
   type ReviewProviderRequestV1,
   type ReviewProviderResponseV1,
   type ReviewProviderV1,
 } from "../src/index.js";
-import type { OpenRouterProviderRoutingV1 } from "../src/index.js";
-import { reviewOutcomeExitCodeV1, runCliV1 } from "../src/cli.js";
+import { asFinalCandidateV2 } from "./helpers/final-candidate.js";
 
 const execFileAsync = promisify(execFile);
 const mockDigest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
@@ -724,8 +723,11 @@ it("prints help and version on stdout without a packet or provider", async () =>
 
   assert.equal(errors.length, 0);
   const printed = output.join("\n");
-  assert.match(printed, /Usage: independent-reviewer <prepare\|inspect\|review\|resume-final>/);
-  assert.match(printed, /--config <value>.*required/);
+  assert.match(
+    printed,
+    /Usage: independent-reviewer <init\|prepare\|inspect\|review\|resume-final>/,
+  );
+  assert.match(printed, /--config <value>/);
   assert.match(printed, /OPENROUTER_API_KEY/);
 });
 

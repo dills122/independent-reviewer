@@ -7,6 +7,7 @@ import {
 } from "../../src/index.js";
 import {
   constrainResponseSchemaV1,
+  constrainFinalConcernScopeV1,
   constrainRepairReferencesV1,
   ResponseSchemaShapeError,
 } from "../../src/orchestrator/response-schema.js";
@@ -150,7 +151,7 @@ describe("constrainResponseSchemaV1", () => {
 
     assert.equal(rootProperty(schema, "findings").maxItems, 40);
     assert.equal(rootProperty(schema, "limitations").maxItems, 12);
-    assert.equal(rootProperty(schema, "preliminaryConcernDispositions").maxItems, 24);
+    assert.equal(rootProperty(schema, "preliminaryConcernDispositions").maxItems, 36);
     assert.deepEqual(
       nodesNamed(schema, "evidence").map((node) => node.maxItems),
       [8, 8],
@@ -225,4 +226,29 @@ describe("constrainResponseSchemaV1", () => {
       /newLedger with no configured item limit/,
     );
   });
+});
+
+it("requires every preliminary concern on the first final call within the admitted schema size", () => {
+  const final = constrainResponseSchemaV1(FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA, options);
+  const original = JSON.stringify(final.schema);
+  for (const [gaps, limits] of [
+    [0, 0],
+    [0, 1],
+    [1, 0],
+    [2, 3],
+    [24, 12],
+  ] as const) {
+    const scoped = constrainFinalConcernScopeV1(final, {
+      evidenceGaps: Array(gaps).fill("gap"),
+      limitations: Array(limits).fill("limitation"),
+    });
+    const concerns = rootProperty(scoped.schema, "preliminaryConcernDispositions");
+    assert.equal(concerns.minItems, gaps + limits);
+    assert.equal(concerns.maxItems, gaps + limits);
+    const properties = (concerns.items as { properties: Record<string, Record<string, unknown>> })
+      .properties;
+    assert.equal(properties.concernIndex?.maximum, Math.max(0, gaps - 1, limits - 1));
+    assert.ok(Buffer.byteLength(JSON.stringify(scoped.schema)) <= Buffer.byteLength(original));
+    assert.equal(JSON.stringify(final.schema), original);
+  }
 });

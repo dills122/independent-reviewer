@@ -1527,11 +1527,11 @@ describe("two-stage review orchestrator", () => {
   });
 });
 
-function transientFailure() {
+function transientFailure(status = 503) {
   return new ProviderCallError("PROVIDER_ERROR", "Temporarily unavailable", {
     diagnostic: {
-      httpStatus: 503,
-      providerErrorCode: "503",
+      httpStatus: status,
+      providerErrorCode: String(status),
       providerMessage: null,
       errorType: null,
       providerCode: null,
@@ -1574,40 +1574,41 @@ function successfulEmptyResponse(request: ReviewProviderRequestV1) {
   );
 }
 
-it("retries only the failed final call with identical inputs and unique attempt numbers", async () => {
-  const { repositoryPath, packetPath } = await arrangePacket();
-  const calls: ReviewProviderRequestV1[] = [];
-  const provider: ReviewProviderV1 = {
-    auditRequest: mockAuditRequest,
-    complete: async (request) => {
-      calls.push(request);
-      if (calls.length === 2) throw transientFailure();
-      return successfulEmptyResponse(request);
-    },
-  };
-  try {
-    const result = await runTwoStageReviewV1(packetPath, config, provider);
-    assert.equal(result.report.verdict, "READY");
-    assert.deepEqual(
-      calls.map((request) => request.stage),
-      ["PRELIMINARY", "FINAL", "FINAL"],
-    );
-    assert.deepEqual(calls[1], calls[2]);
-    const events = (await readFile(result.runRecordPath, "utf8"))
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    assert.deepEqual(
-      events.filter((e) => e.type === "CALL_STARTED").map((e) => e.attemptNumber),
-      [1, 2, 3],
-    );
-    const retry = events.find((e) => e.type === "PROVIDER_RETRY_REQUESTED");
-    assert.ok(retry.chargedFailedTokens > 0);
-    assert.ok(retry.chargedFailedCostUsd > 0);
-  } finally {
-    await rm(repositoryPath, { recursive: true, force: true });
-  }
-});
+for (const status of [503, 529])
+  it(`retries only the failed final ${status} call with identical inputs and unique attempt numbers`, async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    const calls: ReviewProviderRequestV1[] = [];
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (request) => {
+        calls.push(request);
+        if (calls.length === 2) throw transientFailure(status);
+        return successfulEmptyResponse(request);
+      },
+    };
+    try {
+      const result = await runTwoStageReviewV1(packetPath, config, provider);
+      assert.equal(result.report.verdict, "READY");
+      assert.deepEqual(
+        calls.map((request) => request.stage),
+        ["PRELIMINARY", "FINAL", "FINAL"],
+      );
+      assert.deepEqual(calls[1], calls[2]);
+      const events = (await readFile(result.runRecordPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      assert.deepEqual(
+        events.filter((e) => e.type === "CALL_STARTED").map((e) => e.attemptNumber),
+        [1, 2, 3],
+      );
+      const retry = events.find((e) => e.type === "PROVIDER_RETRY_REQUESTED");
+      assert.ok(retry.chargedFailedTokens > 0);
+      assert.ok(retry.chargedFailedCostUsd > 0);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
 
 it("permits only one provider retry across both review stages", async () => {
   const { repositoryPath, packetPath } = await arrangePacket();

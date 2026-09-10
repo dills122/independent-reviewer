@@ -11,6 +11,29 @@ not select a default model. The TypeScript and Node.js runtime is adopted in
 budget protocol is adopted in
 [ADR-003](decisions/003-use-versioned-budgeted-model-call-protocol.md).
 
+
+## Standards review mode (v2)
+
+Standards mode implements the agreed [product plan](research/2026-09-09-first-use-product-plan.md).
+It accepts selected standards and a separate author overview without business
+requirements or an implementation plan. The existing v1 mode remains available.
+Call one sees frozen code and standards only; call two receives the persisted
+assessment plus the overview collected upfront. Standards inputs are validated
+profile JSON in digest-bound PROJECT_GUIDANCE documents; no placeholder plan or
+requirements are synthesized. Brief v2 binds the mode and selected inputs under
+a separate identity profile. Packet metadata v2 binds the author digest before
+submission; inspection exposes only its presence.
+
+Standards findings cite selected rule IDs, applicability, a concrete code-quality
+problem, evidence and correction. REQUIRED and RECOMMENDED classifications replace
+defect severity in this mode. Existing verdict codes retain exit compatibility,
+but labels explicitly describe standards satisfaction/changes/recommendations or
+inability to assess, never deployment readiness. Unknown or inapplicable rule
+references fail validation. Conflicting rule IDs require explicit selection of
+one definition. Subjective disagreement with a standard is not an exception.
+Bug hunting, fuzzing and runtime verification are outside this mode. Transport,
+privacy and spending bounds remain; protocols cannot be mixed during resume.
+
 ## Objective
 
 Build a local review engine that lets an implementation agent submit a frozen
@@ -880,3 +903,62 @@ Never:
 [^openai-evals]: OpenAI, [Evaluation Best Practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices).
 [^anthropic-evals]: Anthropic, [Define Success Criteria and Build Evaluations](https://platform.claude.com/docs/en/test-and-evaluate/develop-tests).
 [^git-check-ref-format]: Git, [`git-check-ref-format`](https://git-scm.com/docs/git-check-ref-format).
+
+### Standards rule accounting (pilot policy v2)
+
+Both standards assessments now require `ruleAssessments`: each selected `ruleId`
+appears exactly once, with `status` (`ASSESSED` or `CONFLICT`),
+`conflictingRuleIds`, and an explanation. `ASSESSED` means the rule was considered,
+not that compliance or runtime correctness was proven. Conflict references must
+be reciprocal, distinct, and refer to other selected rules. A conflicted rule
+cannot support a code-violation finding. A final unresolved conflict requires
+`UNABLE_TO_VERIFY` and a visible limitation; the report includes the rule ledger.
+
+Before findings, compare applicable mandatory rules for mutual compatibility.
+Do not recommend a correction that violates another applicable mandatory rule.
+Author preference cannot resolve conflicting requirements; changes to the blind
+assessment require an evidence-based explanation. Semantic conflict recognition
+remains model judgment; complete accounting prevents silent rule omission but
+cannot prove the explanation true.
+
+This adds required fields to the unreleased standards-v2 pilot result schemas.
+The standards policy identity advances to `standards-review-v2`, preventing
+final-only resume under the prior policy. Legacy v1 contracts remain unchanged.
+
+For a conflict-only report (every selected rule marked CONFLICT, zero findings),
+the runner owns the clarification next action: resolve precedence, applicability,
+or exceptions before changing code. Raw model actions remain in the saved
+candidate. Verdict, findings, and rule explanations are not rewritten. Reports
+with non-conflicted rules or findings retain their model-provided next actions.
+
+### Unassessed standards (pilot policy v3)
+
+Rule assessments also support `UNASSESSED`, with empty conflict references and an
+explanation identifying unavailable evidence. Such a rule cannot support a code
+finding, regardless of REQUIRED/RECOMMENDED enforcement. Final unassessed rules
+require UNABLE_TO_VERIFY and visible limitations. An author assertion does not
+replace missing authoritative evidence or justify inventing accepted standard
+content. Standards policy v3 prevents resuming earlier policy runs.
+
+For reports where every rule is UNASSESSED and no findings exist, the runner
+supplies the next action to provide existing authoritative evidence identified in
+limitations; it does not suggest editing code or inventing standards to pass.
+Other report actions retain their existing behavior. The model still determines
+whether evidence suffices: validators enforce consistency with that declared
+assessment, not semantic truth of arbitrary prose.
+
+### First-final concern completeness (review policy v12 / standards policy v4)
+
+The final response template reserves count/index bounds before call one. After
+persisting the preliminary, the first final schema requires exactly the combined
+number of evidence gaps and limitations (`minItems` equals `maxItems`) and bounds
+kind-local indices to the available range. Its serialized size does not grow
+beyond the admitted template. Capacity covers all permitted preliminary concerns:
+24 evidence gaps plus 12 limitations. Previously the first final permitted empty
+coverage and capped total entries at 24, leaving repair to enforce completeness.
+
+Local validation still requires each (kind, index) exactly once and rejects
+omissions, duplicates, or wrong-kind references. Array counts/index bounds are
+structural guidance, not a replacement for those semantic checks. Repair and
+provider-retry budgets remain unchanged. Policy identities advance so earlier
+runs cannot resume under a changed response protocol.
