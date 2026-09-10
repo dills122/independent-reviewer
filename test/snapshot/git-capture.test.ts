@@ -23,9 +23,9 @@ async function createRepository(): Promise<string> {
   await git(repositoryPath, "config", "user.name", "Capture Test");
   await git(repositoryPath, "config", "user.email", "capture@example.invalid");
   await git(repositoryPath, "config", "commit.gpgsign", "false");
-  await writeFile(join(repositoryPath, "modified.txt"), "before\n");
-  await writeFile(join(repositoryPath, "renamed.txt"), "rename me\n");
-  await writeFile(join(repositoryPath, "deleted.txt"), "delete me\n");
+  await writeFile(join(repositoryPath, "modified.ts"), "before\n");
+  await writeFile(join(repositoryPath, "renamed.ts"), "rename me\n");
+  await writeFile(join(repositoryPath, "deleted.ts"), "delete me\n");
   await git(repositoryPath, "add", ".");
   await git(repositoryPath, "commit", "-m", "initial");
   return repositoryPath;
@@ -70,10 +70,10 @@ describe("captureGitSnapshotV1", () => {
     try {
       const baseCommit = await git(repositoryPath, "rev-parse", "HEAD");
       await git(repositoryPath, "switch", "-c", "feature/capture");
-      await writeFile(join(repositoryPath, "modified.txt"), "after\n");
-      await git(repositoryPath, "mv", "renamed.txt", "current-name.txt");
-      await rm(join(repositoryPath, "deleted.txt"));
-      await writeFile(join(repositoryPath, "added.txt"), "added\n");
+      await writeFile(join(repositoryPath, "modified.ts"), "after\n");
+      await git(repositoryPath, "mv", "renamed.ts", "current-name.ts");
+      await rm(join(repositoryPath, "deleted.ts"));
+      await writeFile(join(repositoryPath, "added.ts"), "added\n");
       await git(repositoryPath, "add", ".");
       await git(repositoryPath, "commit", "-m", "change files");
 
@@ -87,10 +87,10 @@ describe("captureGitSnapshotV1", () => {
         await git(repositoryPath, "rev-parse", "HEAD"),
       );
       assert.equal(captured.manifest.source.branch, "feature/capture");
-      assert.equal(byPath.get("modified.txt")?.changeType, "MODIFIED");
-      assert.equal(byPath.get("current-name.txt")?.changeType, "RENAMED");
-      assert.equal(byPath.get("deleted.txt")?.changeType, "DELETED");
-      assert.equal(byPath.get("added.txt")?.changeType, "ADDED");
+      assert.equal(byPath.get("modified.ts")?.changeType, "MODIFIED");
+      assert.equal(byPath.get("current-name.ts")?.changeType, "RENAMED");
+      assert.equal(byPath.get("deleted.ts")?.changeType, "DELETED");
+      assert.equal(byPath.get("added.ts")?.changeType, "ADDED");
       assert.equal(captured.manifest.workingTree.hasStagedChanges, false);
       assert.equal(captured.manifest.workingTree.hasUnstagedChanges, false);
       assert.equal(captured.manifest.workingTree.includedUntrackedPaths.length, 0);
@@ -105,18 +105,18 @@ describe("captureGitSnapshotV1", () => {
     const repositoryPath = await createRepository();
     try {
       await git(repositoryPath, "switch", "-c", "feature/dirty");
-      await writeFile(join(repositoryPath, "modified.txt"), "staged\n");
-      await git(repositoryPath, "add", "modified.txt");
-      await writeFile(join(repositoryPath, "modified.txt"), "unstaged after staged\n");
-      await writeFile(join(repositoryPath, "new.txt"), "untracked\n");
+      await writeFile(join(repositoryPath, "modified.ts"), "staged\n");
+      await git(repositoryPath, "add", "modified.ts");
+      await writeFile(join(repositoryPath, "modified.ts"), "unstaged after staged\n");
+      await writeFile(join(repositoryPath, "new.ts"), "untracked\n");
 
       const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
-      const modified = captured.manifest.paths.find((entry) => entry.path === "modified.txt");
-      const untracked = captured.manifest.paths.find((entry) => entry.path === "new.txt");
+      const modified = captured.manifest.paths.find((entry) => entry.path === "modified.ts");
+      const untracked = captured.manifest.paths.find((entry) => entry.path === "new.ts");
 
       assert.equal(captured.manifest.workingTree.hasStagedChanges, true);
       assert.equal(captured.manifest.workingTree.hasUnstagedChanges, true);
-      assert.deepEqual(captured.manifest.workingTree.includedUntrackedPaths, ["new.txt"]);
+      assert.deepEqual(captured.manifest.workingTree.includedUntrackedPaths, ["new.ts"]);
       assert.equal(modified?.changeType, "MODIFIED");
       assert.equal(untracked?.changeType, "UNTRACKED");
       assert.equal(untracked?.after?.kind, "TEXT");
@@ -135,7 +135,7 @@ describe("captureGitSnapshotV1", () => {
     try {
       await git(repositoryPath, "switch", "-c", "feature/exclusions");
       await writeFile(join(repositoryPath, ".env.production"), "API_KEY=do-not-store\n");
-      await writeFile(join(repositoryPath, "large.txt"), "x".repeat(33));
+      await writeFile(join(repositoryPath, "large.ts"), "x".repeat(33));
 
       const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"), {
         maxFileBytes: 32,
@@ -145,7 +145,7 @@ describe("captureGitSnapshotV1", () => {
         captured.manifest.exclusions.map(({ path, reason }) => ({ path, reason })),
         [
           { path: ".env.production", reason: "SECRET_POLICY" },
-          { path: "large.txt", reason: "SIZE_LIMIT" },
+          { path: "large.ts", reason: "SIZE_LIMIT" },
         ],
       );
       assert.equal(captured.manifest.paths.length, 0);
@@ -188,7 +188,7 @@ describe("captureGitSnapshotV1", () => {
         "refs/remotes/origin/main",
       );
       await git(repositoryPath, "switch", "-c", "feature/default-base");
-      await writeFile(join(repositoryPath, "modified.txt"), "feature change\n");
+      await writeFile(join(repositoryPath, "modified.ts"), "feature change\n");
       await git(repositoryPath, "add", ".");
       await git(repositoryPath, "commit", "-m", "feature change");
       const featureCommit = await git(repositoryPath, "rev-parse", "HEAD");
@@ -209,7 +209,7 @@ describe("captureGitSnapshotV1", () => {
 
       assert.equal(captured.manifest.source.baseCommit, mainCommit);
       assert.equal(
-        captured.manifest.paths.some((entry) => entry.path === "modified.txt"),
+        captured.manifest.paths.some((entry) => entry.path === "modified.ts"),
         true,
       );
     } finally {
@@ -219,18 +219,18 @@ describe("captureGitSnapshotV1", () => {
   it("reads the mode of the requested file when the path contains glob characters", async () => {
     const repositoryPath = await createRepository();
     try {
-      await writeFile(join(repositoryPath, "a0c.txt"), "executable\n");
-      await chmod(join(repositoryPath, "a0c.txt"), 0o755);
-      await writeFile(join(repositoryPath, "a?c.txt"), "plain\n");
+      await writeFile(join(repositoryPath, "a0c.ts"), "executable\n");
+      await chmod(join(repositoryPath, "a0c.ts"), 0o755);
+      await writeFile(join(repositoryPath, "a?c.ts"), "plain\n");
       await git(repositoryPath, "add", "-A");
       await git(repositoryPath, "commit", "-m", "add glob-shaped paths");
       await git(repositoryPath, "switch", "-c", "feature/glob");
-      await writeFile(join(repositoryPath, "a?c.txt"), "plain changed\n");
+      await writeFile(join(repositoryPath, "a?c.ts"), "plain changed\n");
       await git(repositoryPath, "add", "-A");
       await git(repositoryPath, "commit", "-m", "change the glob-shaped path");
 
       const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
-      const entry = captured.manifest.paths.find((candidate) => candidate.path === "a?c.txt");
+      const entry = captured.manifest.paths.find((candidate) => candidate.path === "a?c.ts");
 
       assert.equal(entry?.changeType, "MODIFIED");
       assert.equal(entry?.before?.gitMode, "100644");
@@ -247,7 +247,7 @@ describe("captureGitSnapshotV1", () => {
     const previousWorkTree = process.env.GIT_WORK_TREE;
     try {
       await git(target, "switch", "-c", "feature/target");
-      await writeFile(join(target, "modified.txt"), "target change\n");
+      await writeFile(join(target, "modified.ts"), "target change\n");
       await git(target, "add", "-A");
       await git(target, "commit", "-m", "target change");
       const targetHead = await git(target, "rev-parse", "HEAD");
@@ -279,7 +279,7 @@ describe("captureGitSnapshotV1", () => {
       return;
     }
     const repositoryPath = await createRepository();
-    const unreadablePath = join(repositoryPath, "unreadable.txt");
+    const unreadablePath = join(repositoryPath, "unreadable.ts");
     try {
       await git(repositoryPath, "switch", "-c", "feature/unreadable");
       await writeFile(unreadablePath, "secret\n");
@@ -287,7 +287,7 @@ describe("captureGitSnapshotV1", () => {
 
       const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
       const omission = captured.manifest.omissions.find(
-        (candidate) => candidate.scope === "unreadable.txt",
+        (candidate) => candidate.scope === "unreadable.ts",
       );
 
       assert.equal(omission?.reason, "UNREADABLE");
@@ -306,7 +306,7 @@ describe("captureGitSnapshotV1", () => {
       await writeFile(join(repositoryPath, "id_ed25519"), "private key material\n");
       await writeFile(join(repositoryPath, "terraform.tfvars"), 'token = "value"\n');
       await writeFile(join(repositoryPath, "keystore.jks"), "binary-ish\n");
-      await writeFile(join(repositoryPath, "kept.txt"), "ordinary source\n");
+      await writeFile(join(repositoryPath, "kept.ts"), "ordinary source\n");
 
       const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
       const excluded = new Set(captured.manifest.exclusions.map((entry) => entry.path));
@@ -316,7 +316,7 @@ describe("captureGitSnapshotV1", () => {
         assert.equal(excluded.has(path), true, `${path} must be excluded`);
         assert.equal(capturedPaths.has(path), false, `${path} must not be captured`);
       }
-      assert.equal(capturedPaths.has("kept.txt"), true);
+      assert.equal(capturedPaths.has("kept.ts"), true);
       assert.equal(
         captured.manifest.exclusions.every((entry) => entry.reason === "SECRET_POLICY"),
         true,
@@ -338,7 +338,7 @@ describe("captureGitSnapshotV1", () => {
         join(repositoryPath, "fixture.pem.txt"),
         "-----BEGIN OPENSSH PRIVATE KEY-----\nbase64\n",
       );
-      await writeFile(join(repositoryPath, "kept.txt"), "ordinary source\n");
+      await writeFile(join(repositoryPath, "kept.ts"), "ordinary source\n");
 
       const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
       const byPath = new Map(
@@ -351,7 +351,7 @@ describe("captureGitSnapshotV1", () => {
 
       assert.equal(byPath.get("config.ts"), "SECRET_CONTENT");
       assert.equal(byPath.get("fixture.pem.txt"), "SECRET_CONTENT");
-      assert.equal(capturedPaths.has("kept.txt"), true);
+      assert.equal(capturedPaths.has("kept.ts"), true);
       assert.equal(
         blobs.some((content) => content.includes("AKIAIOSFODNN7EXAMPLE")),
         false,
@@ -368,7 +368,7 @@ describe("captureGitSnapshotV1", () => {
       await mkdir(join(repositoryPath, "vendor", "nested"), { recursive: true });
       await writeFile(join(repositoryPath, "vendor", "nested", "bundle.js"), "vendored\n");
       await writeFile(join(repositoryPath, "notes.md"), "generated\n");
-      await writeFile(join(repositoryPath, "kept.txt"), "ordinary source\n");
+      await writeFile(join(repositoryPath, "kept.ts"), "ordinary source\n");
 
       const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"), {
         excludedPathPatterns: ["vendor/**", "*.md"],
@@ -380,7 +380,7 @@ describe("captureGitSnapshotV1", () => {
 
       assert.equal(byPath.get("vendor/nested/bundle.js"), "USER_EXCLUDED");
       assert.equal(byPath.get("notes.md"), "USER_EXCLUDED");
-      assert.equal(capturedPaths.has("kept.txt"), true);
+      assert.equal(capturedPaths.has("kept.ts"), true);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }

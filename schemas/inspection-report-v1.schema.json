@@ -146,6 +146,18 @@
                     "minLength": 1,
                     "maxLength": 4096
                   },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "SOURCE",
+                      "TEST",
+                      "CONFIG",
+                      "DOCUMENTATION",
+                      "STEERING",
+                      "GENERATED",
+                      "BINARY"
+                    ]
+                  },
                   "changeType": {
                     "type": "string",
                     "enum": [
@@ -407,6 +419,7 @@
                 },
                 "required": [
                   "path",
+                  "role",
                   "changeType",
                   "before",
                   "after"
@@ -420,6 +433,18 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 4096
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "SOURCE",
+                      "TEST",
+                      "CONFIG",
+                      "DOCUMENTATION",
+                      "STEERING",
+                      "GENERATED",
+                      "BINARY"
+                    ]
                   },
                   "changeType": {
                     "type": "string",
@@ -679,6 +704,7 @@
                 },
                 "required": [
                   "path",
+                  "role",
                   "changeType",
                   "before",
                   "after"
@@ -692,6 +718,18 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 4096
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "SOURCE",
+                      "TEST",
+                      "CONFIG",
+                      "DOCUMENTATION",
+                      "STEERING",
+                      "GENERATED",
+                      "BINARY"
+                    ]
                   },
                   "changeType": {
                     "type": "string",
@@ -1199,6 +1237,7 @@
                 },
                 "required": [
                   "path",
+                  "role",
                   "changeType",
                   "before",
                   "after"
@@ -1212,6 +1251,18 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 4096
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "SOURCE",
+                      "TEST",
+                      "CONFIG",
+                      "DOCUMENTATION",
+                      "STEERING",
+                      "GENERATED",
+                      "BINARY"
+                    ]
                   },
                   "changeType": {
                     "type": "string",
@@ -1724,6 +1775,7 @@
                 },
                 "required": [
                   "path",
+                  "role",
                   "changeType",
                   "previousPath",
                   "before",

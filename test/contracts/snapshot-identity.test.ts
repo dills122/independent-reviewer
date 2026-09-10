@@ -24,7 +24,7 @@ describe("snapshot manifest identity", () => {
     assert.equal(manifest.snapshotDigest.algorithm, "SHA256");
     assert.equal(
       manifest.snapshotDigest.value,
-      "d8b009e9bffcebb334148df826a5d8334fec8d08f1c389d9913259db5032700f",
+      "08d7a12baee16a406a4f7ef8dd01379586535924592220ef8f23603df616bec9",
     );
     assert.equal(verifySnapshotManifestIdentityV1(manifest), true);
   });
@@ -65,7 +65,7 @@ describe("snapshot manifest identity", () => {
     const reversed = structuredClone(draft);
     reversed.exclusions.reverse();
 
-    const expected = "9a6a6621620fa05a37f23c6b76d636bc5983405556bf47c9f33cce80ba225527";
+    const expected = "da9b994ff2069685dea6da5a95a046b03bfb9beb1614fdcaebd6b5682ef03b50";
     assert.equal(finalizeSnapshotManifestV1(draft).snapshotDigest.value, expected);
     assert.equal(finalizeSnapshotManifestV1(reversed).snapshotDigest.value, expected);
   });

@@ -66,7 +66,7 @@ describe("neutral review brief identity", () => {
     // removed (ADR-005); a change here without a corresponding contract change is a regression.
     assert.equal(
       brief.briefDigest.value,
-      "7da09729ab6bc0481d6327cdc8fa3c2a8f7a038724c5a9b4f3240eaea9566f0d",
+      "41cfa4b03d6ab8944d1ed3ffcfc23facf4552c8561e35edcb5ade4c1b8e49dc3",
     );
     assert.equal(verifyNeutralReviewBriefIdentityV1(brief), true);
   });

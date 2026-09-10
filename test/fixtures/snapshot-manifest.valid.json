@@ -25,6 +25,7 @@
     {
       "changeType": "MODIFIED",
       "path": "src/contracts/review-request.ts",
+      "role": "SOURCE",
       "before": {
         "kind": "TEXT",
         "digest": {
@@ -49,6 +50,7 @@
     {
       "changeType": "RENAMED",
       "path": "docs/current-name.md",
+      "role": "SOURCE",
       "previousPath": "docs/old-name.md",
       "before": {
         "kind": "TEXT",
@@ -74,6 +76,7 @@
     {
       "changeType": "UNTRACKED",
       "path": "test/new-contract.test.ts",
+      "role": "SOURCE",
       "before": null,
       "after": {
         "kind": "TEXT",

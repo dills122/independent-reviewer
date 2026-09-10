@@ -121,8 +121,20 @@ function gitEntryCategory(content: SnapshotContentV1): string {
   }
 }
 
+/** What a changed path is, so a review spends its evidence on code rather than on build output. */
+export const PathRoleV1Schema = z.enum([
+  "SOURCE",
+  "TEST",
+  "CONFIG",
+  "DOCUMENTATION",
+  "STEERING",
+  "GENERATED",
+  "BINARY",
+]);
+
 const PathIdentityShape = {
   path: SnapshotPathV1Schema,
+  role: PathRoleV1Schema,
 };
 
 const AddedPathV1Schema = z.strictObject({

@@ -25,14 +25,21 @@ function entry(changeType: SnapshotPathEntryV1["changeType"]): SnapshotPathEntry
   switch (changeType) {
     case "ADDED":
     case "UNTRACKED":
-      return { path: "new.md", changeType, before: null, after };
+      return { path: "new.md", role: "SOURCE", changeType, before: null, after };
     case "DELETED":
-      return { path: "gone.md", changeType, before, after: null };
+      return { path: "gone.md", role: "SOURCE", changeType, before, after: null };
     case "RENAMED":
     case "COPIED":
-      return { path: "new-name.md", previousPath: "old-name.md", changeType, before, after };
+      return {
+        path: "new-name.md",
+        role: "SOURCE",
+        previousPath: "old-name.md",
+        changeType,
+        before,
+        after,
+      };
     default:
-      return { path: "same.md", changeType, before, after };
+      return { path: "same.md", role: "SOURCE", changeType, before, after };
   }
 }
 
@@ -76,8 +83,15 @@ describe("resolveSnapshotSourceContentV1", () => {
   it("prefers the entry that owns the path over a relocation source", () => {
     const ownedAfter = textContent("c");
     const paths: SnapshotPathEntryV1[] = [
-      { path: "new-name.md", previousPath: "old-name.md", changeType: "COPIED", before, after },
-      { path: "old-name.md", changeType: "MODIFIED", before, after: ownedAfter },
+      {
+        path: "new-name.md",
+        role: "SOURCE",
+        previousPath: "old-name.md",
+        changeType: "COPIED",
+        before,
+        after,
+      },
+      { path: "old-name.md", role: "SOURCE", changeType: "MODIFIED", before, after: ownedAfter },
     ];
 
     assert.deepEqual(resolveSnapshotSourceContentV1(paths, "old-name.md", "HEAD"), ownedAfter);

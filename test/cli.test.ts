@@ -28,12 +28,12 @@ it("prepares and inspects a snapshot packet without a provider call", async () =
     await git(repositoryPath, "config", "user.name", "CLI Test");
     await git(repositoryPath, "config", "user.email", "cli@example.invalid");
     await git(repositoryPath, "config", "commit.gpgsign", "false");
-    await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "before\n");
     await writeFile(join(repositoryPath, ".gitignore"), ".review-runs/\n");
     await git(repositoryPath, "add", ".");
     await git(repositoryPath, "commit", "-m", "initial");
     await git(repositoryPath, "switch", "-c", "feature/cli");
-    await writeFile(join(repositoryPath, "reviewed.txt"), "after\n");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "after\n");
 
     const requestPath = join(repositoryPath, "request.json");
     const packetPath = join(repositoryPath, ".review-runs", "cli-test");
@@ -79,7 +79,7 @@ it("prepares and inspects a snapshot packet without a provider call", async () =
     assert.equal(await runCliV1(["inspect", "--packet", packetPath], io), 0);
     assert.equal(errors.length, 0);
     assert.match(output.join("\n"), /Prepared snapshot packet/);
-    assert.match(output.join("\n"), /MODIFIED reviewed\.txt/);
+    assert.match(output.join("\n"), /MODIFIED reviewed\.ts/);
     assert.doesNotMatch(output.join("\n"), /UNTRACKED request\.json/);
     assert.match(output.join("\n"), /RUNNER_CONTROL request\.json/);
   } finally {
@@ -94,12 +94,12 @@ it("composes capture and the two-stage provider flow through the review command"
     await git(repositoryPath, "config", "user.name", "CLI Review Test");
     await git(repositoryPath, "config", "user.email", "cli-review@example.invalid");
     await git(repositoryPath, "config", "commit.gpgsign", "false");
-    await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "before\n");
     await writeFile(join(repositoryPath, ".gitignore"), ".review-runs/\n");
     await git(repositoryPath, "add", ".");
     await git(repositoryPath, "commit", "-m", "initial");
     await git(repositoryPath, "switch", "-c", "feature/cli-review");
-    await writeFile(join(repositoryPath, "reviewed.txt"), "after\n");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "after\n");
 
     const requestPath = join(repositoryPath, "request.json");
     const configPath = join(repositoryPath, "config.json");
@@ -136,7 +136,7 @@ it("composes capture and the two-stage provider flow through the review command"
           successCriteria: ["The line changes."],
           planTraceability: [{ planItem: "Change one line.", implementation: "Changed it." }],
           technicalApproach: "Replace the text.",
-          componentWalkthrough: [{ component: "reviewed.txt", changes: "Changed one line." }],
+          componentWalkthrough: [{ component: "reviewed.ts", changes: "Changed one line." }],
           decisions: [],
           invariants: [],
           claimedVerification: [],
@@ -195,7 +195,7 @@ it("composes capture and the two-stage provider flow through the review command"
             snapshotDigest: brief.snapshotManifest.snapshotDigest,
             briefDigest: brief.briefDigest,
             summary: "The visible change is straightforward.",
-            inspectedPaths: ["reviewed.txt"],
+            inspectedPaths: ["reviewed.ts"],
             canonicalInputCoverage: [
               {
                 canonicalInputId: "input_requirement",
@@ -227,7 +227,7 @@ it("composes capture and the two-stage provider flow through the review command"
           authorVerificationClaims: [],
           changedPathCoverage: [
             {
-              path: "reviewed.txt",
+              path: "reviewed.ts",
               status: "INSPECTED",
               explanation: "The complete changed file was inspected.",
             },
@@ -360,12 +360,12 @@ it("resumes a definite failed final stage without preparing or buying another pr
     await git(repositoryPath, "config", "user.name", "CLI Resume Test");
     await git(repositoryPath, "config", "user.email", "cli-resume@example.invalid");
     await git(repositoryPath, "config", "commit.gpgsign", "false");
-    await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "before\n");
     await writeFile(join(repositoryPath, ".gitignore"), ".review-runs/\n");
     await git(repositoryPath, "add", ".");
     await git(repositoryPath, "commit", "-m", "initial");
     await git(repositoryPath, "switch", "-c", "feature/cli-resume");
-    await writeFile(join(repositoryPath, "reviewed.txt"), "after\n");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "after\n");
 
     const requestPath = join(repositoryPath, "request.json");
     const configPath = join(repositoryPath, "config.json");
@@ -405,7 +405,7 @@ it("resumes a definite failed final stage without preparing or buying another pr
           successCriteria: ["The line changes."],
           planTraceability: [{ planItem: "Change one line.", implementation: "Changed it." }],
           technicalApproach: "Replace the text.",
-          componentWalkthrough: [{ component: "reviewed.txt", changes: "Changed one line." }],
+          componentWalkthrough: [{ component: "reviewed.ts", changes: "Changed one line." }],
           decisions: [],
           invariants: [],
           claimedVerification: [],
@@ -450,7 +450,7 @@ it("resumes a definite failed final stage without preparing or buying another pr
         snapshotDigest: brief.snapshotManifest.snapshotDigest,
         briefDigest: brief.briefDigest,
         summary: "The file was inspected.",
-        inspectedPaths: ["reviewed.txt"],
+        inspectedPaths: ["reviewed.ts"],
         canonicalInputCoverage: [
           {
             canonicalInputId: "input_requirement",
@@ -521,7 +521,7 @@ it("resumes a definite failed final stage without preparing or buying another pr
           authorClaims: [],
           authorVerificationClaims: [],
           changedPathCoverage: [
-            { path: "reviewed.txt", status: "INSPECTED", explanation: "The file was inspected." },
+            { path: "reviewed.ts", status: "INSPECTED", explanation: "The file was inspected." },
           ],
           canonicalInputCoverage: [
             {
@@ -565,11 +565,11 @@ it("never captures a prior packet, and warns when packets are not ignored", asyn
     await git(repositoryPath, "config", "user.name", "CLI Packet Test");
     await git(repositoryPath, "config", "user.email", "cli-packet@example.invalid");
     await git(repositoryPath, "config", "commit.gpgsign", "false");
-    await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "before\n");
     await git(repositoryPath, "add", ".");
     await git(repositoryPath, "commit", "-m", "initial");
     await git(repositoryPath, "switch", "-c", "feature/cli-packets");
-    await writeFile(join(repositoryPath, "reviewed.txt"), "after\n");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "after\n");
 
     const requestPath = join(repositoryPath, "request.json");
     await writeFile(
@@ -643,12 +643,12 @@ it("applies caller-supplied exclusion patterns from the command line", async () 
     await git(repositoryPath, "config", "user.name", "CLI Exclude Test");
     await git(repositoryPath, "config", "user.email", "cli-exclude@example.invalid");
     await git(repositoryPath, "config", "commit.gpgsign", "false");
-    await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "before\n");
     await writeFile(join(repositoryPath, ".gitignore"), ".review-runs/\n");
     await git(repositoryPath, "add", ".");
     await git(repositoryPath, "commit", "-m", "initial");
     await git(repositoryPath, "switch", "-c", "feature/cli-exclude");
-    await writeFile(join(repositoryPath, "reviewed.txt"), "after\n");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "after\n");
     await writeFile(join(repositoryPath, "notes.md"), "excluded by pattern\n");
 
     const requestPath = join(repositoryPath, "request.json");
@@ -765,12 +765,12 @@ it("emits a versioned inspection report that never carries author-packet content
     await git(repositoryPath, "config", "user.name", "CLI Inspect Test");
     await git(repositoryPath, "config", "user.email", "cli-inspect@example.invalid");
     await git(repositoryPath, "config", "commit.gpgsign", "false");
-    await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "before\n");
     await writeFile(join(repositoryPath, ".gitignore"), ".review-runs/\n");
     await git(repositoryPath, "add", ".");
     await git(repositoryPath, "commit", "-m", "initial");
     await git(repositoryPath, "switch", "-c", "feature/cli-inspect");
-    await writeFile(join(repositoryPath, "reviewed.txt"), "after\n");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "after\n");
 
     const requestPath = join(repositoryPath, "request.json");
     await writeFile(
@@ -804,7 +804,7 @@ it("emits a versioned inspection report that never carries author-packet content
           successCriteria: ["The line changes."],
           planTraceability: [{ planItem: "Change one line.", implementation: "Changed it." }],
           technicalApproach: "Replace the text.",
-          componentWalkthrough: [{ component: "reviewed.txt", changes: "Changed one line." }],
+          componentWalkthrough: [{ component: "reviewed.ts", changes: "Changed one line." }],
           decisions: [],
           invariants: [],
           claimedVerification: [],

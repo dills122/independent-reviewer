@@ -67,11 +67,11 @@ async function arrangePacket(
   await git(repositoryPath, "config", "user.name", "Flow Test");
   await git(repositoryPath, "config", "user.email", "flow@example.invalid");
   await git(repositoryPath, "config", "commit.gpgsign", "false");
-  await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+  await writeFile(join(repositoryPath, "reviewed.ts"), "before\n");
   await git(repositoryPath, "add", ".");
   await git(repositoryPath, "commit", "-m", "initial");
   await git(repositoryPath, "switch", "-c", "feature/flow");
-  await writeFile(join(repositoryPath, "reviewed.txt"), "after\n");
+  await writeFile(join(repositoryPath, "reviewed.ts"), "after\n");
   if (includeExcludedPath) {
     await writeFile(join(repositoryPath, ".env"), "DO_NOT_SEND=secret\n");
   }
@@ -121,7 +121,7 @@ async function arrangePacket(
       successCriteria: ["The file contains the new value."],
       planTraceability: [{ planItem: "Change the file.", implementation: "Updated it." }],
       technicalApproach: "Replace the complete text.",
-      componentWalkthrough: [{ component: "reviewed.txt", changes: "Changed one line." }],
+      componentWalkthrough: [{ component: "reviewed.ts", changes: "Changed one line." }],
       decisions: [],
       invariants: [],
       claimedVerification: [
@@ -218,7 +218,7 @@ function finalCoverage() {
     ],
     changedPathCoverage: [
       {
-        path: "reviewed.txt",
+        path: "reviewed.ts",
         status: "INSPECTED" as const,
         explanation: "The complete changed file was inspected.",
       },
@@ -271,16 +271,16 @@ describe("two-stage review orchestrator", () => {
           assert.doesNotMatch(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
           const blindEvidence = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
           assert.deepEqual(blindEvidence.requiredCoverage, {
-            changedPaths: ["reviewed.txt"],
+            changedPaths: ["reviewed.ts"],
             canonicalInputIds: ["input_requirement", "input_plan"],
           });
           assert.match(
             blindEvidence.initialEvidence[0].content,
-            /--- BASE\/reviewed\.txt\n1 \| before/,
+            /--- BASE\/reviewed\.ts\n1 \| before/,
           );
           assert.match(
             blindEvidence.initialEvidence[0].content,
-            /\+\+\+ HEAD\/reviewed\.txt\n1 \| after/,
+            /\+\+\+ HEAD\/reviewed\.ts\n1 \| after/,
           );
           return response({
             schemaVersion: 1,
@@ -288,7 +288,7 @@ describe("two-stage review orchestrator", () => {
             snapshotDigest: blindEvidence.snapshotManifest.snapshotDigest,
             briefDigest: blindEvidence.briefDigest,
             summary: "The one-file change is understandable.",
-            inspectedPaths: ["reviewed.txt"],
+            inspectedPaths: ["reviewed.ts"],
             canonicalInputCoverage: canonicalInputCoverage(),
             findings: [],
             evidenceGaps: [],
@@ -392,7 +392,7 @@ describe("two-stage review orchestrator", () => {
         );
         const evidenceVariants = findingEvidenceVariants(call.responseSchema.schema);
         for (const variant of evidenceVariants) {
-          assert.deepEqual(valueAtPath(variant, ["properties", "path", "enum"]), ["reviewed.txt"]);
+          assert.deepEqual(valueAtPath(variant, ["properties", "path", "enum"]), ["reviewed.ts"]);
         }
         const canonicalCoverage = valueAtPath(call.responseSchema.schema, [
           "properties",
@@ -432,7 +432,7 @@ describe("two-stage review orchestrator", () => {
           assert.equal(changedPathCoverage.maxItems, 1);
           assert.deepEqual(
             valueAtPath(changedPathCoverage, ["items", "properties", "path", "enum"]),
-            ["reviewed.txt"],
+            ["reviewed.ts"],
           );
         }
       }
@@ -452,7 +452,7 @@ describe("two-stage review orchestrator", () => {
       impact: "The requirement is not met.",
       evidence: [
         {
-          path: "reviewed.txt",
+          path: "reviewed.ts",
           anchor: "LINE_RANGE" as const,
           side: "HEAD" as const,
           startLine: 1,
@@ -474,7 +474,7 @@ describe("two-stage review orchestrator", () => {
             snapshotDigest: brief.snapshotManifest.snapshotDigest,
             briefDigest: brief.briefDigest,
             summary: "The behavior change is not ready.",
-            inspectedPaths: ["reviewed.txt"],
+            inspectedPaths: ["reviewed.ts"],
             canonicalInputCoverage: canonicalInputCoverage(),
             findings: [finding],
             evidenceGaps: [],
@@ -592,7 +592,7 @@ describe("two-stage review orchestrator", () => {
             snapshotDigest: brief.snapshotManifest.snapshotDigest,
             briefDigest: brief.briefDigest,
             summary: "The change was inspected.",
-            inspectedPaths: ["reviewed.txt"],
+            inspectedPaths: ["reviewed.ts"],
             canonicalInputCoverage: canonicalInputCoverage(),
             findings: [],
             evidenceGaps: [],
@@ -822,7 +822,7 @@ describe("two-stage review orchestrator", () => {
               snapshotDigest: brief.snapshotManifest.snapshotDigest,
               briefDigest: brief.briefDigest,
               summary: "The change was inspected before the final provider failure.",
-              inspectedPaths: ["reviewed.txt"],
+              inspectedPaths: ["reviewed.ts"],
               canonicalInputCoverage: canonicalInputCoverage(),
               findings: [],
               evidenceGaps: [],
@@ -980,7 +980,7 @@ describe("two-stage review orchestrator", () => {
             snapshotDigest: brief.snapshotManifest.snapshotDigest,
             briefDigest: brief.briefDigest,
             summary: "The change was inspected before transport became uncertain.",
-            inspectedPaths: ["reviewed.txt"],
+            inspectedPaths: ["reviewed.ts"],
             canonicalInputCoverage: canonicalInputCoverage(),
             findings: [],
             evidenceGaps: [],
@@ -1075,7 +1075,7 @@ describe("two-stage review orchestrator", () => {
                   snapshotDigest: brief.snapshotManifest.snapshotDigest,
                   briefDigest: brief.briefDigest,
                   summary: "The change was inspected.",
-                  inspectedPaths: ["reviewed.txt"],
+                  inspectedPaths: ["reviewed.ts"],
                   canonicalInputCoverage: canonicalInputCoverage(),
                   findings: [],
                   evidenceGaps: [],
@@ -1126,7 +1126,7 @@ describe("two-stage review orchestrator", () => {
             snapshotDigest: brief.snapshotManifest.snapshotDigest,
             briefDigest: brief.briefDigest,
             summary: "é".repeat(13_750),
-            inspectedPaths: ["reviewed.txt"],
+            inspectedPaths: ["reviewed.ts"],
             canonicalInputCoverage: canonicalInputCoverage(),
             findings: [],
             evidenceGaps: [],
@@ -1195,7 +1195,7 @@ describe("two-stage review orchestrator", () => {
             snapshotDigest: brief.snapshotManifest.snapshotDigest,
             briefDigest: brief.briefDigest,
             summary: "Initial review completed.",
-            inspectedPaths: ["reviewed.txt"],
+            inspectedPaths: ["reviewed.ts"],
             canonicalInputCoverage: canonicalInputCoverage(),
             findings: [],
             evidenceGaps: [],
@@ -1270,7 +1270,7 @@ describe("two-stage review orchestrator", () => {
             snapshotDigest: brief.snapshotManifest.snapshotDigest,
             briefDigest: brief.briefDigest,
             summary: "Initial review completed.",
-            inspectedPaths: ["reviewed.txt"],
+            inspectedPaths: ["reviewed.ts"],
             canonicalInputCoverage: canonicalInputCoverage(),
             findings: [],
             evidenceGaps: [],
@@ -1326,7 +1326,7 @@ describe("two-stage review orchestrator", () => {
           snapshotDigest: brief.snapshotManifest.snapshotDigest,
           briefDigest: brief.briefDigest,
           summary: "Initial review completed.",
-          inspectedPaths: ["reviewed.txt"],
+          inspectedPaths: ["reviewed.ts"],
           canonicalInputCoverage: canonicalInputCoverage(),
           findings: [],
           evidenceGaps: [],
@@ -1368,7 +1368,7 @@ describe("two-stage review orchestrator", () => {
             snapshotDigest: brief.snapshotManifest.snapshotDigest,
             briefDigest: brief.briefDigest,
             summary: "The visible text change was inspected.",
-            inspectedPaths: ["reviewed.txt"],
+            inspectedPaths: ["reviewed.ts"],
             canonicalInputCoverage: canonicalInputCoverage(),
             findings: [],
             evidenceGaps: ["The excluded path could not be inspected."],
@@ -1430,7 +1430,7 @@ describe("two-stage review orchestrator", () => {
             snapshotDigest: brief.snapshotManifest.snapshotDigest,
             briefDigest: brief.briefDigest,
             summary: "The change was inspected.",
-            inspectedPaths: ["reviewed.txt"],
+            inspectedPaths: ["reviewed.ts"],
             canonicalInputCoverage: canonicalInputCoverage(),
             findings: [],
             evidenceGaps: [],
@@ -1485,7 +1485,7 @@ describe("two-stage review orchestrator", () => {
             snapshotDigest: brief.snapshotManifest.snapshotDigest,
             briefDigest: brief.briefDigest,
             summary: "The change was inspected.",
-            inspectedPaths: ["reviewed.txt"],
+            inspectedPaths: ["reviewed.ts"],
             canonicalInputCoverage: canonicalInputCoverage(),
             findings: [],
             evidenceGaps: [],
@@ -1508,7 +1508,7 @@ describe("two-stage review orchestrator", () => {
               impact: "The evidence cannot be verified.",
               evidence: [
                 {
-                  path: "reviewed.txt",
+                  path: "reviewed.ts",
                   anchor: "LINE_RANGE",
                   side: "HEAD",
                   startLine: 99,
@@ -1573,7 +1573,7 @@ function successfulEmptyResponse(request: ReviewProviderRequestV1) {
     request.stage === "PRELIMINARY"
       ? {
           ...common,
-          inspectedPaths: ["reviewed.txt"],
+          inspectedPaths: ["reviewed.ts"],
           canonicalInputCoverage: canonicalInputCoverage(),
           evidenceGaps: [],
           nextAction: "REQUEST_AUTHOR_PACKET",
