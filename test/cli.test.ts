@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { it } from "node:test";
 import { promisify } from "node:util";
 import { reviewOutcomeExitCodeV1, runCliV1 } from "../src/cli.js";
-import type { OpenRouterProviderRoutingV1 } from "../src/index.js";
 import {
   ProviderCallError,
   type ReviewProviderRequestV1,
@@ -151,7 +150,7 @@ it("composes capture and the two-stage provider flow through the review command"
     await writeFile(
       configPath,
       JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
         configId: "config_cli_review",
         model: "mock/reviewer",
         providerRouting: {
@@ -263,10 +262,13 @@ it("composes capture and the two-stage provider flow through the review command"
       io,
       {
         readOpenRouterApiKey: () => "test-api-key",
-        createProvider: (apiKey, routing) => {
+        createProvider: (apiKey, config) => {
           assert.equal(apiKey, "test-api-key");
-          assert.deepEqual(routing, {
+          assert.deepEqual(config.providerRouting, {
             order: ["provider-a/fp4", "provider-b/bf16"],
+            pinToOrder: false,
+            zeroDataRetention: false,
+            denyDataCollection: false,
             maxPrice: { prompt: 0.03, completion: 0.14, request: 0 },
           });
           return provider;
@@ -368,7 +370,7 @@ it("resumes a definite failed final stage without preparing or buying another pr
     const requestPath = join(repositoryPath, "request.json");
     const configPath = join(repositoryPath, "config.json");
     const packetPath = join(repositoryPath, ".review-runs", "cli-resume");
-    const providerRouting: OpenRouterProviderRoutingV1 = {
+    const providerRouting = {
       order: ["provider-a/fp4", "provider-b/bf16"],
       maxPrice: { prompt: 0.03, completion: 0.14, request: 0 },
     };
@@ -417,7 +419,7 @@ it("resumes a definite failed final stage without preparing or buying another pr
     await writeFile(
       configPath,
       JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
         configId: "config_cli_resume",
         model: "mock/reviewer",
         providerRouting,

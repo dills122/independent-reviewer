@@ -5,7 +5,7 @@ import { OpenRouterProviderV1, ProviderCallError, sha256Utf8 } from "../../src/i
 
 const request = {
   stage: "PRELIMINARY" as const,
-  model: "vendor/model",
+  models: ["vendor/model", "vendor/fallback-model"],
   maxOutputTokens: 500,
   timeoutMs: 5_000,
   messages: [
@@ -24,215 +24,111 @@ const finalRequest = {
   responseSchema: { ...request.responseSchema, name: "final_review_candidate_v2" },
 };
 
-function sseResponse(events: unknown[]): Response {
-  const wire = `${events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")}data: [DONE]\n\n`;
-  return new Response(wire, { headers: { "content-type": "text/event-stream" } });
-}
-
 const providerRouting = {
   order: ["provider-a/fp4", "provider-b/bf16"],
-  maxPrice: { prompt: 0.03, completion: 0.14, request: 0 },
+  maxPrice: { prompt: 0.5, completion: 1.5, request: 0 },
 };
 
 describe("OpenRouterProviderV1", () => {
-  it("streams final output on one pinned endpoint and preserves terminal usage", async () => {
+  it("keeps provider failover available and sends the model fallback chain", async () => {
     let wire: Record<string, unknown> = {};
     const provider = new OpenRouterProviderV1(
       "secret-key",
       providerRouting,
       async (_input, init) => {
         wire = JSON.parse(String(init?.body));
-        return sseResponse([
-          {
-            id: "generation-streamed",
-            model: "vendor/model",
-            provider: "Provider A",
-            choices: [{ delta: { content: '{"ok":' }, finish_reason: null }],
-          },
-          { choices: [{ delta: { content: "true}" }, finish_reason: null }] },
-          { choices: [{ delta: {}, finish_reason: "stop" }] },
-          {
-            choices: [],
-            usage: { prompt_tokens: 20, completion_tokens: 5, total_tokens: 25, cost: 0.001 },
-          },
-        ]);
-      },
-    );
-
-    const result = await provider.complete(finalRequest);
-
-    assert.equal(wire.stream, true);
-    assert.deepEqual(wire.stream_options, { include_usage: true });
-    assert.deepEqual(wire.provider, {
-      order: ["provider-a/fp4"],
-      only: ["provider-a/fp4"],
-      allow_fallbacks: false,
-      data_collection: "deny",
-      max_price: { prompt: 0.03, completion: 0.14, request: 0 },
-      require_parameters: true,
-      zdr: true,
-    });
-    assert.deepEqual(result.value, { ok: true });
-    assert.equal(result.rawContent, '{"ok":true}');
-    assert.equal(result.responseId, "generation-streamed");
-    assert.equal(result.provider, "Provider A");
-    assert.deepEqual(result.usage, {
-      promptTokens: 20,
-      completionTokens: 5,
-      totalTokens: 25,
-      cost: 0.001,
-    });
-    assert.equal(provider.auditRequest(finalRequest).requestedProviderEndpoint, "provider-a/fp4");
-    assert.equal(
-      provider.auditRequest(finalRequest).providerPolicyVersion,
-      "openrouter-chat-completions-v4",
-    );
-  });
-
-  it("aborts runaway formatting whitespace with credential-screened diagnostics", async () => {
-    let cancelled = false;
-    const event = JSON.stringify({
-      diagnostic: "secret-key",
-      choices: [{ delta: { content: `{"ok":true}${" ".repeat(512)}` }, finish_reason: null }],
-    });
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new TextEncoder().encode(`data: ${event}\n\n`));
-      },
-      cancel() {
-        cancelled = true;
-      },
-    });
-    const provider = new OpenRouterProviderV1(
-      "secret-key",
-      providerRouting,
-      async () => new Response(body, { headers: { "content-type": "text/event-stream" } }),
-    );
-
-    await assert.rejects(
-      () => provider.complete(finalRequest),
-      (error: unknown) => {
-        assert.ok(error instanceof ProviderCallError);
-        assert.equal(error.code, "UNPRODUCTIVE_STREAM");
-        assert.equal(error.retryable, true);
-        assert.equal(error.responseMetadata?.provider, "provider-a/fp4");
-        assert.deepEqual(error.responseMetadata?.usage, {
-          promptTokens: null,
-          completionTokens: null,
-          totalTokens: null,
-          cost: null,
+        return Response.json({
+          model: "vendor/fallback-model",
+          choices: [{ finish_reason: "stop", message: { content: "{}" } }],
         });
-        assert.doesNotMatch(JSON.stringify(error.responseBody), /secret-key/);
-        assert.match(JSON.stringify(error.responseBody), /\[REDACTED\]/);
-        return true;
       },
     );
-    assert.equal(cancelled, true);
+
+    await provider.complete(finalRequest);
+
+    assert.equal(wire.stream, false);
+    assert.equal(wire.model, "vendor/model");
+    assert.deepEqual(wire.models, ["vendor/model", "vendor/fallback-model"]);
+    const routing = wire.provider as Record<string, unknown>;
+    assert.deepEqual(routing.order, ["provider-a/fp4", "provider-b/bf16"]);
+    assert.equal(routing.allow_fallbacks, true);
+    assert.equal("only" in routing, false);
+    assert.equal("zdr" in routing, false);
+    assert.equal("data_collection" in routing, false);
   });
 
-  it("does not count whitespace inside streamed JSON strings", async () => {
-    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
-      sseResponse([
-        {
-          model: "vendor/model",
-          choices: [{ delta: { content: `{"text":"${" ".repeat(600)}` }, finish_reason: null }],
-        },
-        { choices: [{ delta: { content: '"}' }, finish_reason: "stop" }] },
-      ]),
-    );
-
-    const result = await provider.complete(finalRequest);
-    assert.deepEqual(result.value, { text: " ".repeat(600) });
-  });
-
-  it("retains partial streamed diagnostics when the body fails", async () => {
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(
-          new TextEncoder().encode(
-            `data: ${JSON.stringify({
-              model: "vendor/model",
-              choices: [{ delta: { content: '{"ok":' }, finish_reason: null }],
-            })}\n\n`,
-          ),
-        );
-        controller.error(new DOMException("connection lost", "NetworkError"));
-      },
-    });
-    const provider = new OpenRouterProviderV1(
-      "secret-key",
-      providerRouting,
-      async () => new Response(body, { headers: { "content-type": "text/event-stream" } }),
-    );
-
-    await assert.rejects(
-      () => provider.complete(finalRequest),
-      (error: unknown) => {
-        assert.ok(error instanceof ProviderCallError);
-        assert.equal(error.code, "TRANSPORT_UNCERTAIN");
-        assert.match(JSON.stringify(error.responseBody), /OPENROUTER_SSE/);
-        assert.equal(error.responseMetadata?.provider, "provider-a/fp4");
-        return true;
-      },
-    );
-  });
-
-  it("pins a final retry to a different configured endpoint", async () => {
-    let wire: Record<string, unknown> = {};
-    const provider = new OpenRouterProviderV1(
-      "secret-key",
-      providerRouting,
-      async (_input, init) => {
-        wire = JSON.parse(String(init?.body));
-        return sseResponse([
-          {
-            model: "vendor/model",
-            choices: [{ delta: { content: "{}" }, finish_reason: "stop" }],
-          },
-        ]);
-      },
-    );
-    const retry = provider.forRetry(
-      new ProviderCallError("UNPRODUCTIVE_STREAM", "stalled", { retryable: true }),
-      finalRequest,
-    );
-
-    assert.ok(retry);
-    await retry.complete(finalRequest);
-    assert.deepEqual((wire.provider as { only: string[] }).only, ["provider-b/bf16"]);
-    assert.equal(
-      new OpenRouterProviderV1(
-        "secret-key",
-        { ...providerRouting, order: ["provider-a/fp4"] },
-        async () => sseResponse([]),
-      ).forRetry(
-        new ProviderCallError("UNPRODUCTIVE_STREAM", "stalled", { retryable: true }),
-        finalRequest,
-      ),
-      null,
-    );
-  });
-
-  it("pins one endpoint without silently falling back to another provider", async () => {
+  it("sends privacy filters only when the run opts in", async () => {
     let wire: Record<string, unknown> = {};
     const provider = new OpenRouterProviderV1(
       "secret-key",
       {
         ...providerRouting,
         order: ["deepinfra/bf16"],
+        pinToOrder: true,
+        zeroDataRetention: true,
+        denyDataCollection: true,
       },
       async (_input, init) => {
         wire = JSON.parse(String(init?.body));
         return Response.json({ choices: [{ finish_reason: "stop", message: { content: "{}" } }] });
       },
     );
+
     await provider.complete(request);
+
     const routing = wire.provider as Record<string, unknown>;
     assert.deepEqual(routing.only, ["deepinfra/bf16"]);
-    assert.deepEqual(routing.order, ["deepinfra/bf16"]);
     assert.equal(routing.allow_fallbacks, false);
     assert.equal(routing.zdr, true);
     assert.equal(routing.data_collection, "deny");
+  });
+
+  it("excludes the endpoint that just failed from the next attempt", async () => {
+    let wire: Record<string, unknown> = {};
+    const provider = new OpenRouterProviderV1(
+      "secret-key",
+      providerRouting,
+      async (_input, init) => {
+        wire = JSON.parse(String(init?.body));
+        return Response.json({ choices: [{ finish_reason: "stop", message: { content: "{}" } }] });
+      },
+    );
+    const retry = provider.forRetry(
+      new ProviderCallError("PROVIDER_ERROR", "overloaded", {
+        retryable: true,
+        diagnostic: {
+          httpStatus: 429,
+          providerErrorCode: "429",
+          providerMessage: null,
+          errorType: null,
+          providerCode: null,
+          providerName: "Provider A",
+          model: null,
+          responseId: null,
+          retryAfter: null,
+        },
+      }),
+      request,
+    );
+
+    assert.ok(retry);
+    await retry.complete(request);
+    const routing = wire.provider as Record<string, unknown>;
+    assert.deepEqual(routing.ignore, ["Provider A"]);
+    assert.equal(routing.allow_fallbacks, true);
+  });
+
+  it("gives up when a pinned run has no other configured endpoint", async () => {
+    const pinned = new OpenRouterProviderV1(
+      "secret-key",
+      { ...providerRouting, order: ["provider-a/fp4"], pinToOrder: true },
+      async () => Response.json({}),
+    );
+
+    assert.equal(
+      pinned.forRetry(new ProviderCallError("PROVIDER_ERROR", "overloaded"), finalRequest),
+      null,
+    );
   });
 
   it("redacts rejected envelope labels and keeps invalid usage unknown", async () => {
@@ -322,12 +218,9 @@ describe("OpenRouterProviderV1", () => {
     assert.equal(body.max_tokens, 500);
     assert.deepEqual(body.provider, {
       order: ["provider-a/fp4", "provider-b/bf16"],
-      only: ["provider-a/fp4", "provider-b/bf16"],
       allow_fallbacks: true,
-      data_collection: "deny",
-      max_price: { prompt: 0.03, completion: 0.14, request: 0 },
+      max_price: { prompt: 0.5, completion: 1.5, request: 0 },
       require_parameters: true,
-      zdr: true,
     });
     assert.deepEqual(body.plugins, [{ id: "context-compression", enabled: false }]);
     assert.deepEqual(result.value, { ok: true });
@@ -335,12 +228,12 @@ describe("OpenRouterProviderV1", () => {
     assert.equal(result.provider, "Mock Provider");
 
     const audit = provider.auditRequest(request);
-    assert.equal(audit.providerPolicyVersion, "openrouter-chat-completions-v4");
+    assert.equal(audit.providerPolicyVersion, "openrouter-chat-completions-v5");
     assert.deepEqual(audit.wireBodyDigest, sha256Utf8(String(capturedInit?.body)));
     assert.equal(audit.wireBodyBytes, Buffer.byteLength(String(capturedInit?.body), "utf8"));
     assert.notDeepEqual(
       audit.credentialFreeWireRequestDigest,
-      provider.auditRequest({ ...request, model: "vendor/another-model" })
+      provider.auditRequest({ ...request, models: ["vendor/another-model"] })
         .credentialFreeWireRequestDigest,
     );
   });
@@ -521,7 +414,7 @@ describe("OpenRouterProviderV1", () => {
     );
   });
 
-  it("rejects a response from a different model", async () => {
+  it("rejects a response from a model outside the permitted set", async () => {
     const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
       Response.json({
         model: "vendor/different-model",
@@ -534,7 +427,7 @@ describe("OpenRouterProviderV1", () => {
       (error: unknown) =>
         error instanceof ProviderCallError &&
         error.code === "INVALID_RESPONSE" &&
-        /different model/i.test(error.message),
+        /outside the permitted set/i.test(error.message),
     );
   });
   it("classifies a body-phase abort as transport-uncertain, not a definite failure", async () => {

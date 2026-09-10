@@ -1,10 +1,13 @@
 {
   "schemaVersion": 3,
-  "configId": "config_budget_120b",
+  "configId": "config_pinned_diagnostic",
   "model": "openai/gpt-oss-120b",
-  "fallbackModels": ["z-ai/glm-5.3-flash", "deepseek/deepseek-v4-flash-0731"],
+  "fallbackModels": [],
   "providerRouting": {
-    "order": ["coreweave/fp4", "deepinfra/bf16"],
+    "order": ["baseten/fp4"],
+    "pinToOrder": true,
+    "zeroDataRetention": true,
+    "denyDataCollection": true,
     "maxPrice": {
       "prompt": 0.5,
       "completion": 1.5,
@@ -18,7 +21,7 @@
     "maxTotalTokens": 240000,
     "maxTotalCostUsd": 0.2,
     "timeoutMs": 180000,
-    "maxAttemptsPerCall": 3,
+    "maxAttemptsPerCall": 2,
     "minimumCallIntervalMs": 1500
   }
 }

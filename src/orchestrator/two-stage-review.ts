@@ -11,7 +11,8 @@ import {
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
   PreliminaryAssessmentV1Schema,
   type ReviewFindingV1,
-  ReviewRunConfigV2Schema,
+  permittedModelsV1,
+  ReviewRunConfigV3Schema,
   resolveSnapshotSourceContentV1,
   sha256Utf8,
 } from "../contracts/index.js";
@@ -140,13 +141,13 @@ function normalizedError(error: unknown): {
 /** OpenRouter unit prices are expressed in dollars per million tokens. */
 const TOKENS_PER_UNIT_PRICE_V1 = 1_000_000;
 
-type ReviewRunConfigV2 = z.infer<typeof ReviewRunConfigV2Schema>;
+type ReviewRunConfigV3 = z.infer<typeof ReviewRunConfigV3Schema>;
 
 /** Upper bound in dollars for a known token split at the configured unit-price ceiling. */
 function priceCeilingCostUsd(
   promptTokens: number,
   completionTokens: number,
-  config: ReviewRunConfigV2,
+  config: ReviewRunConfigV3,
 ): number {
   const { prompt, completion, request } = config.providerRouting.maxPrice;
   return (
@@ -157,7 +158,7 @@ function priceCeilingCostUsd(
 }
 
 /** Price known prompt/output reservations separately, including each request fee. */
-function reservationCostUsd(reservedTokens: number, config: ReviewRunConfigV2, calls = 1): number {
+function reservationCostUsd(reservedTokens: number, config: ReviewRunConfigV3, calls = 1): number {
   const completionTokens = calls * config.budgets.maxOutputTokensPerCall;
   return (
     priceCeilingCostUsd(reservedTokens - completionTokens, completionTokens, config) +
@@ -171,7 +172,7 @@ function reservationCostUsd(reservedTokens: number, config: ReviewRunConfigV2, c
  */
 function callCostUsd(
   response: ReviewProviderResponseV1,
-  config: ReviewRunConfigV2,
+  config: ReviewRunConfigV3,
   reservedInputTokens: number,
 ): number {
   if (response.usage.cost !== null) {
@@ -236,23 +237,71 @@ async function assertCostBudget(
 interface ProviderRetryStateV1 {
   nextAttempt: number;
   lastAttempt: number;
-  used: boolean;
   failedTokens: number;
 }
+/**
+ * Retry budget for one logical call. Each call site builds its own, so a preliminary retry cannot
+ * starve the final stage; the run-wide token and cost ledgers still bound the total spend.
+ */
 interface ProviderRetryContextV1 {
   state: ProviderRetryStateV1;
-  config: ReviewRunConfigV2;
+  /** Retries permitted for this call, derived from budgets.maxAttemptsPerCall. */
+  maxRetries: number;
+  /** Retries already spent on this call. Mutated across the retry recursion. */
+  retriesUsed: number;
+  config: ReviewRunConfigV3;
   costLedger: RunCostLedgerV1;
   /** Total successful-call reservation so far, including mandatory calls still ahead. */
   requiredTokens: number;
   remainingTokens: number;
 }
 
+/**
+ * What a failed attempt costs the run.
+ *
+ * Charging every failure the full conservative reservation was the reason retries were refused
+ * with "the remaining token budget cannot reserve a provider retry": a 429 that never reached a
+ * model was billed as if it had produced a whole review. A provider error envelope carrying no
+ * usage means no generation happened and costs nothing. Anything else may have generated output,
+ * so it keeps the conservative reservation.
+ */
+function failedAttemptChargeV1(
+  error: ProviderCallError,
+  inputTokens: number,
+  maxOutputTokens: number,
+): { tokens: number; promptTokens: number; completionTokens: number } {
+  const usage = error.responseMetadata?.usage;
+  const reported = usage ? chargedTokens({ usage }) : null;
+  if (reported !== null) {
+    return {
+      tokens: reported,
+      promptTokens: usage?.promptTokens ?? inputTokens,
+      completionTokens: usage?.completionTokens ?? 0,
+    };
+  }
+  if (error.code === "PROVIDER_ERROR") {
+    return { tokens: 0, promptTokens: 0, completionTokens: 0 };
+  }
+  return {
+    tokens: inputTokens + maxOutputTokens,
+    promptTokens: inputTokens,
+    completionTokens: maxOutputTokens,
+  };
+}
+
+/**
+ * Base delay before another attempt, or null when the failure is not transient.
+ *
+ * A rejected request changes nothing on retry: 400/401/402/413/422 need a different request or a
+ * different account, so they fail the run immediately instead of burning attempts and money.
+ */
 function retryDelayMs(error: ProviderCallError): number | null {
-  if (error.code === "UNPRODUCTIVE_STREAM") return 0;
   const code = Number(error.diagnostic?.providerErrorCode);
   const status = error.diagnostic?.httpStatus;
-  const transient = [429, 500, 502, 503, 504, 529];
+  const transient = [408, 409, 429, 500, 502, 503, 504, 524, 529];
+  // An inference call is idempotent for this product: a request that may or may not have been
+  // submitted can be reissued, and the ledger charges the uncertain attempt either way.
+  if (error.code === "TRANSPORT_UNCERTAIN") return 1_000 + Math.floor(Math.random() * 1_000);
   if (
     !error.retryable &&
     (error.code !== "PROVIDER_ERROR" ||
@@ -293,11 +342,12 @@ async function completeWithAudit(
     stage: request.stage,
     inputDigest: sha256Utf8(JSON.stringify(request)),
     providerPolicyVersion: requestAudit.providerPolicyVersion,
-    requestedProviderEndpoint: requestAudit.requestedProviderEndpoint ?? null,
+    preferredProviderEndpoints: requestAudit.preferredProviderEndpoints ?? null,
+    excludedProviderEndpoints: requestAudit.excludedProviderEndpoints ?? null,
     wireBodyDigest: requestAudit.wireBodyDigest,
     wireBodyBytes: requestAudit.wireBodyBytes,
     credentialFreeWireRequestDigest: requestAudit.credentialFreeWireRequestDigest,
-    requestedModel: request.model,
+    requestedModels: request.models,
     promptVersion:
       request.messages[0]?.content === STANDARDS_POLICY
         ? STANDARDS_POLICY_VERSION
@@ -319,10 +369,10 @@ async function completeWithAudit(
     // Enforcement point for the model-match rule. The OpenRouter adapter checks the same thing
     // against its own wire response; this check covers any ReviewProviderV1 implementation, so
     // the two messages name their layer to say which one fired.
-    if (response.model !== null && response.model !== request.model) {
+    if (response.model !== null && !request.models.includes(response.model)) {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
-        `The review provider returned a different model than requested (${response.model}).`,
+        `The review provider returned a model outside the permitted set (${response.model}).`,
       );
     }
     await appendRunEvent(runRecordPath, {
@@ -372,9 +422,9 @@ async function completeWithAudit(
         (Number.isFinite(hintedDelay)
           ? Math.max(0, hintedDelay)
           : 5_000 + Math.floor(Math.random() * 5_000));
-      provider.deferRequests?.(request.model, cooldownMs);
+      provider.deferRequests?.(request.models[0] as string, cooldownMs);
     }
-    if (retry && !retry.state.used && error instanceof ProviderCallError) {
+    if (retry && retry.retriesUsed < retry.maxRetries && error instanceof ProviderCallError) {
       if (delayMs !== null) {
         const retryProvider =
           provider.forRetry?.(error, request) ??
@@ -384,16 +434,12 @@ async function completeWithAudit(
           request.messages,
           request.responseSchema.schema,
         );
+        const charge = failedAttemptChargeV1(error, inputTokens, request.maxOutputTokens);
         const usage = error.responseMetadata?.usage;
-        const failedTokens =
-          (usage ? chargedTokens({ usage }) : null) ?? inputTokens + request.maxOutputTokens;
+        const failedTokens = charge.tokens;
         const failedCostUsd =
           usage?.cost ??
-          priceCeilingCostUsd(
-            usage?.promptTokens ?? inputTokens,
-            usage?.completionTokens ?? request.maxOutputTokens,
-            retry.config,
-          );
+          priceCeilingCostUsd(charge.promptTokens, charge.completionTokens, retry.config);
         retry.state.failedTokens += failedTokens;
         retry.costLedger.record(failedCostUsd);
         if (retry.requiredTokens + retry.state.failedTokens > retry.config.budgets.maxTotalTokens) {
@@ -412,17 +458,22 @@ async function completeWithAudit(
           request.stage,
           "RESERVATION",
         );
-        retry.state.used = true;
+        // Exponential backoff with the jitter already baked into delayMs, so concurrent workers
+        // recovering from the same provider incident do not resynchronize onto it.
+        const backoffMs = Math.min(delayMs * 2 ** retry.retriesUsed, 30_000);
+        retry.retriesUsed += 1;
         await appendRunEvent(runRecordPath, {
           type: "PROVIDER_RETRY_REQUESTED",
           stage: request.stage,
           failedAttemptNumber: attemptNumber,
           retryAttemptNumber: retry.state.nextAttempt,
-          delayMs,
+          retriesUsed: retry.retriesUsed,
+          maxRetries: retry.maxRetries,
+          delayMs: backoffMs,
           chargedFailedTokens: failedTokens,
           chargedFailedCostUsd: failedCostUsd,
         });
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        await new Promise((resolve) => setTimeout(resolve, backoffMs));
         return completeWithAudit(
           runRecordPath,
           attemptNumber,
@@ -780,7 +831,7 @@ async function completeFinalStageV1(
   reviewDirectory: string,
   runRecordPath: string,
   attemptNumber: number,
-  config: z.infer<typeof ReviewRunConfigV2Schema>,
+  config: z.infer<typeof ReviewRunConfigV3Schema>,
   provider: ReviewProviderV1,
   brief: ReviewBrief,
   preliminary: ReviewPreliminary,
@@ -822,7 +873,7 @@ async function completeFinalStageV1(
     provider,
     {
       stage: "FINAL",
-      model: config.model,
+      models: permittedModelsV1(config),
       maxOutputTokens: config.budgets.maxOutputTokensPerCall,
       timeoutMs: config.budgets.timeoutMs,
       messages: finalMessages,
@@ -835,6 +886,8 @@ async function completeFinalStageV1(
     retryState
       ? {
           state: retryState,
+          maxRetries: config.budgets.maxAttemptsPerCall - 1,
+          retriesUsed: 0,
           config,
           costLedger,
           requiredTokens:
@@ -929,7 +982,7 @@ async function completeFinalStageV1(
       provider,
       {
         stage: "FINAL",
-        model: config.model,
+        models: permittedModelsV1(config),
         maxOutputTokens: config.budgets.maxOutputTokensPerCall,
         timeoutMs: config.budgets.timeoutMs,
         messages: repairMessages,
@@ -942,6 +995,8 @@ async function completeFinalStageV1(
       retryState
         ? {
             state: retryState,
+            maxRetries: config.budgets.maxAttemptsPerCall - 1,
+            retriesUsed: 0,
             config,
             costLedger,
             requiredTokens:
@@ -993,7 +1048,7 @@ async function completeFinalStageV1(
 function prepareReviewCalls(
   brief: ReviewBrief,
   authorPacket: ReviewAuthor,
-  config: ReviewRunConfigV2,
+  config: ReviewRunConfigV3,
 ) {
   const blindMessages: ReviewMessageV1[] = [
     { role: "system", content: brief.schemaVersion === 2 ? STANDARDS_POLICY : REVIEW_POLICY_V1 },
@@ -1096,7 +1151,7 @@ function prepareReviewCalls(
 
 /** Uses the same admission calculation as execution, without constructing a provider. */
 export async function preflightReview(packetPath: string, configValue: unknown) {
-  const config = ReviewRunConfigV2Schema.parse(configValue);
+  const config = ReviewRunConfigV3Schema.parse(configValue);
   const packet = await inspectSnapshotPacket(packetPath);
   if (!packet.authorPacket)
     throw new Error("An author packet is required for the two-stage review.");
@@ -1112,7 +1167,9 @@ export async function preflightReview(packetPath: string, configValue: unknown) 
     reservedTokens: calls.requiredWithRetry,
     reservedCostUsd: calls.reservedCostUsd,
     model: config.model,
-    providers: config.providerRouting.order,
+    fallbackModels: config.fallbackModels,
+    preferredProviders: config.providerRouting.order ?? [],
+    pinnedToPreferredProviders: config.providerRouting.pinToOrder,
     snapshotDigest: brief.snapshotManifest.snapshotDigest,
   };
 }
@@ -1123,7 +1180,7 @@ export async function runTwoStageReview(
   configValue: unknown,
   provider: ReviewProviderV1,
 ): Promise<TwoStageReviewResult> {
-  const config = ReviewRunConfigV2Schema.parse(configValue);
+  const config = ReviewRunConfigV3Schema.parse(configValue);
   const packet = await inspectSnapshotPacket(packetPath);
   if (packet.manifest.paths.length === 0) {
     throw new Error("The snapshot contains no changed paths to review.");
@@ -1151,7 +1208,7 @@ export async function runTwoStageReview(
     briefDigest: brief.briefDigest,
     configId: config.configId,
     configDigest: sha256Utf8(JSON.stringify(config)),
-    requestedModel: config.model,
+    requestedModels: permittedModelsV1(config),
     promptVersion: brief.schemaVersion === 2 ? STANDARDS_POLICY_VERSION : REVIEW_PROMPT_VERSION_V1,
     preliminarySchema:
       brief.schemaVersion === 2 ? "standards_preliminary_v2" : "preliminary_assessment_v1",
@@ -1180,7 +1237,6 @@ export async function runTwoStageReview(
     const retryState: ProviderRetryStateV1 = {
       nextAttempt: 1,
       lastAttempt: 0,
-      used: false,
       failedTokens: 0,
     };
     const preliminaryResponse = await completeWithAudit(
@@ -1189,7 +1245,7 @@ export async function runTwoStageReview(
       provider,
       {
         stage: "PRELIMINARY",
-        model: config.model,
+        models: permittedModelsV1(config),
         maxOutputTokens: config.budgets.maxOutputTokensPerCall,
         timeoutMs: config.budgets.timeoutMs,
         messages: blindMessages,
@@ -1200,7 +1256,15 @@ export async function runTwoStageReview(
         },
       },
       preliminaryConstrained.appliedArrayLimits,
-      { state: retryState, config, costLedger, requiredTokens, remainingTokens: requiredTokens },
+      {
+        state: retryState,
+        maxRetries: config.budgets.maxAttemptsPerCall - 1,
+        retriesUsed: 0,
+        config,
+        costLedger,
+        requiredTokens,
+        remainingTokens: requiredTokens,
+      },
     );
     await writeFile(
       join(reviewDirectory, "preliminary-provider-response.json"),
@@ -1345,7 +1409,7 @@ export async function resumeFinalReview(
   configValue: unknown,
   provider: ReviewProviderV1,
 ): Promise<TwoStageReviewResult> {
-  const config = ReviewRunConfigV2Schema.parse(configValue);
+  const config = ReviewRunConfigV3Schema.parse(configValue);
   const packet = await inspectSnapshotPacket(packetPath);
   if (!packet.authorPacket) {
     throw new Error("An author packet is required to resume the final review stage.");
@@ -1367,37 +1431,43 @@ export async function resumeFinalReview(
   const runRecordPath = join(reviewDirectory, "run-record.jsonl");
 
   const events = await readRunEventsV1(runRecordPath);
-  const expectedEventTypes = [
-    "RUN_STARTED",
-    "CALL_STARTED",
-    "CALL_SUCCEEDED",
-    "PRELIMINARY_PERSISTED",
-    "AUTHOR_DELIVERED",
-    "CALL_STARTED",
-    "CALL_FAILED",
-    "RUN_FAILED",
-  ];
   const eventTypes = events.map((event) => event.type);
-  if (JSON.stringify(eventTypes) !== JSON.stringify(expectedEventTypes)) {
-    if (eventTypes.includes("RUN_COMPLETED")) {
-      throw new Error("Final-stage resume is not allowed because the review is completed.");
-    }
-    if (eventTypes.includes("RUN_RESUMED")) {
-      throw new Error("The final stage has already been resumed once.");
-    }
+  if (eventTypes.includes("RUN_COMPLETED")) {
+    throw new Error("Final-stage resume is not allowed because the review is completed.");
+  }
+  if (eventTypes.includes("RUN_RESUMED")) {
+    throw new Error("The final stage has already been resumed once.");
+  }
+  // Eligibility is structural, not a literal event sequence: an in-run retry inserts extra
+  // CALL_STARTED/CALL_FAILED/PROVIDER_RETRY_REQUESTED events, and a retried run is exactly the
+  // kind of run resume exists for.
+  const succeededCalls = events.filter((event) => event.type === "CALL_SUCCEEDED");
+  const started = events[0];
+  const runFailed = events.at(-1);
+  const preliminaryStarted = events.find(
+    (event) => event.type === "CALL_STARTED" && event.stage === "PRELIMINARY",
+  );
+  const preliminarySucceeded = succeededCalls[0];
+  const preliminaryPersisted = events.find((event) => event.type === "PRELIMINARY_PERSISTED");
+  const authorDelivered = events.find((event) => event.type === "AUTHOR_DELIVERED");
+  const finalStarted = events.findLast(
+    (event) => event.type === "CALL_STARTED" && event.stage === "FINAL",
+  );
+  const finalFailed = events.findLast((event) => event.type === "CALL_FAILED");
+  if (
+    started?.type !== "RUN_STARTED" ||
+    runFailed?.type !== "RUN_FAILED" ||
+    succeededCalls.length !== 1 ||
+    preliminarySucceeded?.stage !== "PRELIMINARY" ||
+    preliminaryStarted === undefined ||
+    preliminaryPersisted === undefined ||
+    authorDelivered === undefined ||
+    finalStarted === undefined ||
+    finalFailed?.stage !== "FINAL" ||
+    events.indexOf(finalFailed) !== events.length - 2
+  ) {
     throw new Error("The persisted run state is not eligible for a final-stage resume.");
   }
-
-  const [
-    started,
-    preliminaryStarted,
-    preliminarySucceeded,
-    preliminaryPersisted,
-    authorDelivered,
-    finalStarted,
-    finalFailed,
-    runFailed,
-  ] = events;
   if (
     started?.promptVersion !==
       ("standards" in packet.canonicalInputs
@@ -1421,26 +1491,23 @@ export async function resumeFinalReview(
   }
   const failedDiagnostic = runEvent(failedError.diagnostic, "Final call failure diagnostic");
   if (
-    preliminaryStarted?.stage !== "PRELIMINARY" ||
     preliminaryStarted.attemptNumber !== 1 ||
-    preliminarySucceeded?.stage !== "PRELIMINARY" ||
-    preliminarySucceeded.attemptNumber !== 1 ||
-    finalStarted?.stage !== "FINAL" ||
-    finalStarted.attemptNumber !== 2 ||
-    finalFailed?.stage !== "FINAL" ||
-    finalFailed.attemptNumber !== 2 ||
+    !Number.isSafeInteger(preliminarySucceeded.attemptNumber) ||
+    !Number.isSafeInteger(finalStarted.attemptNumber) ||
+    (finalStarted.attemptNumber as number) <= (preliminarySucceeded.attemptNumber as number) ||
+    finalStarted.attemptNumber !== finalFailed.attemptNumber ||
     failedError.code !== "PROVIDER_ERROR" ||
     failedDiagnostic.httpStatus !== 429 ||
-    runFailed?.terminalState !== "FAILED"
+    runFailed.terminalState !== "FAILED"
   ) {
     throw new Error("Only a definite final-stage provider 429 may be resumed.");
   }
 
   const expectedConfigDigest = sha256Utf8(JSON.stringify(config));
   if (
-    started?.configId !== config.configId ||
+    started.configId !== config.configId ||
     JSON.stringify(started.configDigest) !== JSON.stringify(expectedConfigDigest) ||
-    started.requestedModel !== config.model
+    JSON.stringify(started.requestedModels) !== JSON.stringify(permittedModelsV1(config))
   ) {
     throw new Error("The resume configuration must exactly match the original review run.");
   }

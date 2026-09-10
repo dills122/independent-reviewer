@@ -18,8 +18,8 @@ import {
 } from "./cli/standards-input.js";
 import {
   type FinalReviewReportV1,
-  type OpenRouterProviderRoutingV1,
-  ReviewRunConfigV2Schema,
+  type ReviewRunConfigV3,
+  ReviewRunConfigV3Schema,
 } from "./contracts/index.js";
 import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
 import { canonicalInputList, ReviewRequestSchema } from "./contracts/standards-review.js";
@@ -29,6 +29,7 @@ import {
   resumeFinalReview,
   runTwoStageReview,
 } from "./orchestrator/two-stage-review.js";
+import { ProviderCallPacerV1 } from "./provider/call-pacing.js";
 import { OpenRouterProviderV1, ProviderCallError } from "./provider/openrouter.js";
 import type { ReviewProviderV1 } from "./provider/review-provider.js";
 import { reviewVerdictLabel } from "./report/markdown.js";
@@ -54,12 +55,20 @@ const processIo: CliIoV1 = {
 
 export interface CliDependenciesV1 {
   readOpenRouterApiKey(): string | undefined;
-  createProvider(apiKey: string, routing: OpenRouterProviderRoutingV1): ReviewProviderV1;
+  createProvider(apiKey: string, config: ReviewRunConfigV3): ReviewProviderV1;
 }
 
 const processDependencies: CliDependenciesV1 = {
   readOpenRouterApiKey: () => process.env.OPENROUTER_API_KEY,
-  createProvider: (apiKey, routing) => new OpenRouterProviderV1(apiKey, routing),
+  createProvider: (apiKey, config) =>
+    new OpenRouterProviderV1(
+      apiKey,
+      config.providerRouting,
+      fetch,
+      // One pacer per run: workers sharing a model stay under the account burst limit, which is
+      // where the "rate limited with almost no traffic" 429s came from.
+      new ProviderCallPacerV1(config.budgets.minimumCallIntervalMs),
+    ),
 };
 
 interface PreparedPacketV1 {
@@ -264,14 +273,14 @@ function formatInspection(report: InspectionReport): string {
 async function resolveLiveReviewContextV1(
   options: Map<string, string | true>,
   dependencies: CliDependenciesV1,
-): Promise<{ config: z.infer<typeof ReviewRunConfigV2Schema>; provider: ReviewProviderV1 }> {
+): Promise<{ config: ReviewRunConfigV3; provider: ReviewProviderV1 }> {
   const apiKey = dependencies.readOpenRouterApiKey();
   if (!apiKey || apiKey.trim().length === 0) {
     throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
   }
   const configPath = resolve(requiredOption(options, "--config"));
-  const config = ReviewRunConfigV2Schema.parse(JSON.parse(await readFile(configPath, "utf8")));
-  return { config, provider: dependencies.createProvider(apiKey, config.providerRouting) };
+  const config = ReviewRunConfigV3Schema.parse(JSON.parse(await readFile(configPath, "utf8")));
+  return { config, provider: dependencies.createProvider(apiKey, config) };
 }
 
 async function preparePacket(
@@ -406,7 +415,7 @@ async function review(
     try {
       const dryOptions = new Map(options);
       dryOptions.set("--output", join(temporary, "packet"));
-      const config = ReviewRunConfigV2Schema.parse(
+      const config = ReviewRunConfigV3Schema.parse(
         JSON.parse(await readFile(resolve(requiredOption(options, "--config")), "utf8")),
       );
       const prepared = await preparePacket(dryOptions, config.configId);
@@ -414,9 +423,18 @@ async function review(
       io.stdout(
         `Dry-run: ${prepared.captured.manifest.paths.length} changed paths, ${prepared.captured.manifest.exclusions.length} exclusions. No provider calls.`,
       );
-      io.stdout(
-        `Model: ${terminalText(admission.model)}; providers: ${admission.providers.map(terminalText).join(", ")}`,
-      );
+      const routeSummary =
+        admission.preferredProviders.length === 0
+          ? "any eligible endpoint"
+          : `${admission.preferredProviders.map(terminalText).join(", ")}${
+              admission.pinnedToPreferredProviders
+                ? " (pinned, no failover)"
+                : " first, then failover"
+            }`;
+      const modelSummary = [admission.model, ...admission.fallbackModels]
+        .map(terminalText)
+        .join(" -> ");
+      io.stdout(`Models: ${modelSummary}; providers: ${routeSummary}`);
       io.stdout(
         `Reserved tokens: ${admission.reservedTokens}; reserved cost: $${admission.reservedCostUsd.toFixed(6)} (not a billed amount).`,
       );

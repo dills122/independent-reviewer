@@ -1,17 +1,10 @@
 import * as z from "zod";
 import { ProviderCallPacerV1 } from "./call-pacing.js";
-import {
-  JsonWhitespaceProgressErrorV1,
-  JsonWhitespaceProgressGuardV1,
-} from "./json-whitespace-progress.js";
-import { decodeOpenRouterSseV1, OpenRouterSseDecodeErrorV1 } from "./openrouter-sse-decoder.js";
-
-const sharedCallPacer = new ProviderCallPacerV1();
 
 import {
-  OpenRouterProviderRoutingV1Schema,
+  OpenRouterProviderRoutingV2Schema,
   sha256Utf8,
-  type OpenRouterProviderRoutingV1,
+  type OpenRouterProviderRoutingV2,
 } from "../contracts/index.js";
 import {
   ProviderCallError,
@@ -23,7 +16,9 @@ import {
 } from "./review-provider.js";
 
 const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
-const OPENROUTER_PROVIDER_POLICY_VERSION_V4 = "openrouter-chat-completions-v4";
+const OPENROUTER_PROVIDER_POLICY_VERSION_V5 = "openrouter-chat-completions-v5";
+/** Shared by every provider instance that is not handed an explicit pacer, including tests. */
+const sharedCallPacer = new ProviderCallPacerV1();
 const OPENROUTER_PUBLIC_HEADERS_V1 = {
   "content-type": "application/json",
   "x-openrouter-cache": "false",
@@ -57,25 +52,6 @@ const OpenRouterResponseSchema = z
           .loose(),
       )
       .min(1),
-    usage: z.unknown().optional(),
-  })
-  .loose();
-
-const OpenRouterStreamChunkSchema = z
-  .object({
-    id: z.unknown().optional(),
-    model: z.unknown().optional(),
-    provider: z.unknown().optional(),
-    choices: z
-      .array(
-        z
-          .object({
-            finish_reason: z.unknown().optional(),
-            delta: z.looseObject({ content: z.unknown().optional() }).optional(),
-          })
-          .loose(),
-      )
-      .optional(),
     usage: z.unknown().optional(),
   })
   .loose();
@@ -313,17 +289,19 @@ function responseMetadata(body: unknown, apiKey: string): ProviderResponseMetada
   };
 }
 
-function openRouterWireBodyV4(
+function openRouterWireBodyV5(
   request: ReviewProviderRequestV1,
-  routing: OpenRouterProviderRoutingV1,
+  routing: OpenRouterProviderRoutingV2,
+  ignoredProviders: readonly string[],
 ): string {
-  const stream = request.stage === "FINAL";
-  const order = stream ? routing.order.slice(0, 1) : routing.order;
+  const [model, ...fallbackModels] = request.models;
   return JSON.stringify({
-    model: request.model,
+    model,
+    // Model fallback covers rate limiting, downtime, context-length and moderation refusals.
+    // The orchestrator accepts any permitted model and records which one answered.
+    ...(fallbackModels.length > 0 ? { models: request.models } : {}),
     messages: request.messages,
-    stream,
-    ...(stream ? { stream_options: { include_usage: true } } : {}),
+    stream: false,
     max_tokens: request.maxOutputTokens,
     response_format: {
       type: "json_schema",
@@ -334,198 +312,35 @@ function openRouterWireBodyV4(
       },
     },
     provider: {
-      order,
-      only: order,
-      allow_fallbacks: !stream && order.length > 1,
-      data_collection: "deny",
+      // `order` is a preference. Pinning with `only` removes provider failover, which turns one
+      // degraded endpoint into a failed review, so it stays opt-in and diagnostic.
+      ...(routing.order ? { order: routing.order } : {}),
+      ...(routing.pinToOrder && routing.order ? { only: routing.order } : {}),
+      ...(ignoredProviders.length > 0 ? { ignore: [...ignoredProviders] } : {}),
+      allow_fallbacks: !routing.pinToOrder,
+      ...(routing.denyDataCollection ? { data_collection: "deny" } : {}),
+      ...(routing.zeroDataRetention ? { zdr: true } : {}),
       max_price: routing.maxPrice,
+      // Structured output is a hard requirement: a provider that ignores response_format returns
+      // prose the report contract cannot accept.
       require_parameters: true,
-      zdr: true,
     },
     // OpenRouter context compression may remove middle messages.
     plugins: [{ id: "context-compression", enabled: false }],
   });
 }
 
-function streamResponseMetadata(
-  responseId: string | null,
-  model: string | null,
-  provider: string | null,
-  finishReason: string | null,
-  usage: ReviewProviderResponseV1["usage"],
-): ProviderResponseMetadataV1 {
-  return { responseId, model, provider, finishReason, usage };
-}
-
-async function readOpenRouterStream(
-  response: Response,
-  request: ReviewProviderRequestV1,
-  apiKey: string,
-  requestedEndpoint: string,
-): Promise<ReviewProviderResponseV1> {
-  if (!response.body) {
-    throw new ProviderCallError("TRANSPORT_UNCERTAIN", "OpenRouter returned an empty SSE body.");
-  }
-  const rawChunks: Uint8Array[] = [];
-  const content: string[] = [];
-  const progress = new JsonWhitespaceProgressGuardV1();
-  let responseId: string | null = null;
-  let model: string | null = null;
-  let provider: string | null = requestedEndpoint;
-  let finishReason: string | null = null;
-  let usage = normalizedUsage(undefined);
-
-  const metadata = () => streamResponseMetadata(responseId, model, provider, finishReason, usage);
-  const diagnosticBody = () => ({
-    schemaVersion: 1,
-    transport: "OPENROUTER_SSE",
-    requestedProviderEndpoint: requestedEndpoint,
-    transcript: Buffer.concat(rawChunks.map((chunk) => Buffer.from(chunk)))
-      .toString("utf8")
-      .replaceAll(apiKey, "[REDACTED]"),
-    partialContentCharacters: content.reduce((total, part) => total + part.length, 0),
-    progress: progress.snapshot(),
-  });
-
-  try {
-    for await (const event of decodeOpenRouterSseV1(response.body, {
-      maxResponseBytes: MAX_PROVIDER_RESPONSE_BYTES,
-      onRawChunk(chunk) {
-        rawChunks.push(chunk);
-      },
-    })) {
-      if (event.kind === "DONE") continue;
-      const body = event.value;
-      const providerError = providerErrorFromBody(body);
-      if (providerError !== undefined) {
-        const diagnostic = providerErrorDiagnostic(body, providerError, response, apiKey);
-        throw new ProviderCallError("PROVIDER_ERROR", providerErrorMessage(diagnostic), {
-          diagnostic,
-          responseBody: diagnosticBody(),
-          responseMetadata: metadata(),
-        });
-      }
-      const parsed = OpenRouterStreamChunkSchema.safeParse(body);
-      if (!parsed.success) {
-        throw new ProviderCallError(
-          "INVALID_RESPONSE",
-          "OpenRouter SSE chunk did not match the expected envelope.",
-          { responseBody: diagnosticBody(), responseMetadata: metadata() },
-        );
-      }
-      responseId = nullableString(parsed.data.id) ?? responseId;
-      model = nullableString(parsed.data.model) ?? model;
-      provider = nullableString(parsed.data.provider) ?? provider;
-      usage = parsed.data.usage === undefined ? usage : normalizedUsage(parsed.data.usage);
-      const choice = parsed.data.choices?.[0];
-      finishReason = nullableString(choice?.finish_reason) ?? finishReason;
-      const delta = choice?.delta?.content;
-      if (delta !== undefined && delta !== null && typeof delta !== "string") {
-        throw new ProviderCallError(
-          "INVALID_RESPONSE",
-          "OpenRouter SSE chunk contained non-text completion content.",
-          { responseBody: diagnosticBody(), responseMetadata: metadata() },
-        );
-      }
-      if (typeof delta === "string") {
-        content.push(delta);
-        progress.observe(delta);
-      }
-    }
-  } catch (error) {
-    if (error instanceof ProviderCallError) throw error;
-    if (error instanceof JsonWhitespaceProgressErrorV1) {
-      throw new ProviderCallError(
-        "UNPRODUCTIVE_STREAM",
-        "OpenRouter structured output stopped making progress in formatting whitespace.",
-        {
-          cause: error,
-          retryable: true,
-          responseBody: diagnosticBody(),
-          responseMetadata: metadata(),
-        },
-      );
-    }
-    if (error instanceof OpenRouterSseDecodeErrorV1) {
-      const uncertain = error.code === "TRUNCATED_STREAM";
-      throw new ProviderCallError(
-        uncertain ? "TRANSPORT_UNCERTAIN" : "INVALID_RESPONSE",
-        uncertain
-          ? "OpenRouter SSE transport ended before completion."
-          : "OpenRouter returned an invalid SSE response.",
-        { cause: error, responseBody: diagnosticBody(), responseMetadata: metadata() },
-      );
-    }
-    throw new ProviderCallError(
-      "TRANSPORT_UNCERTAIN",
-      "OpenRouter SSE transport failed after the request may have been submitted.",
-      { cause: error, responseBody: diagnosticBody(), responseMetadata: metadata() },
-    );
-  }
-
-  const rawContent = content.join("");
-  const rejectedResponse = {
-    responseBody: diagnosticBody(),
-    responseMetadata: metadata(),
-  };
-  if (finishReason !== "stop") {
-    throw new ProviderCallError(
-      "INVALID_RESPONSE",
-      `OpenRouter response did not complete normally (finish reason: ${finishReason ?? "missing"}).`,
-      rejectedResponse,
-    );
-  }
-  if (rawContent.trim().length === 0) {
-    throw new ProviderCallError(
-      "INVALID_RESPONSE",
-      "OpenRouter response did not contain usable completion content.",
-      { ...rejectedResponse, retryable: true },
-    );
-  }
-  if (model !== null && model !== request.model) {
-    throw new ProviderCallError(
-      "INVALID_RESPONSE",
-      "OpenRouter returned a different model than requested.",
-      rejectedResponse,
-    );
-  }
-  let value: unknown;
-  try {
-    value = JSON.parse(rawContent) as unknown;
-  } catch (error) {
-    throw new ProviderCallError(
-      "INVALID_RESPONSE",
-      "OpenRouter returned malformed structured JSON.",
-      {
-        cause: error,
-        ...rejectedResponse,
-      },
-    );
-  }
-  if (
-    [rawContent, responseId, model, provider].some(
-      (candidate) => candidate && reflectsCredential(candidate, apiKey),
-    )
-  ) {
-    throw new ProviderCallError(
-      "INVALID_RESPONSE",
-      "OpenRouter returned completion content that reflected the API credential.",
-      rejectedResponse,
-    );
-  }
-  return {
-    value,
-    rawContent,
-    responseId,
-    model,
-    provider,
-    usage,
-    rawResponseBody: diagnosticBody(),
-  };
+/** Normalizes an OpenRouter provider name to the base slug accepted by `provider.ignore`. */
+function providerSlug(value: string | null | undefined): string | null {
+  const slug = (value ?? "").trim().split("/")[0]?.trim();
+  return slug ? slug : null;
 }
 
 /**
- * OpenRouter adapter with non-streaming preliminary and guarded streaming final calls.
+ * OpenRouter adapter. Every call is a single non-streaming request: a review response is
+ * structured JSON nobody watches arrive, so streaming only added SSE framing, partial-JSON and
+ * UTF-8 boundary failure modes to a call that has no interactive consumer.
+ *
  * Routing/privacy fields follow the official Chat Completions and provider-routing contracts:
  * https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion
  * https://openrouter.ai/docs/guides/routing/provider-selection
@@ -533,26 +348,29 @@ async function readOpenRouterStream(
 export class OpenRouterProviderV1 implements ReviewProviderV1 {
   readonly #apiKey: string;
   readonly #fetch: typeof fetch;
-  readonly #routing: OpenRouterProviderRoutingV1;
+  readonly #routing: OpenRouterProviderRoutingV2;
   readonly #pacer: ProviderCallPacerV1;
+  readonly #ignoredProviders: readonly string[];
 
   constructor(
     apiKey: string,
     routingValue: unknown,
     fetchImplementation: typeof fetch = fetch,
     pacer: ProviderCallPacerV1 = sharedCallPacer,
+    ignoredProviders: readonly string[] = [],
   ) {
     if (apiKey.trim().length === 0) {
       throw new ProviderCallError("INVALID_CONFIGURATION", "OpenRouter API key is required.");
     }
     this.#apiKey = apiKey;
-    this.#routing = OpenRouterProviderRoutingV1Schema.parse(routingValue);
+    this.#routing = OpenRouterProviderRoutingV2Schema.parse(routingValue);
     this.#fetch = fetchImplementation;
     this.#pacer = pacer;
+    this.#ignoredProviders = ignoredProviders;
   }
 
   auditRequest(request: ReviewProviderRequestV1) {
-    const wireBody = openRouterWireBodyV4(request, this.#routing);
+    const wireBody = openRouterWireBodyV5(request, this.#routing, this.#ignoredProviders);
     const credentialFreeWireRequest = JSON.stringify({
       url: OPENROUTER_CHAT_COMPLETIONS_URL,
       method: "POST",
@@ -560,9 +378,10 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       body: wireBody,
     });
     return {
-      providerPolicyVersion: OPENROUTER_PROVIDER_POLICY_VERSION_V4,
-      requestedProviderEndpoint:
-        request.stage === "FINAL" ? (this.#routing.order[0] ?? null) : null,
+      providerPolicyVersion: OPENROUTER_PROVIDER_POLICY_VERSION_V5,
+      preferredProviderEndpoints: this.#routing.order ? [...this.#routing.order] : null,
+      excludedProviderEndpoints:
+        this.#ignoredProviders.length > 0 ? [...this.#ignoredProviders] : null,
       wireBodyDigest: sha256Utf8(wireBody),
       wireBodyBytes: Buffer.byteLength(wireBody, "utf8"),
       credentialFreeWireRequestDigest: sha256Utf8(credentialFreeWireRequest),
@@ -573,48 +392,45 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
     this.#pacer.defer(model, delayMs);
   }
 
-  forRetry(error: ProviderCallError, request: ReviewProviderRequestV1): ReviewProviderV1 | null {
-    if (request.stage === "FINAL") {
-      const remaining = this.#routing.order.slice(1);
+  /**
+   * Excludes the endpoint that just failed and lets OpenRouter re-route. A pinned run has no
+   * other endpoint to move to, so it drops the failed head of `order` instead.
+   */
+  forRetry(error: ProviderCallError, _request: ReviewProviderRequestV1): ReviewProviderV1 | null {
+    const failed = providerSlug(
+      error.responseMetadata?.provider ?? error.diagnostic?.providerName ?? null,
+    );
+    if (this.#routing.pinToOrder) {
+      const remaining = (this.#routing.order ?? []).slice(1);
       if (remaining.length === 0) return null;
       return new OpenRouterProviderV1(
         this.#apiKey,
         { ...this.#routing, order: remaining },
         this.#fetch,
         this.#pacer,
+        this.#ignoredProviders,
       );
     }
-    const failed = (error.responseMetadata?.provider ?? error.diagnostic?.providerName ?? "")
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, "");
-    const order = [...this.#routing.order].reverse();
-    if (failed)
-      order.sort(
-        (a, b) =>
-          Number(
-            a
-              .split("/")[0]
-              ?.toLowerCase()
-              .replace(/[^a-z0-9]/g, "") === failed,
-          ) -
-          Number(
-            b
-              .split("/")[0]
-              ?.toLowerCase()
-              .replace(/[^a-z0-9]/g, "") === failed,
-          ),
-      );
-    return new OpenRouterProviderV1(
-      this.#apiKey,
-      { ...this.#routing, order },
-      this.#fetch,
-      this.#pacer,
-    );
+    if (!failed || this.#ignoredProviders.includes(failed)) {
+      // Nothing new to exclude; OpenRouter still re-routes across the full eligible pool.
+      return this;
+    }
+    return new OpenRouterProviderV1(this.#apiKey, this.#routing, this.#fetch, this.#pacer, [
+      ...this.#ignoredProviders,
+      failed,
+    ]);
   }
 
   async complete(request: ReviewProviderRequestV1): Promise<ReviewProviderResponseV1> {
-    await this.#pacer.wait(request.model);
-    const wireBody = openRouterWireBodyV4(request, this.#routing);
+    const primaryModel = request.models[0];
+    if (primaryModel === undefined) {
+      throw new ProviderCallError(
+        "INVALID_CONFIGURATION",
+        "A review provider request must name at least one model.",
+      );
+    }
+    await this.#pacer.wait(primaryModel);
+    const wireBody = openRouterWireBodyV5(request, this.#routing, this.#ignoredProviders);
     let response: Response;
     let rawBody: string;
     // Body consumption stays inside the transport handler: fetch resolves on headers, so a
@@ -630,18 +446,6 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
         body: wireBody,
         signal: AbortSignal.timeout(request.timeoutMs),
       });
-      if (
-        request.stage === "FINAL" &&
-        response.ok &&
-        response.headers.get("content-type")?.toLowerCase().includes("text/event-stream")
-      ) {
-        return await readOpenRouterStream(
-          response,
-          request,
-          this.#apiKey,
-          this.#routing.order[0] as string,
-        );
-      }
       rawBody = await readBoundedResponseText(response, MAX_PROVIDER_RESPONSE_BYTES);
     } catch (error) {
       if (error instanceof ProviderCallError) {
@@ -738,12 +542,13 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       );
     }
     const returnedModel = nullableString(parsed.data.model);
-    if (returnedModel !== null && returnedModel !== request.model) {
+    if (returnedModel !== null && !request.models.includes(returnedModel)) {
       // Adapter-level guard on the wire response; the orchestrator repeats the rule for any
       // provider implementation. Distinct wording keeps a failure attributable to one layer.
+      // A configured fallback model is a permitted answer; anything else is not.
       throw new ProviderCallError(
         "INVALID_RESPONSE",
-        "OpenRouter returned a different model than requested.",
+        `OpenRouter returned a model outside the permitted set (${returnedModel}).`,
         rejectedResponse,
       );
     }

@@ -15,7 +15,7 @@ import {
   type ReviewProviderV1,
   type ReviewProviderRequestV1,
   type ReviewProviderResponseV1,
-  type ReviewRunConfigV2,
+  type ReviewRunConfigV3,
   writeSnapshotPacketV1,
 } from "../../src/index.js";
 
@@ -138,13 +138,17 @@ async function arrangePacket(
   return { repositoryPath, packetPath };
 }
 
-const config: ReviewRunConfigV2 = {
-  schemaVersion: 2,
+const config: ReviewRunConfigV3 = {
+  schemaVersion: 3,
   configId: "config_test",
   model: "mock/reviewer",
+  fallbackModels: [],
   providerRouting: {
     order: ["provider-a/fp4", "provider-b/bf16"],
-    maxPrice: { prompt: 0.03, completion: 0.14, request: 0 },
+    pinToOrder: false,
+    zeroDataRetention: false,
+    denyDataCollection: false,
+    maxPrice: { prompt: 0.5, completion: 1.5, request: 0 },
   },
   budgets: {
     maxInitialEvidenceBytes: 32_000,
@@ -153,6 +157,8 @@ const config: ReviewRunConfigV2 = {
     maxTotalTokens: 100_000,
     maxTotalCostUsd: 1,
     timeoutMs: 10_000,
+    maxAttemptsPerCall: 2,
+    minimumCallIntervalMs: 0,
   },
 };
 
@@ -648,15 +654,12 @@ describe("two-stage review orchestrator", () => {
     }
   });
 
-  it("persists a durable attempt and terminal record when transport is uncertain", async () => {
+  it("retries an uncertain transport and persists a durable attempt and terminal record", async () => {
     const { repositoryPath, packetPath } = await arrangePacket();
     const provider: ReviewProviderV1 = {
       auditRequest: mockAuditRequest,
       complete: async () => {
-        throw new ProviderCallError(
-          "TRANSPORT_UNCERTAIN",
-          "The request may have been submitted and was not retried.",
-        );
+        throw new ProviderCallError("TRANSPORT_UNCERTAIN", "The request may have been submitted.");
       },
     };
 
@@ -671,13 +674,25 @@ describe("two-stage review orchestrator", () => {
         .split("\n")
         .map((line) => JSON.parse(line));
 
+      // An inference call is idempotent, so an uncertain submission is reissued rather than
+      // failing the run. The uncertain attempt is still charged the full conservative
+      // reservation before the retry is admitted, so a double submission cannot be free.
       assert.deepEqual(
         events.map((event) => event.type),
-        ["RUN_STARTED", "CALL_STARTED", "CALL_FAILED", "RUN_FAILED"],
+        [
+          "RUN_STARTED",
+          "CALL_STARTED",
+          "CALL_FAILED",
+          "PROVIDER_RETRY_REQUESTED",
+          "CALL_STARTED",
+          "CALL_FAILED",
+          "RUN_FAILED",
+        ],
       );
       assert.equal(events[1]?.stage, "PRELIMINARY");
       assert.equal(events[2]?.error.code, "TRANSPORT_UNCERTAIN");
-      assert.equal(events[3]?.terminalState, "TRANSPORT_UNCERTAIN");
+      assert.ok(events[3]?.chargedFailedTokens > 0);
+      assert.equal(events.at(-1)?.terminalState, "TRANSPORT_UNCERTAIN");
       assert.doesNotMatch(JSON.stringify(events), /AUTHOR_SECRET/);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
@@ -1603,125 +1618,74 @@ for (const status of [503, 529])
         [1, 2, 3],
       );
       const retry = events.find((e) => e.type === "PROVIDER_RETRY_REQUESTED");
-      assert.ok(retry.chargedFailedTokens > 0);
-      assert.ok(retry.chargedFailedCostUsd > 0);
+      // The provider rejected the request without reporting usage, so nothing was generated and
+      // the failure must not consume the reservation that pays for the retry.
+      assert.equal(retry.chargedFailedTokens, 0);
+      assert.equal(retry.chargedFailedCostUsd, 0);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
   });
 
-it("persists an unproductive final stream and retries only the final on another endpoint", async () => {
+it("retries a rate-limited final call on another endpoint without charging it for tokens", async () => {
   const { repositoryPath, packetPath } = await arrangePacket();
   const calls: Array<{ endpoint: string | null; stage: string }> = [];
   const secondary: ReviewProviderV1 = {
     auditRequest: (providerRequest) => ({
       ...mockAuditRequest(providerRequest),
-      requestedProviderEndpoint: "provider-b/bf16",
+      preferredProviderEndpoints: ["provider-a/fp4", "provider-b/bf16"],
+      excludedProviderEndpoints: ["provider-a"],
     }),
     complete: async (providerRequest) => {
       calls.push({ endpoint: "provider-b/bf16", stage: providerRequest.stage });
       return successfulEmptyResponse(providerRequest);
     },
   };
-  const partial = {
-    schemaVersion: 1,
-    transport: "OPENROUTER_SSE",
-    requestedProviderEndpoint: "provider-a/fp4",
-    transcript: 'data: {"choices":[{"delta":{"content":"{   "}}]}\n\n',
-    partialContentCharacters: 513,
-    progress: {
-      consecutiveFormattingWhitespace: 512,
-      maximumFormattingWhitespace: 512,
-      totalCharacters: 513,
-    },
-  };
   const primary: ReviewProviderV1 = {
     auditRequest: (providerRequest) => ({
       ...mockAuditRequest(providerRequest),
-      requestedProviderEndpoint: providerRequest.stage === "FINAL" ? "provider-a/fp4" : null,
+      preferredProviderEndpoints: ["provider-a/fp4", "provider-b/bf16"],
+      excludedProviderEndpoints: null,
     }),
     complete: async (providerRequest) => {
-      calls.push({
-        endpoint: providerRequest.stage === "FINAL" ? "provider-a/fp4" : null,
-        stage: providerRequest.stage,
-      });
-      if (providerRequest.stage === "FINAL") {
-        throw new ProviderCallError(
-          "UNPRODUCTIVE_STREAM",
-          "Structured output stopped making progress.",
-          {
-            retryable: true,
-            responseBody: partial,
-            responseMetadata: {
-              responseId: "generation-stalled",
-              model: config.model,
-              provider: "provider-a/fp4",
-              finishReason: null,
-              usage: {
-                promptTokens: null,
-                completionTokens: null,
-                totalTokens: null,
-                cost: null,
-              },
-            },
-          },
-        );
-      }
+      calls.push({ endpoint: "provider-a/fp4", stage: providerRequest.stage });
+      if (providerRequest.stage === "FINAL") throw transientFailure(429);
       return successfulEmptyResponse(providerRequest);
     },
-    forRetry: (error, providerRequest) => {
-      assert.equal(error.code, "UNPRODUCTIVE_STREAM");
-      assert.equal(providerRequest.stage, "FINAL");
-      return secondary;
-    },
+    forRetry: () => secondary,
   };
 
   try {
     const result = await runTwoStageReviewV1(packetPath, config, primary);
     assert.equal(result.report.verdict, "READY");
     assert.deepEqual(calls, [
-      { endpoint: null, stage: "PRELIMINARY" },
+      { endpoint: "provider-a/fp4", stage: "PRELIMINARY" },
       { endpoint: "provider-a/fp4", stage: "FINAL" },
       { endpoint: "provider-b/bf16", stage: "FINAL" },
     ]);
-    assert.deepEqual(
-      JSON.parse(
-        await readFile(join(packetPath, "review", "provider-response-attempt-2.raw.json"), "utf8"),
-      ),
-      partial,
-    );
     const events = (await readFile(result.runRecordPath, "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
+    const retry = events.find((event) => event.type === "PROVIDER_RETRY_REQUESTED");
+    // A provider error envelope carrying no usage never reached a model, so it must not consume
+    // the reservation that pays for the retry.
+    assert.equal(retry.chargedFailedTokens, 0);
+    assert.equal(retry.chargedFailedCostUsd, 0);
+    assert.equal(retry.retriesUsed, 1);
+    assert.equal(retry.maxRetries, config.budgets.maxAttemptsPerCall - 1);
     assert.deepEqual(
       events
         .filter((event) => event.type === "CALL_STARTED")
-        .map((event) => ({
-          attempt: event.attemptNumber,
-          endpoint: event.requestedProviderEndpoint,
-          stage: event.stage,
-        })),
-      [
-        { attempt: 1, endpoint: null, stage: "PRELIMINARY" },
-        { attempt: 2, endpoint: "provider-a/fp4", stage: "FINAL" },
-        { attempt: 3, endpoint: "provider-b/bf16", stage: "FINAL" },
-      ],
+        .map((event) => event.excludedProviderEndpoints),
+      [null, null, ["provider-a"]],
     );
-    const failed = events.find((event) => event.type === "CALL_FAILED");
-    assert.equal(failed.error.code, "UNPRODUCTIVE_STREAM");
-    assert.deepEqual(failed.responseMetadata.usage, {
-      promptTokens: null,
-      completionTokens: null,
-      totalTokens: null,
-      cost: null,
-    });
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });
   }
 });
 
-it("permits only one provider retry across both review stages", async () => {
+it("budgets provider retries per call so an early retry cannot starve the final stage", async () => {
   const { repositoryPath, packetPath } = await arrangePacket();
   const calls: ReviewProviderRequestV1[] = [];
   const provider: ReviewProviderV1 = {
@@ -1737,9 +1701,11 @@ it("permits only one provider retry across both review stages", async () => {
       () => runTwoStageReviewV1(packetPath, config, provider),
       /Temporarily unavailable/,
     );
+    // maxAttemptsPerCall is 2, so each logical call gets its own single retry: the preliminary
+    // spends one and still leaves the final stage a full attempt budget of its own.
     assert.deepEqual(
       calls.map((request) => request.stage),
-      ["PRELIMINARY", "PRELIMINARY", "FINAL"],
+      ["PRELIMINARY", "PRELIMINARY", "FINAL", "FINAL"],
     );
     assert.deepEqual(calls[0], calls[1]);
     assert.doesNotMatch(JSON.stringify(calls[0]?.messages), /Reported by author/);

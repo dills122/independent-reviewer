@@ -1,6 +1,11 @@
 # OpenRouter whitespace progress guard
 
-Status: implemented after independent review instance 1 of 3; healthy-path paid provider
+Status: SUPERSEDED on 2026-09-10 by [ADR-006](../decisions/006-route-for-availability-not-pinning.md).
+The guard, the streaming final stage, and the SSE decoder it depended on are removed: a review
+response has no interactive consumer, so streaming was pure failure surface. Retained for the
+threshold-calibration evidence and for the record of what was tried.
+
+Original status: implemented after independent review instance 1 of 3; healthy-path paid provider
 validation complete. Different-endpoint final retry was observed after live provider
 errors; a live whitespace-guard trip was not observed.
 

@@ -4,8 +4,7 @@ export type ProviderCallErrorCode =
   | "INVALID_CONFIGURATION"
   | "PROVIDER_ERROR"
   | "INVALID_RESPONSE"
-  | "TRANSPORT_UNCERTAIN"
-  | "UNPRODUCTIVE_STREAM";
+  | "TRANSPORT_UNCERTAIN";
 
 export interface ProviderErrorDiagnosticV1 {
   readonly httpStatus: number;
@@ -65,7 +64,8 @@ export interface ReviewMessageV1 {
 
 export interface ReviewProviderRequestV1 {
   stage: ReviewStageV1;
-  model: string;
+  /** Permitted models, primary first. A later entry answers only when an earlier one cannot. */
+  models: string[];
   maxOutputTokens: number;
   timeoutMs: number;
   messages: ReviewMessageV1[];
@@ -93,8 +93,10 @@ export interface ReviewProviderResponseV1 {
 
 export interface ReviewProviderRequestAuditV1 {
   providerPolicyVersion: string;
-  /** Exact endpoint pinned for this attempt, or null when the provider may route. */
-  requestedProviderEndpoint?: string | null;
+  /** Preferred endpoints for this attempt; routing may still fall back beyond them. */
+  preferredProviderEndpoints?: string[] | null;
+  /** Endpoints excluded for this attempt after an earlier failure. */
+  excludedProviderEndpoints?: string[] | null;
   wireBodyDigest: DigestV1;
   wireBodyBytes: number;
   credentialFreeWireRequestDigest: DigestV1;
@@ -103,7 +105,10 @@ export interface ReviewProviderRequestAuditV1 {
 export interface ReviewProviderV1 {
   /** Pause new requests in the shared batch, including other review workers. */
   deferRequests?(model: string, delayMs: number): void;
-  /** Same model and policy; null means no permitted retry target remains. */
+  /**
+   * A provider for the next attempt at the same request, biased away from what just failed.
+   * Null means no permitted retry target remains.
+   */
   forRetry?(error: ProviderCallError, request: ReviewProviderRequestV1): ReviewProviderV1 | null;
   auditRequest(request: ReviewProviderRequestV1): ReviewProviderRequestAuditV1;
   complete(request: ReviewProviderRequestV1): Promise<ReviewProviderResponseV1>;

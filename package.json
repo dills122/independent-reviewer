@@ -17,7 +17,6 @@
     "./schemas/final-review-candidate-v1": "./schemas/final-review-candidate-v1.schema.json",
     "./schemas/final-review-report-v1": "./schemas/final-review-report-v1.schema.json",
     "./schemas/review-request-v1": "./schemas/review-request-v1.schema.json",
-    "./schemas/review-run-config-v2": "./schemas/review-run-config-v2.schema.json",
     "./schemas/inspection-report-v1": "./schemas/inspection-report-v1.schema.json",
     "./schemas/snapshot-manifest-v1": "./schemas/snapshot-manifest-v1.schema.json",
     "./schemas/standards-candidate-v2": "./schemas/standards-candidate-v2.schema.json",
@@ -26,7 +25,8 @@
     "./schemas/standards-profile-v1": "./schemas/standards-profile-v1.schema.json",
     "./schemas/standards-report-v2": "./schemas/standards-report-v2.schema.json",
     "./schemas/standards-review-brief-v2": "./schemas/standards-review-brief-v2.schema.json",
-    "./schemas/standards-review-request-v2": "./schemas/standards-review-request-v2.schema.json"
+    "./schemas/standards-review-request-v2": "./schemas/standards-review-request-v2.schema.json",
+    "./schemas/review-run-config-v3": "./schemas/review-run-config-v3.schema.json"
   },
   "files": [
     "dist/src",
@@ -47,7 +47,6 @@
     "typecheck": "tsc --noEmit --project tsconfig.json"
   },
   "dependencies": {
-    "eventsource-parser": "4.1.0",
     "zod": "4.5.4"
   },
   "devDependencies": {

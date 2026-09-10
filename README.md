@@ -68,18 +68,19 @@ Skip initialization by passing `--standards`, `--author` and `--config` directly
 to `review`. The [example profile](examples/standards.javascript-typescript.json)
 contains advisory JavaScript/TypeScript rules; select or customize rules to match
 your project. The [GPT-OSS 120B example config](examples/review-config.gpt-oss-120b.json)
-uses an 8,192-token output allowance while retaining its 160,000 total-token and
-$0.02 per-review limits. It remains a supported compatibility and diagnostic
-configuration, but is not preferred: live validation found final-stage capacity
-errors, invalid or truncated output, and runaway whitespace. The pinned BaseTen
-example is diagnostic-only after repeated 529 responses in our
-[targeted route check](docs/validation/2026-09-09-standards-provider-reliability.md).
-GPT-OSS 120B on AkashML remains a supported budget route, but is not preferred
-after its initial qualification produced a shared-pool 429 and then an empty
-final stream. Current qualification moves to Kimi K2.5 as the directly benchmarked
-value challenger. GPT-5.2 and Claude Opus 4.6 are premium quality controls. None
-becomes preferred until it passes the gates in the
+is the budget baseline: a 16,384-token output allowance, a 240,000 total-token
+and $0.20 per-review ceiling, open provider routing with CoreWeave and DeepInfra
+preferred, and GLM 5.3 Flash then DeepSeek V4 Flash as fallback models.
+The [pinned example](examples/review-config.pinned-endpoint.json) shows the
+diagnostic shape — one endpoint, no failover, both privacy filters on — and is
+not how an ordinary review should run.
+Kimi K2.5 remains the directly benchmarked value challenger, with GPT-5.2 and
+Claude Opus 4.6 as premium quality controls; none becomes preferred until it
+passes the gates in the
 [model-selection review](docs/research/2026-09-10-review-model-selection.md).
+Earlier live failures attributed to those routes are re-read in
+[ADR-006](docs/decisions/006-route-for-availability-not-pinning.md): most were
+caused by the product disabling its own failover, not by the endpoints.
 Run dry-run with your actual scope to check admission; the allowance is not a
 completion guarantee. Profile fields are defined by
 [standards-profile-v1](schemas/standards-profile-v1.schema.json). Rule IDs must be
@@ -174,13 +175,24 @@ node dist/src/cli.js review \
 ```
 
 The review config schema is
-[`schemas/review-run-config-v2.schema.json`](schemas/review-run-config-v2.schema.json),
-which the runtime requires: `schemaVersion: 2`, a `providerRouting` block, and
+[`schemas/review-run-config-v3.schema.json`](schemas/review-run-config-v3.schema.json),
+which the runtime requires: `schemaVersion: 3`, a `providerRouting` block, and
 budgets including the local spend ceiling `maxTotalCostUsd`.
-`providerRouting.order` accepts one to three distinct endpoint slugs. One entry
-pins the route and disables provider fallback; two or three permit same-model
-fallback only within that list. A preferred first entry is not a pinned route.
-Privacy, structured-output requirements, and price ceilings apply in both modes.
+
+Routing defaults to availability. `providerRouting.order` is an optional
+preference of up to eight endpoint slugs, and OpenRouter may still route
+elsewhere; set `pinToOrder` to restrict routing to that list and disable provider
+failover, which is a diagnostic setting rather than a normal one. `zeroDataRetention`
+and `denyDataCollection` each narrow the eligible endpoint pool and are off unless
+a run opts in. `maxPrice` is always sent and is also the ceiling the local
+reservation arithmetic assumes, so set it as a true ceiling rather than at the
+cheapest available rate; a tight value quietly shrinks the pool.
+`fallbackModels` lists up to four alternate models, sent as OpenRouter's model
+fallback chain, and a response from any permitted model is accepted. Structured
+output is always required of the serving endpoint.
+`budgets.maxAttemptsPerCall` (default 3) bounds attempts for one logical call,
+and `budgets.minimumCallIntervalMs` (default 1500) spaces calls sharing a model
+so a batch stays under the account burst limit.
 The command prints the final report path. The adjacent `run-record.jsonl`
 records prompt/schema and provider-policy versions, stage-input and
 credential-free wire-request digests, exact wire-body digest and byte count,
