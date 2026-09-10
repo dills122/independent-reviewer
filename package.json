@@ -47,6 +47,7 @@
     "typecheck": "tsc --noEmit --project tsconfig.json"
   },
   "dependencies": {
+    "eventsource-parser": "4.1.0",
     "zod": "4.5.4"
   },
   "devDependencies": {
