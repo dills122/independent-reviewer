@@ -74,8 +74,10 @@ configuration, but is not preferred: live validation found final-stage capacity
 errors, invalid or truncated output, and runaway whitespace. The pinned BaseTen
 example is diagnostic-only after repeated 529 responses in our
 [targeted route check](docs/validation/2026-09-09-standards-provider-reliability.md).
-Current qualification work focuses on fixed DeepSeek V4 Flash 0731 and GLM 5.3
-Flash model IDs; neither becomes preferred until it passes the gates in the
+Current qualification starts with GPT-OSS 120B on AkashML as the budget
+compatibility baseline, then Kimi K2.5 as the directly benchmarked value
+challenger. GPT-5.2 and Claude Opus 4.6 are premium quality controls. None becomes
+preferred until it passes the gates in the
 [model-selection review](docs/research/2026-09-10-review-model-selection.md).
 Run dry-run with your actual scope to check admission; the allowance is not a
 completion guarantee. Profile fields are defined by
