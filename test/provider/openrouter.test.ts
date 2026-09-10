@@ -131,6 +131,37 @@ describe("OpenRouterProviderV1", () => {
     );
   });
 
+  it("retries a missing finish reason but not an explicit one", async () => {
+    const outcomes: Array<[unknown, boolean]> = [
+      [undefined, true],
+      [null, true],
+      ["length", false],
+      ["content_filter", false],
+    ];
+    for (const [finishReason, retryable] of outcomes) {
+      const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+        Response.json({
+          model: "vendor/model",
+          choices: [
+            {
+              ...(finishReason === undefined ? {} : { finish_reason: finishReason }),
+              message: { content: '{"ok":true}' },
+            },
+          ],
+        }),
+      );
+      await assert.rejects(
+        () => provider.complete(request),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderCallError);
+          assert.equal(error.code, "INVALID_RESPONSE");
+          assert.equal(error.retryable, retryable);
+          return true;
+        },
+      );
+    }
+  });
+
   it("redacts rejected envelope labels and keeps invalid usage unknown", async () => {
     const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
       Response.json({

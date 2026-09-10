@@ -527,10 +527,14 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
     }
     const choice = parsed.data.choices[0];
     if (choice?.finish_reason !== "stop") {
+      // An absent finish reason means the provider ended the generation without saying how, which
+      // is a malfunction another endpoint may not repeat. An explicit reason such as "length" or
+      // "content_filter" is a deterministic outcome of this request and would recur on retry.
+      const malfunctioned = choice?.finish_reason === undefined || choice?.finish_reason === null;
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         `OpenRouter response did not complete normally (finish reason: ${metadata?.finishReason ?? "missing"}).`,
-        rejectedResponse,
+        { ...rejectedResponse, ...(malfunctioned ? { retryable: true } : {}) },
       );
     }
     const content = choice.message.content;
