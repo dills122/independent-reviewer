@@ -2,10 +2,11 @@
 
 ## Decision
 
-Qualify `akashml/bf16` first as the provider route for the supported
-`openai/gpt-oss-120b` budget baseline. Qualify fixed `moonshotai/kimi-k2.5` next
-as the value challenger with direct code-review benchmark evidence. Use fixed
-`openai/gpt-5.2` and `anthropic/claude-opus-4.6` as premium quality controls.
+The first `akashml/bf16` qualification for the supported
+`openai/gpt-oss-120b` budget baseline failed. Keep the route supported but not
+preferred. Qualify fixed `moonshotai/kimi-k2.5` next as the value challenger with
+direct code-review benchmark evidence. Use fixed `openai/gpt-5.2` and
+`anthropic/claude-opus-4.6` as premium quality controls.
 
 Keep fixed `deepseek/deepseek-v4-flash-0731` and `z-ai/glm-5.3-flash` as
 secondary value candidates. Treat fixed `openai/gpt-5.6-sol` and
@@ -13,9 +14,12 @@ secondary value candidates. Treat fixed `openai/gpt-5.6-sol` and
 the directly relevant benchmark predates them, and its own results show that a
 newer model can review code worse than its predecessor.
 
-AkashML route qualification does not promote GPT-OSS itself to preferred. No
-provider or model is promoted by this research alone; promotion requires live
-protocol evidence.
+AkashML produced a valid preliminary assessment, then a final shared-pool 429.
+The one permitted final-only retry returned an empty SSE completion followed by
+`[DONE]` with no finish reason. No whitespace was emitted. The clean case did not
+complete, so the planned mandatory-defect cell was not submitted. No provider or
+model is promoted by this research alone; promotion requires live protocol
+evidence.
 
 Do not use `:latest`, preview, batch, or automatic-router model aliases. Review
 artifacts bind an explicit model identity, and the returned identity must match.
@@ -46,7 +50,7 @@ model-inference cost.
 
 | Tier | Model | Why | Current limitation |
 | --- | --- | --- | --- |
-| Provider focus 1 | `openai/gpt-oss-120b` on `akashml/bf16` | BF16, ZDR, structured output, full 131K context, lowest route price, strong current short-window uptime | Provider route is unqualified; model has weaker general coding signals and no Factory result |
+| Evaluated, not preferred | `openai/gpt-oss-120b` on `akashml/bf16` | BF16, ZDR, structured output, full 131K context, lowest route price | Initial live clean run failed final-stage qualification twice; model has weaker general coding signals and no Factory result |
 | Model focus 1 | `moonshotai/kimi-k2.5` | 51.9% Factory review F1 at $0.41/PR, 262K context, several ZDR structured-output routes | Needs a materially higher local admission cap and pinned live qualification |
 | Premium control 1 | `openai/gpt-5.2` | Best Factory result: 60.5% F1 with 65% precision and 57.6% recall | Only Azure is currently ZDR on OpenRouter; expensive under this protocol |
 | Premium control 2 | `anthropic/claude-opus-4.6` | Second Factory result: 59.8% F1 with the highest top-model recall at 61.8% | Very expensive; ZDR routes concentrate on Bedrock and Vertex |
@@ -109,11 +113,13 @@ live run must dry-run its actual scope first.
 
 ## Initial route candidates
 
-Start with `openai/gpt-oss-120b` pinned to `akashml/bf16`. Current catalog
-metadata reports BF16 quantization, ZDR, strict structured-output support,
-131,072 context tokens, 117,964 maximum completion tokens, and $0.03/$0.17 per
-million input/output tokens. The observed 30-minute uptime was about 99.97% when
-queried, which is enough to justify a test—not a reliability claim.
+AkashML's initial qualification demonstrates why catalog metadata is only a
+screen. The catalog reported BF16 quantization, ZDR, strict structured-output
+support, 131,072 context tokens, 117,964 maximum completion tokens, and about
+99.97% short-window uptime. Live final-stage behavior still failed with a
+shared-pool 429 and, on retry, an empty normally terminated SSE transcript with
+no finish reason. Keep the route supported for later compatibility checks, but
+do not spend the remaining matrix on it now.
 
 For Kimi K2.5, start with pinned SiliconFlow and Phala endpoints. Both are ZDR,
 support structured output, and represent different provider organizations. Use a
@@ -135,7 +141,8 @@ independent qualification mandatory.
 For GLM, start with pinned Fireworks and Modal endpoints under a separate $0.03
 test cap. Keep the cap change isolated to the qualification configuration.
 
-Do not promote AkashML, GPT-OSS, or any other route without fresh evidence.
+Do not promote AkashML, GPT-OSS, or any other route without fresh evidence. Move
+the immediate value-model qualification to Kimi K2.5.
 
 ## Promotion gate
 
@@ -173,3 +180,4 @@ label them non-preferred until they pass again.
 - [Qwen3 Coder 30B A3B Instruct](https://openrouter.ai/qwen/qwen3-coder-30b-a3b-instruct)
 - [GPT-OSS 120B provider performance](https://openrouter.ai/openai/gpt-oss-120b/uptime)
 - [Repository live-validation evidence](../validation/2026-09-10-whitespace-guard-e2e.md)
+- [AkashML qualification evidence](../validation/2026-09-10-akashml-qualification.md)
