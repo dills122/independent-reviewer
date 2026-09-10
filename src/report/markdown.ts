@@ -99,7 +99,7 @@ export function renderReviewMarkdown(
               `- ${escapeMarkdown(rule.id)} (${rule.enforcement}): ${escapeMarkdown(rule.text)} Source: ${escapeMarkdown(rule.source)}. Applies to: ${rule.paths.map(escapeMarkdown).join(", ")}. Exceptions: ${escapeMarkdown(rule.exceptions ?? "None declared.")}`,
           ),
           "",
-          "This result covers selected standards only; it is not a bug-free or deployment-readiness assessment.",
+          "This result covers the selected standards and defects demonstrable from the changed code alone. Behaviour that depends on other modules, callers, concurrency, deployment or runtime state was not assessed. It is not a bug-free or deployment-readiness assessment.",
           "",
         ]
       : []),

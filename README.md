@@ -41,8 +41,18 @@ Deterministic snapshot and blind-brief identities are accepted in
 Standards mode reviews code quality against selected rules, preserving the
 independent first assessment and separate author reconciliation. Supply a
 standards profile and an author/agent overview upfront. A business requirements
-document or implementation plan is not needed. Bug hunting, fuzzing and test
-execution are outside this mode.
+document or implementation plan is not needed.
+
+Scope is the selected rules plus local correctness: a defect the reviewer can
+demonstrate from the changed code and the declarations it cites, by naming a
+concrete input and the wrong result it produces. Wrong arithmetic, an inverted
+or off-by-one condition, an ignored parameter, a documented range the code does
+not honour, and an unreachable branch all qualify. Behaviour that depends on
+other modules, callers, concurrency, deployment, external services or runtime
+state is out of scope and is not reported. Fuzzing, executing tests and
+measuring performance remain out of scope. Local correctness is carried by the
+`rule_local_correctness` rule in the example profile, so a project that does not
+want it simply omits the rule.
 
 Build with `npm ci` and `npm run build`. Using paths to your own repository,
 selected review config, profile and overview:
@@ -97,7 +107,8 @@ its content is delivered only in call two. Edited author artifacts fail inspecti
 Progress goes to stderr; `--quiet` suppresses it. The summary shows required or
 recommended changes, rule IDs, locations and corrections. The full Markdown
 report retains rule sources and reconciliation details. A passing standards
-review is not a claim of bug-free code or deployment readiness. Cost output
+review is not a claim of bug-free code, system correctness, or deployment
+readiness; cross-module behaviour is outside what it checks. Cost output
 separates provider-reported amounts from missing telemetry.
 
 Convenience-mode runs reserve one of three instances in a Git-local flow only
