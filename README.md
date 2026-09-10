@@ -50,7 +50,16 @@ or off-by-one condition, an ignored parameter, a documented range the code does
 not honour, and an unreachable branch all qualify. Behaviour that depends on
 other modules, callers, concurrency, deployment, external services or runtime
 state is out of scope and is not reported. Fuzzing, executing tests and
-measuring performance remain out of scope. Local correctness is carried by the
+measuring performance remain out of scope.
+
+To make that boundary real, capture also freezes the unchanged TypeScript and
+JavaScript files the changed code imports directly, read-only, so a call can be
+checked against the contract it targets. They are context, not review targets:
+no coverage is owed for them and findings still cite changed code. Capture stops
+at 128 KB of such context per snapshot and transmission drops it before dropping
+the change itself; anything dropped is declared so the reviewer marks the
+affected rule unassessed instead of assuming the call is correct. See
+[ADR-007](docs/decisions/007-capture-cited-declarations.md). Local correctness is carried by the
 `rule_local_correctness` rule in the example profile, so a project that does not
 want it simply omits the rule.
 

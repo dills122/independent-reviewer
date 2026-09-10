@@ -1802,6 +1802,282 @@
             "additionalProperties": false
           }
         },
+        "referencedSources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "content": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "TEXT"
+                      },
+                      "digest": {
+                        "type": "object",
+                        "properties": {
+                          "algorithm": {
+                            "type": "string",
+                            "const": "SHA256"
+                          },
+                          "value": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "algorithm",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "byteLength": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "isGenerated": {
+                        "type": "boolean"
+                      },
+                      "gitMode": {
+                        "type": "string",
+                        "enum": [
+                          "100644",
+                          "100755"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "digest",
+                      "byteLength",
+                      "isGenerated",
+                      "gitMode"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "BINARY"
+                      },
+                      "digest": {
+                        "type": "object",
+                        "properties": {
+                          "algorithm": {
+                            "type": "string",
+                            "const": "SHA256"
+                          },
+                          "value": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "algorithm",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "byteLength": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "isGenerated": {
+                        "type": "boolean"
+                      },
+                      "gitMode": {
+                        "type": "string",
+                        "enum": [
+                          "100644",
+                          "100755"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "digest",
+                      "byteLength",
+                      "isGenerated",
+                      "gitMode"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "SYMLINK"
+                      },
+                      "digest": {
+                        "type": "object",
+                        "properties": {
+                          "algorithm": {
+                            "type": "string",
+                            "const": "SHA256"
+                          },
+                          "value": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "algorithm",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "byteLength": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "isGenerated": {
+                        "type": "boolean"
+                      },
+                      "gitMode": {
+                        "type": "string",
+                        "const": "120000"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "digest",
+                      "byteLength",
+                      "isGenerated",
+                      "gitMode"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "SUBMODULE"
+                      },
+                      "digest": {
+                        "type": "object",
+                        "properties": {
+                          "algorithm": {
+                            "type": "string",
+                            "const": "SHA256"
+                          },
+                          "value": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "algorithm",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "byteLength": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "isGenerated": {
+                        "type": "boolean"
+                      },
+                      "gitMode": {
+                        "type": "string",
+                        "const": "160000"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "digest",
+                      "byteLength",
+                      "isGenerated",
+                      "gitMode"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "UNSUPPORTED"
+                      },
+                      "digest": {
+                        "type": "object",
+                        "properties": {
+                          "algorithm": {
+                            "type": "string",
+                            "const": "SHA256"
+                          },
+                          "value": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$"
+                          }
+                        },
+                        "required": [
+                          "algorithm",
+                          "value"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "byteLength": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "gitMode": {
+                        "type": "string",
+                        "pattern": "^[0-7]{6}$"
+                      },
+                      "isGenerated": {
+                        "type": "boolean"
+                      },
+                      "reason": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "gitMode",
+                      "isGenerated",
+                      "reason"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "importedBy": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                }
+              }
+            },
+            "required": [
+              "path",
+              "content",
+              "importedBy"
+            ],
+            "additionalProperties": false
+          }
+        },
         "canonicalInputs": {
           "type": "array",
           "items": {
@@ -1980,6 +2256,7 @@
         "paths",
         "exclusions",
         "omissions",
+        "referencedSources",
         "canonicalInputs",
         "policies",
         "raceCheck"

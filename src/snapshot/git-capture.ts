@@ -17,6 +17,7 @@ import {
 } from "../contracts/index.js";
 import { canonicalInputList, ReviewRequestSchema } from "../contracts/standards-review.js";
 import { mapWithConcurrencyV1 } from "./concurrency.js";
+import { resolveReferencedPathsV1 } from "./referenced-sources.js";
 import {
   DEFAULT_GIT_COMMAND_TIMEOUT_MS,
   decodeGitText,
@@ -79,6 +80,7 @@ interface CollectedState {
   hasUnstagedChanges: boolean;
   includedUntrackedPaths: string[];
   paths: SnapshotManifestIdentityInputV1["paths"];
+  referencedSources: SnapshotManifestIdentityInputV1["referencedSources"];
   exclusions: SnapshotManifestIdentityInputV1["exclusions"];
   omissions: SnapshotManifestIdentityInputV1["omissions"];
   blobs: Map<string, Uint8Array>;
@@ -315,6 +317,111 @@ function readFailureDetail(error: unknown): string {
   return code
     ? `Unable to read captured content during snapshot capture (${code}).`
     : "Unable to read captured content during snapshot capture.";
+}
+
+/** Ceiling on context captured for one review, so an import graph cannot flood the packet. */
+const MAX_REFERENCED_SOURCE_BYTES_V1 = 128 * 1024;
+
+interface CaptureReferencedSourcesOptionsV1 {
+  repositoryPath: string;
+  revision: string;
+  captureWorkingTree: boolean;
+  maxFileBytes: number;
+  paths: SnapshotManifestIdentityInputV1["paths"];
+  blobs: Map<string, Uint8Array>;
+  omissions: SnapshotManifestIdentityInputV1["omissions"];
+  isExcluded: (path: string) => boolean;
+}
+
+/**
+ * Captures the unchanged files the changed code imports, read-only.
+ *
+ * Without them a reviewer cannot check a call against the contract it targets and either guesses or
+ * stays silent; with them a misuse of a neighbouring function is demonstrable from the change. Only
+ * files the change imports directly are captured: the graph is not followed further, because every
+ * additional hop costs transmitted bytes and buys less.
+ *
+ * A file that cannot be captured is recorded as an omission rather than failing the run, since this
+ * is supplementary context. The reviewer is told what is missing and can leave a rule unassessed.
+ */
+async function captureReferencedSources(
+  options: CaptureReferencedSourcesOptionsV1,
+): Promise<SnapshotManifestIdentityInputV1["referencedSources"]> {
+  const changedPaths = new Set(options.paths.map((entry) => entry.path));
+  const tracked = new Set(
+    decodeGitText(
+      (
+        await runGit(options.repositoryPath, [
+          "ls-tree",
+          "-r",
+          "--name-only",
+          "--full-tree",
+          "-z",
+          options.revision,
+        ])
+      ).stdout,
+    )
+      .split("\0")
+      .filter((entry) => entry.length > 0),
+  );
+
+  const importersByPath = new Map<string, string[]>();
+  for (const entry of options.paths) {
+    const after = "after" in entry ? entry.after : null;
+    if (!after || after.kind !== "TEXT") continue;
+    const bytes = options.blobs.get(after.digest.value);
+    if (!bytes) continue;
+    const source = Buffer.from(bytes).toString("utf8");
+    for (const resolved of resolveReferencedPathsV1(entry.path, source, (candidate: string) =>
+      tracked.has(candidate),
+    )) {
+      if (changedPaths.has(resolved) || options.isExcluded(resolved)) continue;
+      const importers = importersByPath.get(resolved);
+      if (importers) {
+        if (!importers.includes(entry.path)) importers.push(entry.path);
+      } else {
+        importersByPath.set(resolved, [entry.path]);
+      }
+    }
+  }
+
+  const referencedSources: SnapshotManifestIdentityInputV1["referencedSources"] = [];
+  let capturedBytes = 0;
+  for (const [path, importedBy] of importersByPath) {
+    let side: Awaited<ReturnType<typeof captureTreeSide>>;
+    try {
+      side = options.captureWorkingTree
+        ? await captureWorkingSide(options.repositoryPath, path, options.maxFileBytes)
+        : await captureTreeSide(
+            options.repositoryPath,
+            options.revision,
+            path,
+            options.maxFileBytes,
+          );
+    } catch {
+      side = "UNSUPPORTED_KIND";
+    }
+    if (typeof side === "string" || side.content.kind !== "TEXT") {
+      options.omissions.push({
+        scope: path,
+        reason: "OTHER",
+        detail: `Referenced source could not be captured as text (${typeof side === "string" ? side : side.content.kind}).`,
+      });
+      continue;
+    }
+    if (capturedBytes + side.content.byteLength > MAX_REFERENCED_SOURCE_BYTES_V1) {
+      options.omissions.push({
+        scope: path,
+        reason: "OTHER",
+        detail: `Referenced source omitted; the ${MAX_REFERENCED_SOURCE_BYTES_V1}-byte context budget is exhausted.`,
+      });
+      continue;
+    }
+    capturedBytes += side.content.byteLength;
+    options.blobs.set(side.content.digest.value, side.bytes);
+    referencedSources.push({ path, content: side.content, importedBy });
+  }
+  return referencedSources.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
 
 async function captureTreeSide(
@@ -649,6 +756,19 @@ async function collectState(
     }
   }
 
+  const referencedSources = await captureReferencedSources({
+    repositoryPath,
+    revision: headCommit,
+    captureWorkingTree,
+    maxFileBytes,
+    paths,
+    blobs,
+    omissions,
+    isExcluded: (path: string) =>
+      isUnderExcludedPath(path, excludedPaths) ||
+      excludedPatterns.some((pattern) => pattern.test(path)),
+  });
+
   const stableState = {
     branch,
     headCommit: observedHeadCommit,
@@ -656,6 +776,7 @@ async function collectState(
     hasUnstagedChanges: unstagedResult.exitCode === 1,
     includedUntrackedPaths,
     paths,
+    referencedSources,
     exclusions,
     omissions,
   };
@@ -870,6 +991,7 @@ export async function captureGitSnapshotV1(
         includedUntrackedPaths: first.includedUntrackedPaths,
       },
       paths: first.paths,
+      referencedSources: first.referencedSources,
       exclusions: first.exclusions,
       omissions: first.omissions,
       canonicalInputs,

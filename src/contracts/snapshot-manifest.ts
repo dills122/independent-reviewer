@@ -226,6 +226,18 @@ export const SnapshotManifestV1Schema = z
         detail: NonEmptyTextSchema,
       }),
     ),
+    /**
+     * Unchanged files the changed code imports, captured read-only so a call can be judged against
+     * the contract it targets. They are context, never review targets: no coverage is required for
+     * them and a finding may not cite them.
+     */
+    referencedSources: z.array(
+      z.strictObject({
+        path: SnapshotPathV1Schema,
+        content: SnapshotContentV1Schema,
+        importedBy: z.array(SnapshotPathV1Schema).min(1),
+      }),
+    ),
     canonicalInputs: z.array(
       z.strictObject({
         id: CanonicalInputIdSchema,
@@ -248,6 +260,36 @@ export const SnapshotManifestV1Schema = z
         path: ["source", "headCommit"],
       });
     }
+
+    const referencedPaths = manifest.referencedSources.map((source) => source.path);
+    if (new Set(referencedPaths).size !== referencedPaths.length) {
+      context.addIssue({
+        code: "custom",
+        message: "referenced sources must be distinct",
+        path: ["referencedSources"],
+      });
+    }
+    const changedPaths = new Set(manifest.paths.map((path) => path.path));
+    manifest.referencedSources.forEach((source, index) => {
+      // A changed file is already review evidence; capturing it again as context would let it be
+      // read as unchanged and would double its transmitted bytes.
+      if (changedPaths.has(source.path)) {
+        context.addIssue({
+          code: "custom",
+          message: "a changed path cannot also be a referenced source",
+          path: ["referencedSources", index, "path"],
+        });
+      }
+      source.importedBy.forEach((importer, importerIndex) => {
+        if (!changedPaths.has(importer)) {
+          context.addIssue({
+            code: "custom",
+            message: "referenced sources must be imported by a changed path",
+            path: ["referencedSources", index, "importedBy", importerIndex],
+          });
+        }
+      });
+    });
 
     const manifestPaths = manifest.paths.map((path) => path.path);
     if (new Set(manifestPaths).size !== manifestPaths.length) {

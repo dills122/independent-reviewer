@@ -21,35 +21,41 @@ example of the rule doing its job — a name and a body that disagree.
 Same run policy as the [routing batch](2026-09-10-availability-routing-e2e.md):
 every run completed, no provider failures, no retries.
 
-## The gap this exposed
+## The gap this exposed, and its fix
 
-The `system` case behaved as specified — cross-module behaviour is out of scope,
-so no finding was raised. But the report reads **Standards satisfied** with
+The `system` case behaved as specified — cross-module behaviour was out of scope,
+so no finding was raised. But the report read **Standards satisfied** with
 `rule_local_correctness: ASSESSED` and no limitations, on code that overcharges
-tax eightfold. The model's own explanation says it assessed the rule "based
-solely on the changed code", which is exactly what the policy asks of it.
+tax eightfold. The rule text promised judgement over "the changed code together
+with the declarations it cites"; capture froze changed paths only, so the second
+half was never delivered.
 
-The rule text promises judgement over "the changed code together with the
-declarations it cites". The evidence packet does not deliver the second half:
-only changed paths are captured, so an imported signature and its doc comment are
-invisible and the reviewer cannot check a call against the contract it targets.
+[ADR-007](../decisions/007-capture-cited-declarations.md) captures the unchanged
+files a change imports, read-only, at depth one. Re-running the same fixtures
+with policy v6:
 
-Recording every unseen import as a limitation is not a usable fix.
-`validateReportStructure` makes any limitation block both ready verdicts, so a
-review of ordinary code that imports anything would return UNABLE_TO_VERIFY.
+| Fixture | Referenced context | Result |
+| --- | --- | --- |
+| `system` — passes `STORE_TAX_PERCENT = 8` to a 0.0-1.0 `rate` | `src/tax.ts`, `src/cart.ts` | Changes requested; REQUIRED, cites `src/checkout.ts:7-9` only, "returns 9000 cents rather than 1080" |
+| `clean3` — same imports, passes `STORE_TAX_PERCENT / 100` | `src/tax.ts`, `src/cart.ts` | Standards satisfied, no findings |
 
-Unresolved. Options are recorded for decision, not chosen here:
+The finding anchors to the call site in changed code and cites no referenced
+path, which is the intended boundary: referenced sources inform the judgement and
+are never themselves reviewed.
 
-1. Leave the boundary and make the standing scope note carry the warning
-   (implemented in the report footer; no evidence change).
-2. Capture the declarations — signature plus doc comment — of symbols the changed
-   code imports from unchanged files, making the promised boundary real.
-3. Treat an unverifiable cross-module call as an evidence gap rather than a
-   limitation, if evidence gaps can be made not to block a ready verdict.
+Cost rose with the larger prompt, from $0.0005-$0.0010 to $0.0009-$0.0027 per
+review on these fixtures.
 
 ## What this does not establish
 
-One fixture per case, one model, one small diff. A four-case pass measures that
+One fixture per case, one model, one small diff. A six-case pass measures that
 the rule fires and does not fire where intended on these examples; it does not
 measure false-positive rate on real changes, and the `clean` case shows how
 easily an intended control turns out to contain a real defect.
+
+Referenced-source capture is unmeasured on a real import graph. These fixtures
+import two small files; a change importing a barrel file or a large module will
+pull far more, and the 128 KB capture ceiling and shared evidence budget have not
+been exercised against one. Import extraction is a regular expression that does
+not strip comments or string literals, so a commented-out import will still pull
+its file in.
