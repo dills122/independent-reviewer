@@ -131,7 +131,14 @@ Persist artifacts locally under a configured private run directory, excluded fro
 
 ## OpenRouter integration
 
-Use an explicit configured model ID. Do not choose an automatic model router for the first release. Select supported models based on tool calling, structured output support, context capacity, and evaluation results. Model choice stays configurable; no named model is selected by this plan.
+Use an explicit configured model ID. Do not choose an automatic model router for
+the first release. Select supported and preferred models separately, based on
+structured-output support, context and output capacity, privacy-compatible
+endpoint diversity, conservative cost admission, coding-review quality, and live
+protocol evaluation. Support means that the protocol accepts a configuration;
+it is not a reliability or quality recommendation. Model choice stays
+configurable. Current evaluation tiers and promotion gates are recorded in the
+[model-selection review](research/2026-09-10-review-model-selection.md).
 
 The adapter uses non-streaming Chat Completions for the preliminary stage and
 guarded streaming for the final stage, with a local authoritative message ledger.

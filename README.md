@@ -68,13 +68,17 @@ Skip initialization by passing `--standards`, `--author` and `--config` directly
 to `review`. The [example profile](examples/standards.javascript-typescript.json)
 contains advisory JavaScript/TypeScript rules; select or customize rules to match
 your project. The [GPT-OSS 120B example config](examples/review-config.gpt-oss-120b.json)
-uses an 8,192-token output allowance, validated in the targeted standards runs,
-while retaining its 160,000 total-token and $0.02 per-review limits.
-Use that CoreWeave/DeepInfra configuration for the current standards pilot. The
-pinned BaseTen example remains available for diagnosis, but repeatedly rejected
-standards final calls with 529 in our [targeted route check](docs/validation/2026-09-09-standards-provider-reliability.md).
-This is an observed route limitation, not a guarantee about future availability. Run dry-run
-with your actual scope to check admission; the allowance is not a completion guarantee. Profile fields are defined by
+uses an 8,192-token output allowance while retaining its 160,000 total-token and
+$0.02 per-review limits. It remains a supported compatibility and diagnostic
+configuration, but is not preferred: live validation found final-stage capacity
+errors, invalid or truncated output, and runaway whitespace. The pinned BaseTen
+example is diagnostic-only after repeated 529 responses in our
+[targeted route check](docs/validation/2026-09-09-standards-provider-reliability.md).
+Current qualification work focuses on fixed DeepSeek V4 Flash 0731 and GLM 5.3
+Flash model IDs; neither becomes preferred until it passes the gates in the
+[model-selection review](docs/research/2026-09-10-review-model-selection.md).
+Run dry-run with your actual scope to check admission; the allowance is not a
+completion guarantee. Profile fields are defined by
 [standards-profile-v1](schemas/standards-profile-v1.schema.json). Rule IDs must be
 unique across selected definitions. `paths` are repository-relative Node glob
 patterns; paths with no applicable rule remain visibly unassessed. Duplicate
