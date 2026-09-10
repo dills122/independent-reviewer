@@ -41,8 +41,27 @@ Deterministic snapshot and blind-brief identities are accepted in
 Standards mode reviews code quality against selected rules, preserving the
 independent first assessment and separate author reconciliation. Supply a
 standards profile and an author/agent overview upfront. A business requirements
-document or implementation plan is not needed. Bug hunting, fuzzing and test
-execution are outside this mode.
+document or implementation plan is not needed.
+
+Scope is the selected rules plus local correctness: a defect the reviewer can
+demonstrate from the changed code and the declarations it cites, by naming a
+concrete input and the wrong result it produces. Wrong arithmetic, an inverted
+or off-by-one condition, an ignored parameter, a documented range the code does
+not honour, and an unreachable branch all qualify. Behaviour that depends on
+other modules, callers, concurrency, deployment, external services or runtime
+state is out of scope and is not reported. Fuzzing, executing tests and
+measuring performance remain out of scope.
+
+To make that boundary real, capture also freezes the unchanged TypeScript and
+JavaScript files the changed code imports directly, read-only, so a call can be
+checked against the contract it targets. They are context, not review targets:
+no coverage is owed for them and findings still cite changed code. Capture stops
+at 128 KB of such context per snapshot and transmission drops it before dropping
+the change itself; anything dropped is declared so the reviewer marks the
+affected rule unassessed instead of assuming the call is correct. See
+[ADR-007](docs/decisions/007-capture-cited-declarations.md). Local correctness is carried by the
+`rule_local_correctness` rule in the example profile, so a project that does not
+want it simply omits the rule.
 
 Build with `npm ci` and `npm run build`. Using paths to your own repository,
 selected review config, profile and overview:
@@ -68,18 +87,19 @@ Skip initialization by passing `--standards`, `--author` and `--config` directly
 to `review`. The [example profile](examples/standards.javascript-typescript.json)
 contains advisory JavaScript/TypeScript rules; select or customize rules to match
 your project. The [GPT-OSS 120B example config](examples/review-config.gpt-oss-120b.json)
-uses an 8,192-token output allowance while retaining its 160,000 total-token and
-$0.02 per-review limits. It remains a supported compatibility and diagnostic
-configuration, but is not preferred: live validation found final-stage capacity
-errors, invalid or truncated output, and runaway whitespace. The pinned BaseTen
-example is diagnostic-only after repeated 529 responses in our
-[targeted route check](docs/validation/2026-09-09-standards-provider-reliability.md).
-GPT-OSS 120B on AkashML remains a supported budget route, but is not preferred
-after its initial qualification produced a shared-pool 429 and then an empty
-final stream. Current qualification moves to Kimi K2.5 as the directly benchmarked
-value challenger. GPT-5.2 and Claude Opus 4.6 are premium quality controls. None
-becomes preferred until it passes the gates in the
+is the budget baseline: a 16,384-token output allowance, a 240,000 total-token
+and $0.20 per-review ceiling, open provider routing with CoreWeave and DeepInfra
+preferred, and GLM 5.3 Flash then DeepSeek V4 Flash as fallback models.
+The [pinned example](examples/review-config.pinned-endpoint.json) shows the
+diagnostic shape — one endpoint, no failover, both privacy filters on — and is
+not how an ordinary review should run.
+Kimi K2.5 remains the directly benchmarked value challenger, with GPT-5.2 and
+Claude Opus 4.6 as premium quality controls; none becomes preferred until it
+passes the gates in the
 [model-selection review](docs/research/2026-09-10-review-model-selection.md).
+Earlier live failures attributed to those routes are re-read in
+[ADR-006](docs/decisions/006-route-for-availability-not-pinning.md): most were
+caused by the product disabling its own failover, not by the endpoints.
 Run dry-run with your actual scope to check admission; the allowance is not a
 completion guarantee. Profile fields are defined by
 [standards-profile-v1](schemas/standards-profile-v1.schema.json). Rule IDs must be
@@ -96,7 +116,8 @@ its content is delivered only in call two. Edited author artifacts fail inspecti
 Progress goes to stderr; `--quiet` suppresses it. The summary shows required or
 recommended changes, rule IDs, locations and corrections. The full Markdown
 report retains rule sources and reconciliation details. A passing standards
-review is not a claim of bug-free code or deployment readiness. Cost output
+review is not a claim of bug-free code, system correctness, or deployment
+readiness; cross-module behaviour is outside what it checks. Cost output
 separates provider-reported amounts from missing telemetry.
 
 Convenience-mode runs reserve one of three instances in a Git-local flow only
@@ -174,13 +195,24 @@ node dist/src/cli.js review \
 ```
 
 The review config schema is
-[`schemas/review-run-config-v2.schema.json`](schemas/review-run-config-v2.schema.json),
-which the runtime requires: `schemaVersion: 2`, a `providerRouting` block, and
+[`schemas/review-run-config-v3.schema.json`](schemas/review-run-config-v3.schema.json),
+which the runtime requires: `schemaVersion: 3`, a `providerRouting` block, and
 budgets including the local spend ceiling `maxTotalCostUsd`.
-`providerRouting.order` accepts one to three distinct endpoint slugs. One entry
-pins the route and disables provider fallback; two or three permit same-model
-fallback only within that list. A preferred first entry is not a pinned route.
-Privacy, structured-output requirements, and price ceilings apply in both modes.
+
+Routing defaults to availability. `providerRouting.order` is an optional
+preference of up to eight endpoint slugs, and OpenRouter may still route
+elsewhere; set `pinToOrder` to restrict routing to that list and disable provider
+failover, which is a diagnostic setting rather than a normal one. `zeroDataRetention`
+and `denyDataCollection` each narrow the eligible endpoint pool and are off unless
+a run opts in. `maxPrice` is always sent and is also the ceiling the local
+reservation arithmetic assumes, so set it as a true ceiling rather than at the
+cheapest available rate; a tight value quietly shrinks the pool.
+`fallbackModels` lists up to four alternate models, sent as OpenRouter's model
+fallback chain, and a response from any permitted model is accepted. Structured
+output is always required of the serving endpoint.
+`budgets.maxAttemptsPerCall` (default 3) bounds attempts for one logical call,
+and `budgets.minimumCallIntervalMs` (default 1500) spaces calls sharing a model
+so a batch stays under the account burst limit.
 The command prints the final report path. The adjacent `run-record.jsonl`
 records prompt/schema and provider-policy versions, stage-input and
 credential-free wire-request digests, exact wire-body digest and byte count,

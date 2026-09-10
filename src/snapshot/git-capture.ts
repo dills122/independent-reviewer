@@ -18,6 +18,13 @@ import {
 import { canonicalInputList, ReviewRequestSchema } from "../contracts/standards-review.js";
 import { mapWithConcurrencyV1 } from "./concurrency.js";
 import {
+  classifyPathV1,
+  isReviewableRoleV1,
+  type PathGitAttributesV1,
+  type PathRoleV1,
+} from "./path-classification.js";
+import { resolveReferencedPathsV1 } from "./referenced-sources.js";
+import {
   DEFAULT_GIT_COMMAND_TIMEOUT_MS,
   decodeGitText,
   decodeNulFields,
@@ -45,6 +52,8 @@ export interface CaptureGitSnapshotOptionsV1 {
   excludedFileSystemPaths?: string[];
   /** Caller-supplied glob patterns, matched against repository-relative paths. */
   excludedPathPatterns?: string[];
+  /** Forces a role for specific repository-relative paths, outranking every detection signal. */
+  pathRoleOverrides?: ReadonlyMap<string, PathRoleV1>;
   maxAttempts?: number;
   maxFileBytes?: number;
 }
@@ -79,12 +88,16 @@ interface CollectedState {
   hasUnstagedChanges: boolean;
   includedUntrackedPaths: string[];
   paths: SnapshotManifestIdentityInputV1["paths"];
+  roles: ReadonlyMap<string, PathRoleV1>;
+  referencedSources: SnapshotManifestIdentityInputV1["referencedSources"];
   exclusions: SnapshotManifestIdentityInputV1["exclusions"];
   omissions: SnapshotManifestIdentityInputV1["omissions"];
   blobs: Map<string, Uint8Array>;
   stateDigest: DigestV1;
 }
 
+/** Paths per `git check-attr` invocation, bounded by the platform argument limit. */
+const GIT_ATTRIBUTE_BATCH_V1 = 200;
 const DEFAULT_MAX_FILE_BYTES = 512 * 1024;
 const DEFAULT_MAX_ATTEMPTS = 2;
 
@@ -317,6 +330,158 @@ function readFailureDetail(error: unknown): string {
     : "Unable to read captured content during snapshot capture.";
 }
 
+/** Ceiling on context captured for one review, so an import graph cannot flood the packet. */
+const MAX_REFERENCED_SOURCE_BYTES_V1 = 128 * 1024;
+
+interface CaptureReferencedSourcesOptionsV1 {
+  repositoryPath: string;
+  revision: string;
+  captureWorkingTree: boolean;
+  maxFileBytes: number;
+  paths: SnapshotManifestIdentityInputV1["paths"];
+  blobs: Map<string, Uint8Array>;
+  omissions: SnapshotManifestIdentityInputV1["omissions"];
+  isExcluded: (path: string) => boolean;
+}
+
+/**
+ * Captures the unchanged files the changed code imports, read-only.
+ *
+ * Without them a reviewer cannot check a call against the contract it targets and either guesses or
+ * stays silent; with them a misuse of a neighbouring function is demonstrable from the change. Only
+ * files the change imports directly are captured: the graph is not followed further, because every
+ * additional hop costs transmitted bytes and buys less.
+ *
+ * A file that cannot be captured is recorded as an omission rather than failing the run, since this
+ * is supplementary context. The reviewer is told what is missing and can leave a rule unassessed.
+ */
+async function captureReferencedSources(
+  options: CaptureReferencedSourcesOptionsV1,
+): Promise<SnapshotManifestIdentityInputV1["referencedSources"]> {
+  const changedPaths = new Set(options.paths.map((entry) => entry.path));
+  const tracked = new Set(
+    decodeGitText(
+      (
+        await runGit(options.repositoryPath, [
+          "ls-tree",
+          "-r",
+          "--name-only",
+          "--full-tree",
+          "-z",
+          options.revision,
+        ])
+      ).stdout,
+    )
+      .split("\0")
+      .filter((entry) => entry.length > 0),
+  );
+
+  const importersByPath = new Map<string, string[]>();
+  for (const entry of options.paths) {
+    const after = "after" in entry ? entry.after : null;
+    if (!after || after.kind !== "TEXT") continue;
+    const bytes = options.blobs.get(after.digest.value);
+    if (!bytes) continue;
+    const source = Buffer.from(bytes).toString("utf8");
+    for (const resolved of resolveReferencedPathsV1(entry.path, source, (candidate: string) =>
+      tracked.has(candidate),
+    )) {
+      if (changedPaths.has(resolved) || options.isExcluded(resolved)) continue;
+      const importers = importersByPath.get(resolved);
+      if (importers) {
+        if (!importers.includes(entry.path)) importers.push(entry.path);
+      } else {
+        importersByPath.set(resolved, [entry.path]);
+      }
+    }
+  }
+
+  const referencedSources: SnapshotManifestIdentityInputV1["referencedSources"] = [];
+  let capturedBytes = 0;
+  for (const [path, importedBy] of importersByPath) {
+    let side: Awaited<ReturnType<typeof captureTreeSide>>;
+    try {
+      side = options.captureWorkingTree
+        ? await captureWorkingSide(options.repositoryPath, path, options.maxFileBytes)
+        : await captureTreeSide(
+            options.repositoryPath,
+            options.revision,
+            path,
+            options.maxFileBytes,
+          );
+    } catch {
+      side = "UNSUPPORTED_KIND";
+    }
+    if (typeof side === "string" || side.content.kind !== "TEXT") {
+      options.omissions.push({
+        scope: path,
+        reason: "OTHER",
+        detail: `Referenced source could not be captured as text (${typeof side === "string" ? side : side.content.kind}).`,
+      });
+      continue;
+    }
+    if (capturedBytes + side.content.byteLength > MAX_REFERENCED_SOURCE_BYTES_V1) {
+      options.omissions.push({
+        scope: path,
+        reason: "OTHER",
+        detail: `Referenced source omitted; the ${MAX_REFERENCED_SOURCE_BYTES_V1}-byte context budget is exhausted.`,
+      });
+      continue;
+    }
+    capturedBytes += side.content.byteLength;
+    options.blobs.set(side.content.digest.value, side.bytes);
+    referencedSources.push({ path, content: side.content, importedBy });
+  }
+  return referencedSources.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+}
+
+/**
+ * Resolves the project's own `.gitattributes` answers for a batch of paths.
+ *
+ * `git check-attr` is the only correct reader of the attribute stack: it applies the repository
+ * root file, nested directory files, and the user's global configuration in the right order. A
+ * failure degrades to no attributes, which leaves classification to the heuristics.
+ */
+async function resolveGitAttributesV1(
+  repositoryPath: string,
+  paths: readonly string[],
+): Promise<Map<string, PathGitAttributesV1>> {
+  const resolved = new Map<string, PathGitAttributesV1>();
+  // Paths go as arguments rather than on stdin, so this needs no change to the shared Git runner.
+  // Chunking keeps a large changeset inside the platform argument limit.
+  for (let start = 0; start < paths.length; start += GIT_ATTRIBUTE_BATCH_V1) {
+    const batch = paths.slice(start, start + GIT_ATTRIBUTE_BATCH_V1);
+    let stdout: Uint8Array;
+    try {
+      const result = await runGit(repositoryPath, [
+        "check-attr",
+        "-z",
+        "linguist-generated",
+        "linguist-vendored",
+        "linguist-documentation",
+        "--",
+        ...batch,
+      ]);
+      stdout = result.stdout;
+    } catch {
+      continue;
+    }
+    // Records are NUL-separated triples of path, attribute, value.
+    const fields = decodeGitText(stdout).split("\0");
+    for (let index = 0; index + 2 < fields.length; index += 3) {
+      const path = fields[index] as string;
+      const attribute = fields[index + 1] as string;
+      if (fields[index + 2] !== "set" && fields[index + 2] !== "true") continue;
+      const entry = resolved.get(path) ?? {};
+      if (attribute === "linguist-generated") entry.generated = true;
+      if (attribute === "linguist-vendored") entry.vendored = true;
+      if (attribute === "linguist-documentation") entry.documentation = true;
+      resolved.set(path, entry);
+    }
+  }
+  return resolved;
+}
+
 async function captureTreeSide(
   repositoryPath: string,
   revision: string,
@@ -465,6 +630,7 @@ async function collectState(
   maxFileBytes: number,
   excludedPaths: ReadonlySet<string>,
   excludedPatterns: readonly RegExp[],
+  roleOverrides: ReadonlyMap<string, PathRoleV1>,
 ): Promise<CollectedState> {
   const observedHeadCommit = captureWorkingTree
     ? await gitText(repositoryPath, ["rev-parse", "--verify", "HEAD^{commit}"])
@@ -493,6 +659,11 @@ async function collectState(
   const omissions: SnapshotManifestIdentityInputV1["omissions"] = [];
   const blobs = new Map<string, Uint8Array>();
   const includedUntrackedPaths: string[] = [];
+  const roles = new Map<string, PathRoleV1>();
+  const attributes = await resolveGitAttributesV1(
+    repositoryPath,
+    specs.map((spec) => spec.path),
+  );
 
   for (const spec of specs) {
     const relevantPaths = spec.previousPath ? [spec.previousPath, spec.path] : [spec.path];
@@ -573,6 +744,30 @@ async function collectState(
       });
       continue;
     }
+    // Classification runs after the content scans so a credential is always reported as a secret
+    // rather than as an unreviewable path, and so the generated-marker check can see real bytes.
+    // A path nobody can review is not evidence: dropping it here keeps a lockfile or a generated
+    // bundle out of the packet entirely, instead of spending the transmission budget on content no
+    // rule can act on and then reporting it as missing coverage.
+    const pathAttributes = attributes.get(spec.path);
+    const capturedBytes = [after, before].find(
+      (side): side is CapturedSide => typeof side === "object" && side !== null,
+    )?.bytes;
+    const declaredRole = classifyPathV1(spec.path, {
+      ...(pathAttributes ? { attributes: pathAttributes } : {}),
+      ...(capturedBytes ? { bytes: capturedBytes } : {}),
+      overrides: roleOverrides,
+    });
+    if (!isReviewableRoleV1(declaredRole)) {
+      exclusions.push({
+        path: spec.path,
+        reason: declaredRole === "GENERATED" ? "GENERATED_POLICY" : "PATH_POLICY",
+        detail: `Classified ${declaredRole}; not review evidence.`,
+      });
+      continue;
+    }
+    roles.set(spec.path, declaredRole);
+
     const unavailable =
       before === "SIZE_LIMIT" || after === "SIZE_LIMIT"
         ? "SIZE_LIMIT"
@@ -613,6 +808,7 @@ async function collectState(
       }
       paths.push({
         path: spec.path,
+        role: declaredRole,
         changeType: spec.changeType,
         before: null,
         after: after.content,
@@ -624,13 +820,20 @@ async function collectState(
       if (!before) {
         throw new CaptureInvariantError("deleted path has no captured before state");
       }
-      paths.push({ path: spec.path, changeType: "DELETED", before: before.content, after: null });
+      paths.push({
+        path: spec.path,
+        role: declaredRole,
+        changeType: "DELETED",
+        before: before.content,
+        after: null,
+      });
     } else if (spec.changeType === "RENAMED" || spec.changeType === "COPIED") {
       if (!before || !after || !spec.previousPath) {
         throw new CaptureInvariantError("relocated path has incomplete captured states");
       }
       paths.push({
         path: spec.path,
+        role: declaredRole,
         previousPath: spec.previousPath,
         changeType: spec.changeType,
         before: before.content,
@@ -642,12 +845,26 @@ async function collectState(
       }
       paths.push({
         path: spec.path,
+        role: declaredRole,
         changeType: spec.changeType,
         before: before.content,
         after: after.content,
       });
     }
   }
+
+  const referencedSources = await captureReferencedSources({
+    repositoryPath,
+    revision: headCommit,
+    captureWorkingTree,
+    maxFileBytes,
+    paths,
+    blobs,
+    omissions,
+    isExcluded: (path: string) =>
+      isUnderExcludedPath(path, excludedPaths) ||
+      excludedPatterns.some((pattern) => pattern.test(path)),
+  });
 
   const stableState = {
     branch,
@@ -656,11 +873,13 @@ async function collectState(
     hasUnstagedChanges: unstagedResult.exitCode === 1,
     includedUntrackedPaths,
     paths,
+    referencedSources,
     exclusions,
     omissions,
   };
   return {
     ...stableState,
+    roles,
     blobs,
     stateDigest: digestCanonicalJson(stableState),
   };
@@ -812,6 +1031,7 @@ export async function captureGitSnapshotV1(
   );
 
   const excludedPatterns = compileExclusionPatterns(options.excludedPathPatterns ?? []);
+  const roleOverrides = options.pathRoleOverrides ?? new Map<string, PathRoleV1>();
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const first = await collectState(
@@ -823,6 +1043,7 @@ export async function captureGitSnapshotV1(
       maxFileBytes,
       excludedPaths,
       excludedPatterns,
+      roleOverrides,
     );
     const second = await collectState(
       repositoryPath,
@@ -833,6 +1054,7 @@ export async function captureGitSnapshotV1(
       maxFileBytes,
       excludedPaths,
       excludedPatterns,
+      roleOverrides,
     );
     if (first.stateDigest.value !== second.stateDigest.value) {
       continue;
@@ -870,6 +1092,7 @@ export async function captureGitSnapshotV1(
         includedUntrackedPaths: first.includedUntrackedPaths,
       },
       paths: first.paths,
+      referencedSources: first.referencedSources,
       exclusions: first.exclusions,
       omissions: first.omissions,
       canonicalInputs,

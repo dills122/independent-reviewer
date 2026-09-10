@@ -84,6 +84,18 @@ const NeutralReviewBriefBaseV1Schema = z.strictObject({
   canonicalInputs: PersistedCanonicalInputsV1Schema,
   snapshotManifest: SnapshotManifestV1Schema,
   initialEvidence: z.array(InitialEvidenceV1Schema),
+  /**
+   * Read-only source of unchanged files the changed code imports, so a call can be checked against
+   * the contract it targets. These are not review targets: they need no coverage and a finding may
+   * not cite them, because the defect lives at the call site, not in the file being called.
+   */
+  referencedSources: z.array(
+    z.strictObject({
+      path: SnapshotPathV1Schema,
+      importedBy: z.array(SnapshotPathV1Schema).min(1),
+      content: NonEmptyTextSchema,
+    }),
+  ),
   coverageConstraints: z.array(
     z.strictObject({
       type: z.enum(["EXCLUDED_PATH", "OMITTED_CONTENT", "UNSUPPORTED_CONTENT", "EVIDENCE_BUDGET"]),
@@ -146,6 +158,31 @@ function validateBrief(
       "previousPath" in entry ? [entry.path, entry.previousPath] : [entry.path],
     ),
   );
+  const referencedPaths = brief.referencedSources.map((source) => source.path);
+  if (new Set(referencedPaths).size !== referencedPaths.length) {
+    context.addIssue({
+      code: "custom",
+      message: "referenced sources must be distinct",
+      path: ["referencedSources"],
+    });
+  }
+  brief.referencedSources.forEach((source, index) => {
+    if (!brief.snapshotManifest.referencedSources.some((entry) => entry.path === source.path)) {
+      context.addIssue({
+        code: "custom",
+        message: "referenced source must be captured in the snapshot manifest",
+        path: ["referencedSources", index, "path"],
+      });
+    }
+    if (manifestPaths.has(source.path)) {
+      context.addIssue({
+        code: "custom",
+        message: "a changed path cannot also be transmitted as referenced context",
+        path: ["referencedSources", index, "path"],
+      });
+    }
+  });
+
   const evidenceIds = brief.initialEvidence.map((evidence) => evidence.evidenceId);
   if (new Set(evidenceIds).size !== evidenceIds.length) {
     context.addIssue({

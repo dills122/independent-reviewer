@@ -70,17 +70,21 @@ function contentRecords(manifest: SnapshotManifestV1): Array<{
   byteLength: number;
 }> {
   const records = new Map<string, number>();
-  for (const entry of manifest.paths) {
-    for (const content of [entry.before, entry.after]) {
-      if (!content?.digest || content.byteLength === undefined) {
-        continue;
-      }
-      const priorLength = records.get(content.digest.value);
-      if (priorLength !== undefined && priorLength !== content.byteLength) {
-        throw new Error("Snapshot reuses a content digest with conflicting byte lengths.");
-      }
-      records.set(content.digest.value, content.byteLength);
+  const contents = [
+    ...manifest.paths.flatMap((entry) => [entry.before, entry.after]),
+    // Referenced context is stored and verified exactly like changed content; leaving it out here
+    // would write a manifest naming blobs the packet does not contain.
+    ...manifest.referencedSources.map((source) => source.content),
+  ];
+  for (const content of contents) {
+    if (!content?.digest || content.byteLength === undefined) {
+      continue;
     }
+    const priorLength = records.get(content.digest.value);
+    if (priorLength !== undefined && priorLength !== content.byteLength) {
+      throw new Error("Snapshot reuses a content digest with conflicting byte lengths.");
+    }
+    records.set(content.digest.value, content.byteLength);
   }
   return [...records].map(([digest, byteLength]) => ({ digest, byteLength }));
 }

@@ -1,12 +1,12 @@
 {
-  "$id": "urn:independent-reviewer:schema:review-run-config:v2",
+  "$id": "urn:independent-reviewer:schema:review-run-config:v3",
   "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "schemaVersion": {
       "type": "number",
-      "const": 2
+      "const": 3
     },
     "configId": {
       "type": "string",
@@ -19,12 +19,22 @@
       "minLength": 1,
       "maxLength": 256
     },
+    "fallbackModels": {
+      "default": [],
+      "maxItems": 4,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      }
+    },
     "providerRouting": {
       "type": "object",
       "properties": {
         "order": {
           "minItems": 1,
-          "maxItems": 3,
+          "maxItems": 8,
           "type": "array",
           "items": {
             "type": "string",
@@ -32,6 +42,18 @@
             "maxLength": 128,
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
           }
+        },
+        "pinToOrder": {
+          "default": false,
+          "type": "boolean"
+        },
+        "zeroDataRetention": {
+          "default": false,
+          "type": "boolean"
+        },
+        "denyDataCollection": {
+          "default": false,
+          "type": "boolean"
         },
         "maxPrice": {
           "type": "object",
@@ -61,7 +83,6 @@
         }
       },
       "required": [
-        "order",
         "maxPrice"
       ],
       "additionalProperties": false
@@ -97,7 +118,19 @@
         "timeoutMs": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 300000
+          "maximum": 600000
+        },
+        "maxAttemptsPerCall": {
+          "default": 3,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "minimumCallIntervalMs": {
+          "default": 1500,
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60000
         }
       },
       "required": [

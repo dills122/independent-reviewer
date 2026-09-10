@@ -3,15 +3,16 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { describe, it } from "node:test";
 
-import { REVIEW_RUN_CONFIG_V2_JSON_SCHEMA, ReviewRunConfigV2Schema } from "../../src/index.js";
+import { REVIEW_RUN_CONFIG_V3_JSON_SCHEMA, ReviewRunConfigV3Schema } from "../../src/index.js";
 
 const validConfig = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   configId: "config_local",
   model: "vendor/model",
+  fallbackModels: ["vendor/fallback-model"],
   providerRouting: {
     order: ["provider-a/fp4", "provider-b/bf16"],
-    maxPrice: { prompt: 0.03, completion: 0.14, request: 0 },
+    maxPrice: { prompt: 0.5, completion: 1.5, request: 0 },
   },
   budgets: {
     maxInitialEvidenceBytes: 250_000,
@@ -20,43 +21,74 @@ const validConfig = {
     maxTotalTokens: 20_000,
     maxTotalCostUsd: 1,
     timeoutMs: 120_000,
+    maxAttemptsPerCall: 3,
+    minimumCallIntervalMs: 1_500,
   },
 };
 
 describe("review run configuration schemas", () => {
   it("accepts a bounded two-call configuration", () => {
-    assert.equal(ReviewRunConfigV2Schema.safeParse(validConfig).success, true);
+    assert.equal(ReviewRunConfigV3Schema.safeParse(validConfig).success, true);
   });
 
   it("requires enough total capacity to reserve both mandatory outputs", () => {
     const invalid = structuredClone(validConfig);
     invalid.budgets.maxTotalTokens = 7_999;
 
-    assert.equal(ReviewRunConfigV2Schema.safeParse(invalid).success, false);
+    assert.equal(ReviewRunConfigV3Schema.safeParse(invalid).success, false);
   });
 
-  it("accepts a pinned endpoint but rejects empty or duplicate routes and unbounded prices", () => {
+  it("defaults to open routing with failover and a paced call interval", () => {
+    const openRouting = structuredClone(validConfig) as Record<string, unknown>;
+    delete (openRouting.providerRouting as { order?: unknown }).order;
+    const parsed = ReviewRunConfigV3Schema.safeParse(openRouting);
+    assert.equal(parsed.success, true);
+    assert.equal(parsed.data?.providerRouting.pinToOrder, false);
+    assert.equal(parsed.data?.providerRouting.zeroDataRetention, false);
+    assert.equal(parsed.data?.providerRouting.denyDataCollection, false);
+    assert.equal(parsed.data?.budgets.maxAttemptsPerCall, 3);
+  });
+
+  it("rejects a duplicated or aliased model in the fallback chain", () => {
+    const duplicateModel = structuredClone(validConfig);
+    duplicateModel.fallbackModels = ["vendor/model"];
+    assert.equal(ReviewRunConfigV3Schema.safeParse(duplicateModel).success, false);
+
+    const aliased = structuredClone(validConfig);
+    aliased.fallbackModels = ["vendor/model:latest"];
+    assert.equal(ReviewRunConfigV3Schema.safeParse(aliased).success, false);
+  });
+
+  it("requires an explicit order before a run may pin away its failover", () => {
+    const pinnedWithoutOrder = structuredClone(validConfig) as Record<string, unknown>;
+    const routing = pinnedWithoutOrder.providerRouting as Record<string, unknown>;
+    delete routing.order;
+    routing.pinToOrder = true;
+    assert.equal(ReviewRunConfigV3Schema.safeParse(pinnedWithoutOrder).success, false);
+  });
+
+  it("rejects empty or duplicate routes and unbounded prices", () => {
     const oneEndpoint = structuredClone(validConfig);
     oneEndpoint.providerRouting.order = ["provider-a/fp4"];
-    assert.equal(ReviewRunConfigV2Schema.safeParse(oneEndpoint).success, true);
+    assert.equal(ReviewRunConfigV3Schema.safeParse(oneEndpoint).success, true);
     const empty = structuredClone(validConfig);
     empty.providerRouting.order = [];
-    assert.equal(ReviewRunConfigV2Schema.safeParse(empty).success, false);
+    assert.equal(ReviewRunConfigV3Schema.safeParse(empty).success, false);
 
     const duplicateEndpoint = structuredClone(validConfig);
     duplicateEndpoint.providerRouting.order = ["provider-a/fp4", "provider-a/fp4"];
-    assert.equal(ReviewRunConfigV2Schema.safeParse(duplicateEndpoint).success, false);
+    assert.equal(ReviewRunConfigV3Schema.safeParse(duplicateEndpoint).success, false);
 
     const unboundedPrice = structuredClone(validConfig);
     unboundedPrice.providerRouting.maxPrice.completion = Number.POSITIVE_INFINITY;
-    assert.equal(ReviewRunConfigV2Schema.safeParse(unboundedPrice).success, false);
+    assert.equal(ReviewRunConfigV3Schema.safeParse(unboundedPrice).success, false);
   });
 
   it("matches the committed JSON Schema artifact", async () => {
-    const v2Schema = JSON.parse(
-      await readFile(resolve("schemas", "review-run-config-v2.schema.json"), "utf8"),
+    const v3Schema = JSON.parse(
+      await readFile(resolve("schemas", "review-run-config-v3.schema.json"), "utf8"),
     );
 
-    assert.deepEqual(v2Schema, REVIEW_RUN_CONFIG_V2_JSON_SCHEMA);
+    assert.deepEqual(v3Schema, REVIEW_RUN_CONFIG_V3_JSON_SCHEMA);
   });
 });

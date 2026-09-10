@@ -5,7 +5,7 @@ import * as z from "zod";
 import { jsonDocument } from "../contracts/json-document.js";
 import { NonEmptyTextSchema } from "../contracts/primitives.js";
 import { FlowIdSchema } from "../contracts/review-request.js";
-import { ReviewRunConfigV2Schema } from "../contracts/review-run-config.js";
+import { ReviewRunConfigV3Schema } from "../contracts/review-run-config.js";
 import {
   ReviewAuthorSchema,
   StandardsProfileV1Schema,
@@ -53,7 +53,7 @@ export async function saveLocalSettings(options: Options): Promise<string> {
     }),
   );
   const settings = LocalReviewSettingsV1Schema.parse({ schemaVersion: 1, ...paths });
-  ReviewRunConfigV2Schema.parse(JSON.parse(await readFile(settings.config, "utf8")));
+  ReviewRunConfigV3Schema.parse(JSON.parse(await readFile(settings.config, "utf8")));
   StandardsProfileV1Schema.parse(JSON.parse(await readFile(settings.standards, "utf8")));
   await readAuthor(settings.author);
   const directory = await localReviewDirectory(repo);
@@ -88,7 +88,7 @@ export async function assembleStandardsRequest(options: Options) {
     JSON.parse(await readFile(resolve(standardPath), "utf8")),
   );
   const author = await readAuthor(resolve(authorPath));
-  const config = ReviewRunConfigV2Schema.parse(
+  const config = ReviewRunConfigV3Schema.parse(
     JSON.parse(await readFile(resolve(configPath), "utf8")),
   );
   const directory = await localReviewDirectory(repo);

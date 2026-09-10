@@ -101,6 +101,28 @@ export async function buildReviewBrief(
     });
   }
 
+  /**
+   * Referenced context shares the evidence budget but never displaces the change under review:
+   * a file that no longer fits is dropped and declared, so the reviewer knows a contract it needs
+   * is absent and can leave the affected rule unassessed instead of guessing.
+   */
+  const referencedSources = [];
+  const droppedReferencedPaths: string[] = [];
+  for (const entry of packet.manifest.referencedSources) {
+    const content = await capturedText(packetPath, entry.content);
+    const rendered = Buffer.byteLength(content, "utf8");
+    if (content.length === 0 || transmittedBytes + rendered > maxInitialEvidenceBytes) {
+      droppedReferencedPaths.push(entry.path);
+      continue;
+    }
+    transmittedBytes += rendered;
+    referencedSources.push({
+      path: entry.path,
+      importedBy: [...entry.importedBy],
+      content,
+    });
+  }
+
   const standardsRules =
     "standards" in packet.canonicalInputs ? selectedRules(packet.canonicalInputs) : undefined;
   const coverageConstraints = [
@@ -130,6 +152,16 @@ export async function buildReviewBrief(
       detail: `${omission.scope}: ${omission.reason}: ${omission.detail}`,
       paths: [],
     })),
+    ...(droppedReferencedPaths.length > 0
+      ? [
+          {
+            type: "EVIDENCE_BUDGET" as const,
+            detail:
+              "Imported source was not transmitted, so contracts it defines are unavailable to this review.",
+            paths: droppedReferencedPaths,
+          },
+        ]
+      : []),
     ...packet.manifest.paths
       .filter(
         (entry) =>
@@ -172,6 +204,7 @@ export async function buildReviewBrief(
     canonicalInputs: packet.canonicalInputs,
     snapshotManifest: packet.manifest,
     initialEvidence,
+    referencedSources,
     coverageConstraints,
   });
 }

@@ -1,8 +1,15 @@
 {
   "schemaVersion": 1,
-  "name": "JavaScript/TypeScript code quality",
+  "name": "JavaScript/TypeScript code quality and local correctness",
   "source": "Project-selectable baseline adapted from https://google.github.io/eng-practices/review/reviewer/looking-for.html; recommendations, not universal requirements",
   "rules": [
+    {
+      "id": "rule_local_correctness",
+      "text": "Changed code must do what its own names, signatures, types and comments say it does, for the inputs it accepts. Report a defect only when you can demonstrate it from the changed code and the declarations it cites, by naming a concrete input and the specific wrong result, crash or unreachable branch it produces. Wrong arithmetic, an inverted or off-by-one condition, an ignored parameter or return value, a documented range the code does not honour, and a branch that cannot be reached all qualify. Behaviour that depends on other modules, callers, concurrency, deployment, external services, persisted data or runtime configuration is out of scope for this rule; record it as a limitation instead.",
+      "enforcement": "REQUIRED",
+      "paths": ["**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx"],
+      "exceptions": "Code whose intended behaviour cannot be determined from the change and its cited declarations is unassessed for this rule, not a violation."
+    },
     {
       "id": "rule_readable_names",
       "text": "Use names that communicate the role of public functions, parameters and exported values. Report a naming concern only when it creates specific ambiguity for a reader or caller, not because another name is a personal preference.",

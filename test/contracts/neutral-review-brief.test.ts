@@ -112,6 +112,7 @@ async function createValidBrief(): Promise<Record<string, unknown>> {
         digest: computeInitialEvidenceContentDigestV1(sourceContent),
       },
     ],
+    referencedSources: [],
     coverageConstraints: [
       {
         type: "EXCLUDED_PATH",

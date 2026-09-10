@@ -140,22 +140,28 @@ it is not a reliability or quality recommendation. Model choice stays
 configurable. Current evaluation tiers and promotion gates are recorded in the
 [model-selection review](research/2026-09-10-review-model-selection.md).
 
-The adapter uses non-streaming Chat Completions for the preliminary stage and
-guarded streaming for the final stage, with a local authoritative message ledger.
-Final streaming permits a JSON-aware progress guard to cancel generations that
-emit 512 consecutive formatting-whitespace characters outside strings. Prompts,
+The adapter uses non-streaming Chat Completions for every stage, with a local
+authoritative message ledger. A review response is structured JSON with no
+interactive consumer, so streaming added SSE framing, partial-JSON and UTF-8
+boundary failure modes without a reader to serve; see
+[ADR-006](decisions/006-route-for-availability-not-pinning.md). Prompts,
 response schemas, and provider wire policy are versioned. The preliminary
 response also requests the author packet, avoiding an otherwise empty model turn. See
 [ADR-003](decisions/003-use-versioned-budgeted-model-call-protocol.md).
 
 Use schema-constrained output when supported and validate responses locally
 regardless.[^or-structured] Set `require_parameters: true` so routing does not
-silently ignore requested capabilities. Use a configured one-to-three-endpoint
-allowlist and a hard provider price ceiling. Preliminary calls may use same-model
-fallback inside that allowlist. Each final attempt pins one exact endpoint with
-fallback disabled; the one permitted retry pins the next different endpoint.
-Record the requested endpoint before submission and the returned route when
-available; model fallback remains disabled.[^or-routing]
+silently ignore requested capabilities. Keep a hard provider price ceiling, which
+is also the rate the local reservation arithmetic assumes.
+
+Route for availability. Configured endpoints are a preference rather than an
+allowlist, provider failover stays enabled, and a configured model fallback chain
+covers rate limiting, downtime, context-length and moderation refusals. Narrowing
+the eligible pool — pinning to the configured order, requiring zero data
+retention, denying data collection, or setting the price ceiling at the cheapest
+available rate — is opt-in, because each removes recovery paths and a single
+degraded endpoint then fails the run. Record the preferred and excluded endpoints
+before submission and the returned model and route when available.[^or-routing]
 
 Explicitly disable provider context compression because it can remove or
 truncate messages from the middle.[^or-transforms] Disable response caching for
@@ -163,21 +169,30 @@ live reviews because it stores and replays complete responses and is unavailable
 with account-level ZDR. Prompt caching remains an opt-in optimization after data-
 policy and measured-cost review.[^or-response-cache][^or-prompt-cache]
 
-For source review, propose `data_collection: "deny"` and `zdr: true`, failing when no eligible route exists. OpenRouter describes ZDR as endpoint routing enforcement; this is not a blanket claim about all storage across the application and providers. Review account logging separately. See [provider data-policy and ZDR controls](https://openrouter.ai/docs/guides/routing/provider-selection).
+For source review that carries a data-handling requirement, opt into `data_collection: "deny"` and `zdr: true`, accepting the smaller eligible pool and failing when no eligible route exists. Neither is on by default. OpenRouter describes ZDR as endpoint routing enforcement; this is not a blanket claim about all storage across the application and providers. Review account logging separately. See [provider data-policy and ZDR controls](https://openrouter.ai/docs/guides/routing/provider-selection).
 
 Read the API key at runtime from environment or an external secret store. Keep it out of packets, model messages, tool results, and logs. Bound completion tokens, calls, retries, and time; use pricing estimates for preflight, record actual usage when returned, and never describe a local estimate as a guaranteed billing cap.
 
 The orchestrator owns retries. Before the first call it reserves both mandatory
 stages plus one provider retry at the larger stage reservation. The example
-120B configuration permits 160,000 conservatively counted tokens while retaining
-its $0.02 cost ceiling. Definite 429/500/502/503/504/529 responses (including non-JSON
-HTTP errors), normally terminated empty completions, and final streams stopped
-by the formatting-whitespace guard may retry once per run.
+120B configuration permits 240,000 conservatively counted tokens under a $0.20
+cost ceiling. Definite 408/409/429/500/502/503/504/524/529 responses (including
+non-JSON HTTP errors), normally terminated empty completions, and uncertain
+transports may retry, bounded by `budgets.maxAttemptsPerCall` for each logical
+call, with exponential backoff over the jittered base delay. The budget is
+per-call so that a preliminary retry cannot starve the final stage; the run-wide
+token and cost ledgers still bound total spend. An uncertain transport is
+retried because an inference call is idempotent here, and it is charged the full
+conservative reservation first so a possible double submission is never free. A
+provider error carrying no usage never reached a model and is charged nothing,
+which is what previously made a 429 exhaust the reservation that paid for its own
+retry. A retry excludes the endpoint that just failed and lets routing re-select.
 A 429 or 529 without a usable Retry-After hint uses a randomized 5–10 second cooldown.
 OpenRouter clients sharing one in-process pacing coordinator pause new requests
 for that model together, including after retry exhaustion. Separate CLI processes
-do not share this coordinator. Optional minimum request-start spacing is available
-for controlled batch comparisons and defaults to zero.
+do not share this coordinator. `budgets.minimumCallIntervalMs` spaces request
+starts for one model and defaults to 1,500 milliseconds, because this account's
+burst limit returns 429 for back-to-back requests regardless of routing.
 Cost admission prices reserved input and output tokens at their respective
 provider ceilings, including each request fee, instead of pricing all tokens
 at the higher output rate.

@@ -1,5 +1,8 @@
 # Streaming decoder selection
 
+> SUPERSEDED on 2026-09-10 by [ADR-006](../decisions/006-route-for-availability-not-pinning.md):
+> the product no longer streams, so it needs no SSE decoder. `eventsource-parser` is removed.
+
 ## Decision
 
 Use exact-pinned `eventsource-parser@4.1.0` for SSE framing. Do not use

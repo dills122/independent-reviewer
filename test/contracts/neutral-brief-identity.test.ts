@@ -52,6 +52,7 @@ async function createBriefDraft(): Promise<Record<string, unknown>> {
     canonicalInputs,
     snapshotManifest: finalizeSnapshotManifestV1(snapshotDraft),
     initialEvidence: [],
+    referencedSources: [],
     coverageConstraints: [],
   };
 }
@@ -65,7 +66,7 @@ describe("neutral review brief identity", () => {
     // removed (ADR-005); a change here without a corresponding contract change is a regression.
     assert.equal(
       brief.briefDigest.value,
-      "ecbe7cd1655d10fb30c62f924cf814c830dbd3d2b6ad2180ad026290c5c7b786",
+      "41cfa4b03d6ab8944d1ed3ffcfc23facf4552c8561e35edcb5ade4c1b8e49dc3",
     );
     assert.equal(verifyNeutralReviewBriefIdentityV1(brief), true);
   });

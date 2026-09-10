@@ -28,11 +28,11 @@ async function arrangeCapture(): Promise<{
   await git(repositoryPath, "config", "user.name", "Packet Test");
   await git(repositoryPath, "config", "user.email", "packet@example.invalid");
   await git(repositoryPath, "config", "commit.gpgsign", "false");
-  await writeFile(join(repositoryPath, "reviewed.txt"), "before\n");
+  await writeFile(join(repositoryPath, "reviewed.ts"), "before\n");
   await git(repositoryPath, "add", ".");
   await git(repositoryPath, "commit", "-m", "initial");
   await git(repositoryPath, "switch", "-c", "feature/packet");
-  await writeFile(join(repositoryPath, "reviewed.txt"), "after\n");
+  await writeFile(join(repositoryPath, "reviewed.ts"), "after\n");
 
   return {
     repositoryPath,

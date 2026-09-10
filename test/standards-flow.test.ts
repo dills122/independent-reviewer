@@ -63,7 +63,7 @@ async function fixture() {
     reviewConfigRef: "config_test",
   };
   const config = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     configId: "config_test",
     model: "mock/reviewer",
     providerRouting: {
@@ -269,7 +269,7 @@ for (const scenario of [
           value,
           rawContent: JSON.stringify(value),
           responseId: "test",
-          model: request.model,
+          model: request.models[0] as string,
           provider: "test/fp4",
           usage: { promptTokens: 100, completionTokens: 100, totalTokens: 200, cost: 0.00001 },
         };
