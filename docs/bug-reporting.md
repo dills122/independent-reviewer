@@ -1,7 +1,7 @@
 # Reporting bugs and unexpected behavior
 
-A useful report lets a maintainer reproduce the same behavior against the same
-Independent Reviewer version and target changeset without guessing. Use the
+A short report is better than an abandoned report. Start with what happened and
+what you were doing; maintainers can ask for missing detail. Use the
 [bug or unexpected behavior form](https://github.com/dills122/independent-reviewer/issues/new?template=01-bug-report.yml)
 for defects, crashes, incorrect reports, confusing behavior, and other oddities.
 
@@ -10,35 +10,67 @@ Do not open a public issue for a suspected vulnerability. Follow
 source, credentials, private author packets, raw provider request bodies, or
 unredacted review artifacts.
 
-## Before filing
+## Quick path
 
-1. Search open and closed issues for the symptom and error text.
-2. Re-run from a clean checkout when practical and note whether the problem is
-   repeatable.
-3. Reduce the example to the smallest repository and changeset that still fails.
-4. Remove secrets and private data from inputs and diagnostics. Redaction must
-   preserve the structure relevant to the problem.
-5. Record the exact Independent Reviewer commit or release and environment.
+1. Describe what happened and what you expected.
+2. List what you were doing when it happened. It is fine to say the problem is
+   intermittent or that you cannot reproduce it yet.
+3. Submit the report. Everything else in the form is optional.
+4. For a repository-dependent problem, optionally run the capture helper below,
+   review its output, and paste it into the Git capture field.
 
 Do not spend money repeating a live provider failure solely to improve a bug
 report. Preserve the first sanitized failure evidence and say which retry or
 cost limits stopped further attempts.
 
-## Required report content
+## Minimum report
 
-The issue form requires:
+The public form requires only:
 
-- concise summary, observed result, expected result, and impact;
-- exact reproduction steps, commands, inputs, and exit code;
-- Independent Reviewer release or full commit SHA;
-- target-repository availability and a replayable changeset, or a clear reason
-  it cannot be shared;
-- sanitized request and review configuration when the path uses them; and
-- OS/architecture plus Node.js, npm, Git, shell, and relevant provider/model
-  details.
+- what happened and what was expected;
+- the best-known reproduction steps or the context in which it happened; and
+- confirmation that the public report contains no vulnerability or sensitive
+  material.
 
-Logs, stack traces, frequency, the last known-good commit, screenshots, and a
-minimal reproduction are optional but often shorten triage.
+Version, environment, logs, target Git identity, frequency, last known-good
+commit, screenshots, and a minimal reproduction all help, but none should stop
+someone from filing.
+
+## Optional Git capture helper
+
+The repository includes a small POSIX shell helper for people who do not know
+which Git details matter. From an Independent Reviewer checkout, run:
+
+```sh
+support/collect-bug-report-info.sh --repo /path/to/target-repository
+```
+
+The helper is plain shell and can be read before running. `--repo` is the only
+option commonly needed. `--base` identifies the start of the target
+changeset; without it, the helper tries the merge base with `origin/HEAD` and
+otherwise falls back to `HEAD`. Add `--public-url` only when that clone URL is
+already safe to publish.
+
+For a clean public branch, the more complete form is:
+
+```sh
+support/collect-bug-report-info.sh \
+  --repo /path/to/target-repository \
+  --base origin/main \
+  --public-url https://github.com/owner/repository
+```
+
+The helper prints Markdown to standard output for the reporter to review and
+paste. It makes no network requests and changes no repository state. It does
+not output source, diff bodies, changed paths, local repository paths, or
+untracked contents. It reports commit IDs, clean/dirty state, staged/unstaged/
+untracked counts, a tracked-change summary and SHA-256 fingerprint, and basic
+tool versions. Repository URLs and commit IDs can still be sensitive, so review
+every line before posting.
+
+This metadata is enough to replay a clean changeset only when its public URL and
+commits are reachable. A dirty changeset still needs a safe reproduction commit
+or a separately reviewed sanitized patch if maintainers need its exact content.
 
 ## Make a public changeset replayable
 
@@ -111,7 +143,7 @@ reporting.
 
 ## Diagnostics for this project
 
-Useful local facts include:
+If the helper cannot be used, useful local facts include:
 
 ```sh
 node --version
@@ -159,7 +191,8 @@ bug form; disabling them now would leave outside contributors without a path
 for feature proposals and other legitimate topics. Add dedicated forms before
 making the chooser stricter.
 
-GitHub issue forms are used because they collect structured, required fields;
+GitHub issue forms are used because they collect structured information while
+letting this project keep the required core small;
 GitHub documents their behavior in [About issue and pull request templates](https://docs.github.com/en/communities/using-templates-to-encourage-useful-issues-and-pull-requests/about-issue-and-pull-request-templates).
 The replay guidance follows Git's documented patch workflow and
 [`git bundle`](https://git-scm.com/docs/git-bundle), which transports refs and
