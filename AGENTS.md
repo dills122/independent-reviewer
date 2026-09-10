@@ -4,7 +4,7 @@
 
 Build an external engineering review engine using OpenRouter, starting with a local CLI and later an optional MR/PR adapter. The first local TypeScript 6/Node.js 24 release is implemented: cumulative Git capture, deterministic packets, two-stage orchestration, OpenRouter transport, validated reports, conservative pre-call token admission, and a durable run-attempt ledger. Live provider smoke testing and the deliberately deferred protocol extensions remain.
 
-Read `docs/architecture-and-roadmap.md`, `.codex/steering/repository-steering.md`, and `.codex/steering/testing-quality-gates-steering.md` before implementation. `docs/ai-central-integration.md` explains local skills and the retained baseline.
+Read `docs/architecture-and-roadmap.md`, `.codex/steering/repository-steering.md`, `.codex/steering/testing-quality-gates-steering.md`, and `.codex/steering/javascript-typescript-resolution.md` before implementation. `docs/ai-central-integration.md` explains local skills and the retained baseline.
 
 ## Ownership and contracts
 
@@ -13,7 +13,8 @@ Read `docs/architecture-and-roadmap.md`, `.codex/steering/repository-steering.md
 - `.codex/steering/repository-steering.md` and
   `.codex/steering/testing-quality-gates-steering.md` are project-owned.
   The JavaScript/TypeScript profile in that directory is a machine-local shared
-  link; do not edit through it.
+  link; do not edit through it. The project-owned resolution file supplies its
+  repository scope and command placeholders.
 - `.agents/skills/` and `.codex/skills/` are local shared links. Do not edit through those links: that would edit AI Central itself.
 - `scripts/` owns local bootstrap and setup verification only.
 - Future snapshot, review-core, provider, report, and hosting modules must preserve the boundaries in the architecture plan. Define versioned contracts before implementing their consumers.
@@ -65,10 +66,14 @@ cross-session memory.
 
 ### Searching the codebase
 
-**Use `context_search` instead of reading files directly** when exploring
-the codebase, answering questions about code, or understanding how things
-work. `context_search` returns the most relevant code chunks with
-confidence scores instead of whole files.
+When CCE tools are available, **use `context_search` instead of reading files
+directly** when exploring the codebase, answering questions about code, or
+understanding how things work. `context_search` returns the most relevant code
+chunks with confidence scores instead of whole files.
+
+When CCE tools are unavailable, use `rg`/`rg --files` and focused file reads,
+state the limitation once, and continue. Do not block repository work solely
+because optional CCE tools are absent.
 
 When to use `context_search`:
 - Answering questions about the codebase ("how does X work?", "where is Y?")
@@ -82,9 +87,12 @@ Other tools:
 
 ### Cross-session memory
 
-Call `session_recall("topic phrase")` before answering non-trivial questions.
-Call `record_decision(decision="...", reason="...")` after making choices.
-Call `record_code_area(file_path="...", description="...")` after meaningful work.
+When CCE tools are available, call `session_recall("topic phrase")` before
+answering non-trivial questions. Call `record_decision(decision="...",
+reason="...")` after making choices and `record_code_area(file_path="...",
+description="...")` after meaningful work. When they are unavailable, rely on
+repository documents and Git history; do not claim cross-session recall or
+recording occurred.
 
 ### Output style
 

@@ -4,6 +4,10 @@
 
 Run `python3 -B scripts/check-ai-context.py` after changing integration metadata, imported reference files, or setup scripts. Run `sh -n scripts/setup-ai-context.sh` for shell changes. Verify refresh is non-overwriting and excludes only managed local links. Run the source checkout's `scripts/check.sh` when bootstrapping or updating the source integration.
 
+The context checker must also reject profile or bundle drift between retained
+provenance and the setup wrapper, missing project-owned steering, unresolved
+project placeholders, and unconditional requirements for optional CCE tools.
+
 ## Application gates
 
 Use Node.js 24 and the committed npm lockfile. `npm run check` runs formatting,

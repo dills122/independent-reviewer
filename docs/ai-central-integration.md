@@ -6,7 +6,8 @@ Source: sibling `../ai-central`, initially at `33bd2293f0682bde71938f2b2ad14a4f3
 
 - Profiles: `base` plus `javascript-typescript` (real project-owned AGENTS,
   repository steering, testing gates, and a machine-local language steering
-  link).
+  link). The committed `javascript-typescript-resolution.md` overlay supplies
+  the shared template's repository scope and verification commands.
 - Bundles: core, orchestration, documentation, delivery, engineering, planning.
 - 57 skill links under `.agents/skills/`, with `.codex/skills/` compatibility links maintained by AI Central.
 - Exact local link exclusions in `.git/info/exclude`; real project guidance remains available to commit.
@@ -37,7 +38,7 @@ python3 -B scripts/check-ai-context.py
 
 Set `AI_CENTRAL_HOME=/path/to/ai-central` to override the sibling source; its `templates` directory is also accepted. The wrapper uses AI Central's maintained non-overwriting installer, then excludes exact managed skill links locally. It does not pull the source checkout, overwrite project-owned instructions, prune skills, or refresh the retained reference.
 
-The source checkout should use the recorded revision for exact reproduction. New upstream bundle members may be added on refresh; reconcile the recorded inventory deliberately when changing the baseline. The checker validates retained hashes, required links, compatibility paths, steering, and Git exclusions. It does not evaluate runtime review quality or assert that live source bytes still match the original revision.
+The source checkout should use the recorded revision for exact reproduction. New upstream bundle members may be added on refresh; reconcile the recorded inventory deliberately when changing the baseline. The checker validates profile and bundle agreement with the setup wrapper, retained hashes, required links, compatibility paths, resolved project steering, and Git exclusions. It does not evaluate runtime review quality or assert that live source bytes still match the original revision.
 
 To validate the source checkout:
 
