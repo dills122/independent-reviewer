@@ -5,7 +5,8 @@
   "imported_at": "2026-09-06",
   "mode": "shared local links plus immutable reference copy",
   "profiles": [
-    "base"
+    "base",
+    "javascript-typescript"
   ],
   "bundles": [
     "core",
