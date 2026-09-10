@@ -1,7 +1,8 @@
 # OpenRouter whitespace progress guard
 
 Status: implemented after independent review instance 1 of 3; healthy-path paid provider
-validation complete. A live guard trip and endpoint retry were not observed.
+validation complete. Different-endpoint final retry was observed after live provider
+errors; a live whitespace-guard trip was not observed.
 
 ## Objective
 

@@ -1,6 +1,7 @@
 # OpenRouter whitespace guard E2E — 2026-09-10
 
-Status: healthy live path passed; live guard trip and endpoint retry not observed.
+Status: healthy live path passed; different-endpoint final retry observed after
+provider errors; live whitespace-guard trip not observed.
 
 ## Scope
 
@@ -35,8 +36,31 @@ only into the live child process; it was not copied into this worktree. A local
 exact-byte scan found zero credential matches across all 15 retained packet and
 review files.
 
-This run proves live SSE compatibility, endpoint pinning, structured response
-normalization, usage capture, artifact persistence, and normal two-stage
-completion. It does not prove live guard cancellation, different-endpoint retry,
-billing cancellation, or population reliability. Those guard and retry paths
-remain deterministically covered by offline tests.
+This first run proves live SSE compatibility, endpoint pinning, structured
+response normalization, usage capture, artifact persistence, and normal two-stage
+completion. It does not prove live guard cancellation, billing cancellation, or
+population reliability. Guard cancellation remains deterministically covered by
+offline tests; the follow-up below exercises different-endpoint retry.
+
+## Follow-up fixture matrix
+
+A sequential clean, mandatory-violation, and permitted-exception matrix was
+admitted by dry-run. Combined conservative reservation was `$0.019606`; every
+review retained its independent `$0.02` hard ceiling. The matrix stopped after
+the clean case encountered two final-stage provider errors:
+
+- Preliminary attempt 1 completed through CoreWeave in 2,839 reported tokens
+  at `$0.00020753` reported cost.
+- Final attempt 2 pinned `coreweave/fp4` and received a definite 429 attributed
+  to the upstream provider shared pool.
+- The one automatic retry preserved the preliminary and pinned attempt 3 to
+  `deepinfra/bf16`; DeepInfra returned a definite 502.
+- No final report was produced. Both failed final attempts omitted usage, so
+  their costs remain unknown rather than zero.
+- An exact-byte scan found zero credential matches across the 13 retained packet
+  and review files.
+
+The mandatory and exception cases were not submitted after the stop condition.
+This follow-up proves live different-endpoint retry and no preliminary replay for
+definite provider failures. It does not exercise the whitespace guard or establish
+either endpoint's reliability.
