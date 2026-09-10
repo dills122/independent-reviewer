@@ -30,8 +30,9 @@ for relative, expected in manifest["files"].items():
     require(path.is_file(), f"Missing retained reference: {relative}")
     require(hashlib.sha256(path.read_bytes()).hexdigest() == expected, f"Reference hash mismatch: {relative}")
 
-syntax = subprocess.run(["sh", "-n", str(ROOT / "scripts/setup-ai-context.sh")])
-require(syntax.returncode == 0, "Invalid bootstrap shell syntax")
+for relative in ("scripts/setup-ai-context.sh", "support/collect-bug-report-info.sh"):
+    syntax = subprocess.run(["sh", "-n", str(ROOT / relative)])
+    require(syntax.returncode == 0, f"Invalid shell syntax: {relative}")
 tracked = git("ls-files", "-z")
 require(tracked.returncode == 0, "Unable to inspect tracked repository files")
 for relative in filter(None, tracked.stdout.split("\0")):

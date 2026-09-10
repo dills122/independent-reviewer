@@ -6,8 +6,9 @@ focused, reproducible, and free of credentials or private review material.
 ## Report a problem
 
 Read [Reporting bugs and unexpected behavior](docs/bug-reporting.md), then use
-the repository's structured bug form. It explains required Git identities,
-changeset replay options, environment details, and safe diagnostics.
+the repository's short bug form. Only the behavior, best-known reproduction,
+and public-report safety check are required. The guide includes an optional,
+source-free Git metadata helper plus manual changeset replay options.
 
 Report suspected vulnerabilities privately according to
 [the security policy](SECURITY.md), not in a public issue.
