@@ -1,0 +1,393 @@
+{
+  "$id": "urn:independent-reviewer:schema:review-context-map:v1",
+  "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "contextMapId": {
+      "type": "string",
+      "minLength": 9,
+      "maxLength": 128,
+      "pattern": "^context_[A-Za-z0-9][A-Za-z0-9_-]*$"
+    },
+    "contextMapDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "snapshotDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "producers": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "producerId": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 128,
+            "pattern": "^producer_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "producerVersion": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "COMPLETE",
+              "PARTIAL",
+              "UNSUPPORTED",
+              "FAILED"
+            ]
+          },
+          "diagnostics": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "producerId",
+          "producerVersion",
+          "status",
+          "diagnostics"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "regions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "regionId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128,
+            "pattern": "^region_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "CHANGED_PATH",
+              "SUPPORTING_CONTEXT"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "BASE",
+              "HEAD"
+            ]
+          },
+          "fileDigest": {
+            "type": "object",
+            "properties": {
+              "algorithm": {
+                "type": "string",
+                "const": "SHA256"
+              },
+              "value": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "algorithm",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          "byteLength": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "SOURCE",
+              "TEST",
+              "CONFIG",
+              "DOCUMENTATION",
+              "STEERING",
+              "GENERATED",
+              "BINARY"
+            ]
+          },
+          "languageId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "FILE",
+              "DECLARATION",
+              "BLOCK",
+              "LINE_WINDOW"
+            ]
+          },
+          "range": {
+            "type": "object",
+            "properties": {
+              "coordinateUnit": {
+                "type": "string",
+                "enum": [
+                  "UTF16_CODE_UNIT",
+                  "UTF8_BYTE"
+                ]
+              },
+              "startOffset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "endOffsetExclusive": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "contentByteLength": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "startLine": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "startColumn": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "endLine": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "endColumn": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "coordinateUnit",
+              "startOffset",
+              "endOffsetExclusive",
+              "contentByteLength",
+              "startLine",
+              "startColumn",
+              "endLine",
+              "endColumn"
+            ],
+            "additionalProperties": false
+          },
+          "producerId": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 128,
+            "pattern": "^producer_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "producerKind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "regionId",
+          "origin",
+          "path",
+          "side",
+          "fileDigest",
+          "byteLength",
+          "languageId",
+          "kind",
+          "producerId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "relations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "relationId": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 128,
+            "pattern": "^relation_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "sourceRegionId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128,
+            "pattern": "^region_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "targetRegionId": {
+            "type": "string",
+            "minLength": 8,
+            "maxLength": 128,
+            "pattern": "^region_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "ENCLOSES",
+              "DEPENDS_ON",
+              "REFERENCES",
+              "VERIFIES",
+              "CONFIGURES",
+              "RELATED"
+            ]
+          },
+          "certainty": {
+            "type": "string",
+            "enum": [
+              "SEMANTIC",
+              "SYNTACTIC",
+              "HEURISTIC"
+            ]
+          },
+          "producerId": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 128,
+            "pattern": "^producer_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "producerKind": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceRange": {
+            "type": "object",
+            "properties": {
+              "coordinateUnit": {
+                "type": "string",
+                "enum": [
+                  "UTF16_CODE_UNIT",
+                  "UTF8_BYTE"
+                ]
+              },
+              "startOffset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "endOffsetExclusive": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "contentByteLength": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "startLine": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "startColumn": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "endLine": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "endColumn": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "coordinateUnit",
+              "startOffset",
+              "endOffsetExclusive",
+              "contentByteLength",
+              "startLine",
+              "startColumn",
+              "endLine",
+              "endColumn"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "relationId",
+          "sourceRegionId",
+          "targetRegionId",
+          "kind",
+          "certainty",
+          "producerId"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "contextMapId",
+    "contextMapDigest",
+    "snapshotDigest",
+    "producers",
+    "regions",
+    "relations"
+  ],
+  "additionalProperties": false
+}

@@ -154,9 +154,6 @@ const SECRET_CONTENT_MARKERS_V1: ReadonlyArray<{ label: string; pattern: RegExp 
 /** Public dummy credentials that should not make test or documentation evidence disappear. */
 const KNOWN_PUBLIC_CREDENTIAL_EXAMPLES_V1 = ["AKIAIOSFODNN7EXAMPLE"] as const;
 
-/** Bytes scanned for content markers; a credential sits near the top of a file in practice. */
-const SECRET_SCAN_BYTES_V1 = 256 * 1024;
-
 function isSecretPath(path: string): boolean {
   const segments = path.toLowerCase().split("/");
   if (segments.slice(0, -1).some((segment) => SECRET_DIRECTORIES_V1.has(segment))) {
@@ -179,9 +176,7 @@ function secretContentMarker(bytes: Uint8Array): string | undefined {
   }
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: false }).decode(
-      bytes.subarray(0, SECRET_SCAN_BYTES_V1),
-    );
+    text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
   } catch {
     return undefined;
   }
@@ -406,6 +401,14 @@ async function captureReferencedSources(
   const referencedSources: SnapshotManifestIdentityInputV1["referencedSources"] = [];
   let capturedBytes = 0;
   for (const [path, importedBy] of importersByPath) {
+    if (isSecretPath(path)) {
+      options.omissions.push({
+        scope: path,
+        reason: "OTHER",
+        detail: "Referenced source omitted by capture-v2 secret filename policy.",
+      });
+      continue;
+    }
     let side: Awaited<ReturnType<typeof captureTreeSide>>;
     try {
       side = options.captureWorkingTree
@@ -424,6 +427,15 @@ async function captureReferencedSources(
         scope: path,
         reason: "OTHER",
         detail: `Referenced source could not be captured as text (${typeof side === "string" ? side : side.content.kind}).`,
+      });
+      continue;
+    }
+    const secretMarker = secretContentMarker(side.bytes);
+    if (secretMarker) {
+      options.omissions.push({
+        scope: path,
+        reason: "OTHER",
+        detail: `Referenced source omitted by capture-v2 content policy: ${secretMarker} detected.`,
       });
       continue;
     }

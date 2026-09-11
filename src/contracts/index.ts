@@ -48,6 +48,16 @@ export {
   NonEmptyTextSchema,
   prefixedIdentifier,
 } from "./primitives.js";
+export type {
+  ReviewContextMapIdentityInputV1,
+  ReviewContextMapV1,
+} from "./review-context-map.js";
+export {
+  finalizeReviewContextMapV1,
+  REVIEW_CONTEXT_MAP_V1_JSON_SCHEMA,
+  ReviewContextMapV1Schema,
+  verifyReviewContextMapIdentityV1,
+} from "./review-context-map.js";
 export type { AuthorPacketV1, CanonicalInputV1, ReviewRequestV1 } from "./review-request.js";
 export {
   AuthorPacketV1Schema,
@@ -97,6 +107,16 @@ export {
   REVIEW_RUN_CONFIG_V3_JSON_SCHEMA,
   ReviewRunConfigV3Schema,
 } from "./review-run-config.js";
+export type {
+  ReviewUnitPlanIdentityInputV1,
+  ReviewUnitPlanV1,
+} from "./review-unit-plan.js";
+export {
+  finalizeReviewUnitPlanV1,
+  REVIEW_UNIT_PLAN_V1_JSON_SCHEMA,
+  ReviewUnitPlanV1Schema,
+  verifyReviewUnitPlanIdentityV1,
+} from "./review-unit-plan.js";
 export type {
   DigestV1,
   SnapshotContentV1,

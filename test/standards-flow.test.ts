@@ -93,6 +93,7 @@ for (const scenario of [
   "exception",
   "recommended",
   "unavailable",
+  "mixed-unavailable",
   "inapplicable",
   "conflict",
   "omitted-rule",
@@ -105,7 +106,7 @@ for (const scenario of [
     const removed = noFindings || scenario === "exception";
     const expectedExit = ["unknown", "inapplicable", "conflict", "omitted-rule"].includes(scenario)
       ? 1
-      : ["unavailable", "semantic-conflict"].includes(scenario)
+      : ["unavailable", "mixed-unavailable", "semantic-conflict"].includes(scenario)
         ? 3
         : scenario === "required"
           ? 2
@@ -124,6 +125,12 @@ for (const scenario of [
         ...profile.rules[0],
         id: "rule_short",
         text: "Exported constants must use the exact name v.",
+      });
+    if (scenario === "mixed-unavailable")
+      profile.rules.push({
+        ...profile.rules[0],
+        id: "rule_context",
+        text: "Exported constants must match the unavailable registry.",
       });
     if (scenario === "conflict")
       profile.rules.push({ ...profile.rules[0], text: "Use short names." });
@@ -175,7 +182,8 @@ for (const scenario of [
                   status:
                     scenario === "semantic-conflict"
                       ? "CONFLICT"
-                      : scenario === "unavailable"
+                      : scenario === "unavailable" ||
+                          (scenario === "mixed-unavailable" && rule.id === "rule_context")
                         ? "UNASSESSED"
                         : "ASSESSED",
                   conflictingRuleIds:
@@ -185,7 +193,8 @@ for (const scenario of [
                           .map((other: { id: string }) => other.id)
                       : [],
                   explanation:
-                    scenario === "unavailable"
+                    scenario === "unavailable" ||
+                    (scenario === "mixed-unavailable" && rule.id === "rule_context")
                       ? "Required surrounding context is unavailable."
                       : "Applied selected rule.",
                 })),
@@ -244,15 +253,9 @@ for (const scenario of [
             preliminaryConcernDispositions: [],
             authorClaims: [],
             authorVerificationClaims: [],
-            limitations:
-              scenario === "semantic-conflict"
-                ? ["rule_names conflicts with rule_short; clarify which naming rule governs."]
-                : scenario === "unavailable"
-                  ? ["Required surrounding context is unavailable."]
-                  : [],
-            verdict: ["unavailable", "semantic-conflict"].includes(scenario)
-              ? "UNABLE_TO_VERIFY"
-              : scenario === "recommended"
+            limitations: [],
+            verdict:
+              scenario === "recommended"
                 ? "READY_WITH_FOLLOW_UPS"
                 : removed
                   ? "READY"
@@ -308,15 +311,25 @@ for (const scenario of [
         if (scenario === "unavailable") {
           assert.equal(report.findings.length, 0);
           assert.equal(report.ruleAssessments[0].status, "UNASSESSED");
+          assert.deepEqual(report.limitations, ["Standards remain unassessed: rule_names."]);
           assert.match(
             report.nextActions.blockers[0],
             /Supply the existing authoritative evidence/,
           );
         }
-        if (scenario === "semantic-conflict")
+        if (scenario === "mixed-unavailable") {
+          assert.equal(report.verdict, "UNABLE_TO_VERIFY");
+          assert.deepEqual(report.limitations, ["Standards remain unassessed: rule_context."]);
+          assert.deepEqual(report.nextActions.blockers, ["Use a descriptive exported name."]);
+        }
+        if (scenario === "semantic-conflict") {
+          assert.deepEqual(report.limitations, [
+            "Standards conflict remains unresolved: rule_names, rule_short.",
+          ]);
           assert.deepEqual(report.nextActions.blockers, [
             "Clarify precedence, applicability, or exceptions for conflicting standards: rule_names, rule_short. Do not change code merely to satisfy one conflicting rule.",
           ]);
+        }
         assert.equal(report.findings.length, removed ? 0 : 1);
         if (!removed) assert.equal(report.findings[0].ruleIds[0], "rule_names");
         const markdown = await readFile(join(f.packet, "review", "report.md"), "utf8");

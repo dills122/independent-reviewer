@@ -39,6 +39,33 @@ describe("relativeImportSpecifiersV1", () => {
 
     assert.deepEqual(relativeImportSpecifiersV1(source), []);
   });
+
+  it("ignores ESM-looking text in comments and strings", () => {
+    const source = [
+      `const example = 'import "./string-only.js"';`,
+      `// export { example } from "./line-comment.js";`,
+      `/* import("./block-comment.js"); */`,
+      `const legacy = require("./legacy.cjs");`,
+      `import { actual } from "./actual.js";`,
+    ].join("\n");
+
+    assert.deepEqual(relativeImportSpecifiersV1(source), ["./legacy.cjs", "./actual.js"]);
+  });
+
+  it("ignores dynamic template globs that do not name one file", () => {
+    const source = [
+      `const localized = import(\`./locales/\${locale}.js\`);`,
+      `const exact = import("./exact.js");`,
+    ].join("\n");
+
+    assert.deepEqual(relativeImportSpecifiersV1(source), ["./exact.js"]);
+  });
+
+  it("falls back to conservative extraction for malformed source", () => {
+    const source = `import "./before.js";\nimport "./unterminated.js`;
+
+    assert.deepEqual(relativeImportSpecifiersV1(source), ["./before.js"]);
+  });
 });
 
 describe("candidateReferencedPathsV1", () => {

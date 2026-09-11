@@ -410,6 +410,10 @@ semantic checks require exact changed-path, canonical-input, preliminary
 finding/concern, and indexed author-verification ledgers; validate line/symbol
 anchors and artifact identities; and reject a ready verdict with incomplete
 coverage, unresolved concerns, P0/P1 findings, blockers, or limitations. The
+runner now derives verdict and action classification from validated reviewer
+findings, limitations, concern dispositions, and frozen coverage. Provider
+candidate-v3 verdict and blocker fields are retained only for protocol compatibility
+and cannot cause a repair or override runner bookkeeping. The
 author-verification ledger repeats the stored command, claimed outcome, and
 summary and is checked against its packet index, but cannot mark author-only
 testimony `CONFIRMED`. Every final finding declares whether it came from the

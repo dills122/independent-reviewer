@@ -13,6 +13,8 @@ budget, and failure protocol is recorded in
 [ADR-003](decisions/003-use-versioned-budgeted-model-call-protocol.md).
 The deterministic artifact identity profile is recorded in
 [ADR-004](decisions/004-use-jcs-sha256-artifact-identities.md).
+Runner-owned final bookkeeping is recorded in
+[ADR-010](decisions/010-derive-final-bookkeeping-in-runner.md).
 
 
 ## Standards review mode (v2)
@@ -236,8 +238,11 @@ same-model repair when a complete final candidate fails local validation,
 assembles `final-review-candidate-v3` judgments into the unchanged final report,
 projects exact final path and canonical-input coverage from the frozen manifest and persisted
 blind assessment instead of asking the model to repeat those ledgers,
-and downgrades a ready candidate to Unable to verify when that runner-owned coverage remains
-unassessed,
+derives blockers from blocking finding corrections, derives fast follows from
+non-blocking corrections and reviewer suggestions, and assigns the final verdict from
+those actions plus runner-owned coverage and unresolved limitations. Candidate-v3
+verdict and blocker fields remain wire-compatible but have no authority. This prevents
+bookkeeping contradictions from buying a repair call or inventing work,
 using exact original author-claim and preliminary-concern text, validates
 identities and evidence paths, rejects citations outside transmitted hunks even when the line exists
 elsewhere in the frozen file,
@@ -272,6 +277,18 @@ attempts retain a bounded redacted SSE transcript and progress metrics after
 terminal handling; the artifact is intentionally not described as byte-exact or
 crash-durable. The append-only ledger retains only bounded diagnostics for the
 typed error, requested/returned route identifiers, and retry guidance.[^or-structured][^or-routing][^or-transforms][^or-response-cache][^or-errors]
+
+New packets also persist a digest-bound, language-neutral context map. A pinned
+Tree-sitter WASM registry adds declaration regions for JavaScript,
+TypeScript/TSX, Python, Go, and Java while every other language retains the
+universal file fallback. Before provider admission, orchestration persists a
+deterministic review-unit plan and sends its compact changed-path, enclosing
+declaration, transmitted supporting-context mapping, and bounded producer
+diagnostics with blind evidence. Exact blob-backed range checks and per-file and
+packet-wide syntax limits keep these artifacts trustworthy and bounded. These
+artifacts separate coverage bookkeeping from reviewer judgment; semantic symbol mapping
+and per-unit provider batching remain follow-up work under ADR-009.
+
 Metered live review remains explicitly opt-in and requires a model, bounded
 configuration, operator authorization, and API key supplied through the Slice 3 command.
 

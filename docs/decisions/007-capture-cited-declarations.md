@@ -55,6 +55,11 @@ Referenced sources are context, not review targets. They are:
   at the call site, not in the file being called. This keeps
   `assertFindingEvidenceAnchors` and `assertStandardsFindings` unchanged.
 
+The same secret policy applies before any referenced source is read or stored:
+credential paths are omitted visibly, and complete admitted content is scanned
+for high-confidence credential markers. Supporting context therefore cannot
+bypass controls already applied to changed files.
+
 Budgets bound the cost. Capture stops at 128 KB of referenced content per
 snapshot; transmission draws from the existing evidence budget and drops
 referenced files before it ever drops the change under review. A dropped or
@@ -74,11 +79,12 @@ A packet is larger. The manifest, the blob store, and the transmitted brief all
 carry files that are not under review, and prompt cost rises with them: the
 validated cases ran $0.0009-$0.0027 against $0.0005-$0.0010 before.
 
-Import extraction is a regular expression, not a parser. It does not strip
-comments or string literals, so a commented-out import can pull in a file the
-change does not really use. The trade favours recall: a false positive costs one
-extra captured file the reviewer may ignore, while a miss costs a defect. A
-parser remains available if false positives become a real cost.
+Import extraction uses `es-module-lexer` for ESM and TypeScript syntax, so
+import-looking text in comments and string literals does not pull in unrelated
+files. Dynamic template globs are excluded because they do not name one file.
+A narrow regular expression retains ordinary CommonJS `require()` support, and
+the original conservative expression is used only when malformed or incomplete
+source cannot be lexed. That fallback favours recall while a change is broken.
 
 Only TypeScript and JavaScript resolve. Another ecosystem gets no referenced
 context until it has a resolver, and its reviews behave exactly as they did

@@ -1,23 +1,22 @@
-import { asFinalCandidateV3 } from "../helpers/final-candidate.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { describe, it } from "node:test";
-
+import { promisify } from "node:util";
 import {
   captureGitSnapshotV1,
   ProviderCallError,
-  resumeFinalReviewV1,
-  runTwoStageReviewV1,
-  type ReviewProviderV1,
   type ReviewProviderRequestV1,
   type ReviewProviderResponseV1,
+  type ReviewProviderV1,
   type ReviewRunConfigV3,
+  resumeFinalReviewV1,
+  runTwoStageReviewV1,
   writeSnapshotPacketV1,
 } from "../../src/index.js";
+import { asFinalCandidateV3 } from "../helpers/final-candidate.js";
 
 const execFileAsync = promisify(execFile);
 const mockDigest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
@@ -270,6 +269,82 @@ function collectArrayLimits(schema: unknown, propertyName: string): number[] {
 }
 
 describe("two-stage review orchestrator", () => {
+  it("completes a clean review without repairing model-owned bookkeeping", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    const calls: ReviewProviderRequestV1[] = [];
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls.push(providerRequest);
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        if (providerRequest.stage === "PRELIMINARY") {
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "No defect was found in the changed behavior.",
+            inspectedPaths: ["reviewed.ts"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        return response({
+          schemaVersion: 3,
+          stage: "FINAL",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "The change satisfies the supplied requirements.",
+          findings: [],
+          withdrawnPreliminaryFindings: [],
+          authorClaims: [],
+          authorVerificationClaims: finalCoverage().authorVerificationClaims,
+          preliminaryConcernDispositions: [],
+          limitations: [],
+          verdict: "NOT_READY",
+          nextActions: {
+            blockers: ["Run the author-reported tests before approval."],
+            fastFollows: [],
+          },
+        });
+      },
+    };
+
+    try {
+      const result = await runTwoStageReviewV1(packetPath, config, provider);
+
+      assert.equal(result.report.verdict, "READY");
+      assert.deepEqual(result.report.nextActions.blockers, []);
+      assert.deepEqual(
+        calls.map((call) => call.stage),
+        ["PRELIMINARY", "FINAL"],
+      );
+      const rawFinal = JSON.parse(
+        await readFile(join(packetPath, "review", "final-provider-response.json"), "utf8"),
+      );
+      assert.match(rawFinal.rawContent, /Run the author-reported tests before approval/);
+      const persistedFinal = JSON.parse(await readFile(result.finalPath, "utf8"));
+      assert.equal(persistedFinal.verdict, "READY");
+      assert.deepEqual(persistedFinal.nextActions.blockers, []);
+      const events = (await readFile(result.runRecordPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      assert.equal(
+        events.some(
+          (event) =>
+            event.type === "FINAL_CANDIDATE_REJECTED" || event.type === "FINAL_REPAIR_REQUESTED",
+        ),
+        false,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("repairs one invalid preliminary candidate before revealing author context", async () => {
     const before = Array.from({ length: 80 }, (_, index) => `line ${index + 1}`).join("\n");
     const afterLines = before.split("\n");
@@ -291,6 +366,23 @@ describe("two-stage review orchestrator", () => {
         calls.push(providerRequest);
         const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
         if (providerRequest.stage === "PRELIMINARY") {
+          assert.equal(brief.reviewUnitPlan.schemaVersion, 1);
+          assert.equal(brief.reviewUnitPlan.units[0]?.targetPaths[0], "reviewed.ts");
+          assert.equal(brief.reviewContext.regions.length > 0, true);
+          assert.equal(brief.reviewContext.producers.length > 0, true);
+          assert.equal(
+            brief.reviewContext.producers.every(
+              (producer: { status?: string; diagnostics?: unknown[] }) =>
+                typeof producer.status === "string" && Array.isArray(producer.diagnostics),
+            ),
+            true,
+          );
+          assert.equal(
+            brief.reviewContext.regions.every(
+              (region: { producerId?: string }) => typeof region.producerId === "string",
+            ),
+            true,
+          );
           assert.doesNotMatch(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
           if (calls.length === 1) {
             return {
@@ -384,6 +476,7 @@ describe("two-stage review orchestrator", () => {
         calls.map((call) => call.stage),
         ["PRELIMINARY", "PRELIMINARY", "FINAL"],
       );
+      await readFile(join(packetPath, "review", "review-unit-plan.json"), "utf8");
       await readFile(
         join(packetPath, "review", "preliminary-repair-provider-response.json"),
         "utf8",
@@ -1597,7 +1690,7 @@ describe("two-stage review orchestrator", () => {
           budgets: {
             ...config.budgets,
             maxOutputTokensPerCall: 15_000,
-            maxTotalTokens: 120_000,
+            maxTotalTokens: 120_100,
             maxTotalCostUsd: 1,
           },
         },
@@ -1786,7 +1879,7 @@ describe("two-stage review orchestrator", () => {
     }
   });
 
-  it("does not accept Ready when changed evidence was excluded", async () => {
+  it("derives Unable to verify when changed evidence was excluded", async () => {
     const { repositoryPath, packetPath } = await arrangePacket(true);
     const provider: ReviewProviderV1 = {
       auditRequest: mockAuditRequest,
@@ -1839,9 +1932,11 @@ describe("two-stage review orchestrator", () => {
     };
 
     try {
-      await assert.rejects(
-        () => runTwoStageReviewV1(packetPath, config, provider),
-        /coverage constraint/i,
+      const result = await runTwoStageReviewV1(packetPath, config, provider);
+      assert.equal(result.report.verdict, "UNABLE_TO_VERIFY");
+      assert.match(
+        result.report.limitations.join("\n"),
+        /Runner snapshot coverage constraint \(EXCLUDED_PATH\)/,
       );
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });

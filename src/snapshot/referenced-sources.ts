@@ -1,4 +1,7 @@
 import { dirname, join, normalize } from "node:path/posix";
+import { init, parse } from "es-module-lexer";
+
+await init();
 
 /**
  * Locates the unchanged files a changed file imports, so a review can judge a call against the
@@ -29,21 +32,58 @@ const COMPILED_EXTENSION_SUBSTITUTIONS_V1: ReadonlyMap<string, readonly string[]
   [".jsx", [".tsx", ".jsx"]],
 ]);
 
-/**
- * Matches the specifier of a static import/export, a dynamic `import()`, and a `require()`.
- *
- * Comments and string literals are not parsed away. A false positive costs one extra captured file
- * that the reviewer may ignore; missing a real import costs a defect, so the trade favours recall.
- */
-const SPECIFIER_PATTERN_V1 =
+/** Ordinary CommonJS calls are outside es-module-lexer's ESM and TypeScript import grammar. */
+const COMMONJS_REQUIRE_PATTERN_V1 = /\brequire\s*\(\s*(["'])([^"']+)\1\s*\)/g;
+
+/** Preserves import recall for incomplete source that the lexer cannot parse. */
+const MALFORMED_SOURCE_FALLBACK_PATTERN_V1 =
   /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|\bimport\s+)(["'])([^"']+)\1/g;
+
+interface LocatedSpecifierV1 {
+  offset: number;
+  specifier: string;
+}
+
+function isRelativeSpecifier(specifier: string): boolean {
+  return specifier.startsWith("./") || specifier.startsWith("../");
+}
+
+function regexSpecifiers(source: string, pattern: RegExp): LocatedSpecifierV1[] {
+  const located: LocatedSpecifierV1[] = [];
+  for (const match of source.matchAll(pattern)) {
+    const specifier = match[2];
+    if (specifier && isRelativeSpecifier(specifier)) {
+      located.push({ offset: match.index, specifier });
+    }
+  }
+  return located;
+}
 
 /** Relative specifiers a source imports, in first-seen order and without duplicates. */
 export function relativeImportSpecifiersV1(source: string): string[] {
+  let located: LocatedSpecifierV1[];
+  try {
+    const [imports] = parse(source);
+    located = imports.flatMap((entry): LocatedSpecifierV1[] => {
+      if (
+        entry.specifier === null ||
+        entry.specifier === undefined ||
+        (entry.type === "dynamic" && entry.glob) ||
+        !isRelativeSpecifier(entry.specifier)
+      ) {
+        return [];
+      }
+      return [{ offset: entry.importStart, specifier: entry.specifier }];
+    });
+    located.push(...regexSpecifiers(source, COMMONJS_REQUIRE_PATTERN_V1));
+  } catch {
+    located = regexSpecifiers(source, MALFORMED_SOURCE_FALLBACK_PATTERN_V1);
+  }
+
+  located.sort((left, right) => left.offset - right.offset);
   const specifiers = new Set<string>();
-  for (const match of source.matchAll(SPECIFIER_PATTERN_V1)) {
-    const specifier = match[2];
-    if (specifier && (specifier.startsWith("./") || specifier.startsWith("../"))) {
+  for (const { specifier } of located) {
+    if (!specifiers.has(specifier)) {
       specifiers.add(specifier);
     }
   }

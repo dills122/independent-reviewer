@@ -12,7 +12,11 @@ import {
   PreliminaryAssessmentV1Schema,
 } from "../../src/index.js";
 
-import { materializeFinalReviewCandidateV1 } from "../../src/report/final-review-candidate.js";
+import {
+  materializeFinalCandidate,
+  materializeFinalReviewCandidateV1,
+} from "../../src/report/final-review-candidate.js";
+import { asFinalCandidateV3 } from "../helpers/final-candidate.js";
 
 const digest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
 
@@ -417,5 +421,162 @@ describe("final candidate assembly", () => {
       () => materializeFinalReviewCandidateV1(input, concerns, claims),
       /ready verdict cannot/,
     );
+  });
+
+  it("derives clean verdict bookkeeping instead of repairing a model contradiction", () => {
+    const cleanCandidate = asFinalCandidateV3({
+      ...finalReport(),
+      verdict: "NOT_READY",
+      nextActions: {
+        blockers: ["Run the author-reported tests before approval."],
+        fastFollows: [],
+      },
+    });
+
+    const report = materializeFinalCandidate(
+      cleanCandidate,
+      PreliminaryAssessmentV1Schema.parse(preliminary()),
+      [],
+      {
+        changedPathCoverage: finalReport().changedPathCoverage as never,
+        canonicalInputCoverage: finalReport().canonicalInputCoverage as never,
+      },
+    );
+
+    assert.equal(report.verdict, "READY");
+    assert.deepEqual(report.nextActions.blockers, []);
+  });
+
+  it("derives blocker and follow-up actions from finding severity", () => {
+    const blocking = materializeFinalCandidate(
+      asFinalCandidateV3({
+        ...finalReport(),
+        findings: [
+          {
+            id: "finding_blocker",
+            origin: "FINAL_ONLY",
+            emergenceRationale: "The author packet exposed the failing case.",
+            severity: "P1",
+            title: "Required behavior is broken",
+            scenario: "The changed function receives a valid request.",
+            impact: "The request fails.",
+            evidence: [
+              {
+                path: "src/example.ts",
+                anchor: "LINE_RANGE",
+                side: "HEAD",
+                startLine: 1,
+                endLine: 1,
+                detail: "The changed return produces the wrong result.",
+              },
+            ],
+            correction: "Restore the required return value.",
+          },
+        ],
+        verdict: "READY",
+        nextActions: { blockers: [], fastFollows: [] },
+      }),
+      PreliminaryAssessmentV1Schema.parse(preliminary()),
+      [],
+      {
+        changedPathCoverage: finalReport().changedPathCoverage as never,
+        canonicalInputCoverage: finalReport().canonicalInputCoverage as never,
+      },
+    );
+    assert.equal(blocking.verdict, "NOT_READY");
+    assert.deepEqual(blocking.nextActions.blockers, ["Restore the required return value."]);
+
+    const followUp = materializeFinalCandidate(
+      asFinalCandidateV3({
+        ...finalReport(),
+        findings: [
+          {
+            id: "finding_follow_up",
+            origin: "FINAL_ONLY",
+            emergenceRationale: "The author packet exposed the edge case.",
+            severity: "P2",
+            title: "Edge case is mishandled",
+            scenario: "The changed function receives an uncommon valid request.",
+            impact: "That request returns an incorrect result.",
+            evidence: [
+              {
+                path: "src/example.ts",
+                anchor: "LINE_RANGE",
+                side: "HEAD",
+                startLine: 1,
+                endLine: 1,
+                detail: "The changed return mishandles the edge case.",
+              },
+            ],
+            correction: "Handle the uncommon valid request.",
+          },
+        ],
+        nextActions: { blockers: ["Invented blocker."], fastFollows: ["Keep the API note."] },
+      }),
+      PreliminaryAssessmentV1Schema.parse(preliminary()),
+      [],
+      {
+        changedPathCoverage: finalReport().changedPathCoverage as never,
+        canonicalInputCoverage: finalReport().canonicalInputCoverage as never,
+      },
+    );
+    assert.equal(followUp.verdict, "READY_WITH_FOLLOW_UPS");
+    assert.deepEqual(followUp.nextActions, {
+      blockers: [],
+      fastFollows: ["Handle the uncommon valid request.", "Keep the API note."],
+    });
+  });
+
+  it("derives inability from runner-owned coverage limitations", () => {
+    const report = materializeFinalCandidate(
+      asFinalCandidateV3(finalReport()),
+      PreliminaryAssessmentV1Schema.parse(preliminary()),
+      [],
+      {
+        changedPathCoverage: finalReport().changedPathCoverage as never,
+        canonicalInputCoverage: finalReport().canonicalInputCoverage as never,
+        blockingLimitations: [
+          "Runner snapshot coverage constraint (OMITTED_CONTENT): Generated source was omitted.",
+        ],
+      },
+    );
+
+    assert.equal(report.verdict, "UNABLE_TO_VERIFY");
+    assert.deepEqual(report.limitations, [
+      "Runner snapshot coverage constraint (OMITTED_CONTENT): Generated source was omitted.",
+    ]);
+    assert.deepEqual(report.nextActions.blockers, []);
+  });
+
+  it("turns an unresolved preliminary concern into a runner limitation", () => {
+    const concernText = "The dependency contract was unavailable.";
+    const assessment = PreliminaryAssessmentV1Schema.parse({
+      ...preliminary(),
+      evidenceGaps: [concernText],
+    });
+    const report = materializeFinalCandidate(
+      asFinalCandidateV3({
+        ...finalReport(),
+        preliminaryConcernDispositions: [
+          {
+            kind: "EVIDENCE_GAP",
+            concernIndex: 0,
+            disposition: "REMAINS",
+            rationale: "The author packet did not provide the contract.",
+          },
+        ],
+      }),
+      assessment,
+      [],
+      {
+        changedPathCoverage: finalReport().changedPathCoverage as never,
+        canonicalInputCoverage: finalReport().canonicalInputCoverage as never,
+      },
+    );
+
+    assert.equal(report.verdict, "UNABLE_TO_VERIFY");
+    assert.deepEqual(report.limitations, [
+      `Preliminary evidence gap remains unresolved: ${concernText}`,
+    ]);
   });
 });

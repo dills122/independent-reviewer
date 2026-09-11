@@ -442,6 +442,132 @@ describe("captureGitSnapshotV1", () => {
     }
   });
 
+  it("omits credential-bearing unchanged referenced source without storing its bytes", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      await writeFile(
+        join(repositoryPath, "credential.ts"),
+        'export const token = "AKIAABCDEFGHIJKLMNOP";\n',
+      );
+      await git(repositoryPath, "add", "credential.ts");
+      await git(repositoryPath, "commit", "-m", "add referenced source");
+      await git(repositoryPath, "switch", "-c", "feature/reference-secret");
+      await writeFile(
+        join(repositoryPath, "modified.ts"),
+        'import { token } from "./credential.js";\nexport const value = token;\n',
+      );
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const omission = captured.manifest.omissions.find(
+        (candidate) => candidate.scope === "credential.ts",
+      );
+      const blobTexts = [...captured.blobs.values()].map((bytes) =>
+        Buffer.from(bytes).toString("utf8"),
+      );
+
+      assert.equal(
+        captured.manifest.referencedSources.some((source) => source.path === "credential.ts"),
+        false,
+      );
+      assert.equal(omission?.reason, "OTHER");
+      assert.match(omission?.detail ?? "", /content policy.*AWS access key id/i);
+      assert.equal(
+        blobTexts.some((content) => content.includes("AKIAABCDEFGHIJKLMNOP")),
+        false,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("omits referenced sources with credential-shaped paths before capturing them", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      await mkdir(join(repositoryPath, ".aws"), { recursive: true });
+      await writeFile(join(repositoryPath, ".aws", "config.ts"), "export const region = 'test';\n");
+      await writeFile(join(repositoryPath, ".env.production"), "SAFE_TEST_VALUE=true\n");
+      await writeFile(join(repositoryPath, "server.key"), "test key material\n");
+      await git(repositoryPath, "add", "-f", ".aws/config.ts", ".env.production", "server.key");
+      await git(repositoryPath, "commit", "-m", "add sensitive referenced paths");
+      await git(repositoryPath, "switch", "-c", "feature/reference-secret-paths");
+      await writeFile(
+        join(repositoryPath, "modified.ts"),
+        [
+          'import "./.aws/config.js";',
+          'import "./.env.production";',
+          'import "./server.key";',
+          "export const value = true;",
+          "",
+        ].join("\n"),
+      );
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const omittedByScope = new Map(
+        captured.manifest.omissions.map((omission) => [omission.scope, omission]),
+      );
+      const referencedPaths = new Set(
+        captured.manifest.referencedSources.map((source) => source.path),
+      );
+      const blobTexts = [...captured.blobs.values()].map((bytes) =>
+        Buffer.from(bytes).toString("utf8"),
+      );
+
+      for (const path of [".aws/config.ts", ".env.production", "server.key"]) {
+        assert.equal(referencedPaths.has(path), false, `${path} must not be referenced context`);
+        assert.equal(omittedByScope.get(path)?.reason, "OTHER");
+        assert.match(omittedByScope.get(path)?.detail ?? "", /secret filename policy/i);
+      }
+      for (const content of ["export const region", "SAFE_TEST_VALUE", "test key material"]) {
+        assert.equal(
+          blobTexts.some((blob) => blob.includes(content)),
+          false,
+          `${content} must not be stored`,
+        );
+      }
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("scans changed and referenced source content beyond the former prefix boundary", async () => {
+    const repositoryPath = await createRepository();
+    const padding = `// ${"x".repeat(256 * 1024)}\n`;
+    const credential = 'export const token = "AKIAABCDEFGHIJKLMNOP";\n';
+    try {
+      await writeFile(join(repositoryPath, "large-reference.ts"), padding + credential);
+      await git(repositoryPath, "add", "large-reference.ts");
+      await git(repositoryPath, "commit", "-m", "add large referenced source");
+      await git(repositoryPath, "switch", "-c", "feature/late-secret-content");
+      await writeFile(join(repositoryPath, "large-changed.ts"), padding + credential);
+      await writeFile(
+        join(repositoryPath, "modified.ts"),
+        'import { token } from "./large-reference.js";\nexport const value = token;\n',
+      );
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const changedExclusion = captured.manifest.exclusions.find(
+        (entry) => entry.path === "large-changed.ts",
+      );
+      const referencedOmission = captured.manifest.omissions.find(
+        (entry) => entry.scope === "large-reference.ts",
+      );
+      const blobTexts = [...captured.blobs.values()].map((bytes) =>
+        Buffer.from(bytes).toString("utf8"),
+      );
+
+      assert.equal(changedExclusion?.reason, "SECRET_CONTENT");
+      assert.match(changedExclusion?.detail ?? "", /AWS access key id/);
+      assert.equal(referencedOmission?.reason, "OTHER");
+      assert.match(referencedOmission?.detail ?? "", /content policy.*AWS access key id/i);
+      assert.equal(
+        blobTexts.some((content) => content.includes("AKIAABCDEFGHIJKLMNOP")),
+        false,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("excludes caller-supplied path patterns", async () => {
     const repositoryPath = await createRepository();
     try {

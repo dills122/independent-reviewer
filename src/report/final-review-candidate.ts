@@ -18,39 +18,111 @@ import {
 export type RunnerOwnedFinalCoverageV1 = Pick<
   FinalReviewReportV1,
   "changedPathCoverage" | "canonicalInputCoverage"
->;
+> & { blockingLimitations?: string[] };
 
 const RUNNER_COVERAGE_LIMITATION_PREFIX =
   "Runner coverage is incomplete because the blind assessment did not record inspection of: ";
 
+interface RunnerBookkeepingCandidateV1 extends Record<string, unknown> {
+  findings: Array<{ severity: string; correction: string }>;
+  limitations: string[];
+  preliminaryConcernDispositions: Array<{
+    disposition: string;
+    kind?: string | undefined;
+    preliminaryConcern?: string | undefined;
+  }>;
+  nextActions: { blockers: string[]; fastFollows: string[] };
+  ruleAssessments?: Array<{ ruleId: string; status: string }>;
+}
+
 function applyRunnerCoverage(
-  candidate: Record<string, unknown> & {
-    limitations: string[];
-    verdict: string;
-  },
+  candidate: RunnerBookkeepingCandidateV1,
   coverage: RunnerOwnedFinalCoverageV1,
-): Record<string, unknown> {
+): RunnerBookkeepingCandidateV1 &
+  Pick<FinalReviewReportV1, "changedPathCoverage" | "canonicalInputCoverage"> {
+  const { blockingLimitations = [], ...finalCoverage } = coverage;
   const unassessed = coverage.changedPathCoverage
     .filter((entry) => entry.status === "UNASSESSED")
     .map((entry) => entry.path);
   const unassessedInputs = coverage.canonicalInputCoverage
     .filter((entry) => entry.status === "UNASSESSED")
     .map((entry) => entry.canonicalInputId);
-  if (unassessed.length === 0 && unassessedInputs.length === 0) {
-    return { ...candidate, ...coverage };
-  }
   const missing = [...unassessed, ...unassessedInputs];
-  const limitation = `${RUNNER_COVERAGE_LIMITATION_PREFIX}${missing.join(", ")}.`;
+  const coverageLimitations = missing.length
+    ? [`${RUNNER_COVERAGE_LIMITATION_PREFIX}${missing.join(", ")}.`]
+    : [];
+  const limitations = [
+    ...new Set([...candidate.limitations, ...coverageLimitations, ...blockingLimitations]),
+  ];
   return {
     ...candidate,
-    ...coverage,
-    limitations: candidate.limitations.includes(limitation)
-      ? candidate.limitations
-      : [...candidate.limitations, limitation],
-    verdict:
-      candidate.verdict === "READY" || candidate.verdict === "READY_WITH_FOLLOW_UPS"
-        ? "UNABLE_TO_VERIFY"
-        : candidate.verdict,
+    ...finalCoverage,
+    limitations,
+  };
+}
+
+function applyRunnerBookkeeping(
+  candidate: RunnerBookkeepingCandidateV1,
+  standards: boolean,
+): Record<string, unknown> {
+  const blockingFindings = candidate.findings.filter((finding) =>
+    ["P0", "P1", "REQUIRED"].includes(finding.severity),
+  );
+  const nonBlockingCorrections = candidate.findings
+    .filter((finding) => !["P0", "P1", "REQUIRED"].includes(finding.severity))
+    .map((finding) => finding.correction);
+  const blockers = [...new Set(blockingFindings.map((finding) => finding.correction))];
+  const fastFollows = [
+    ...new Set([...nonBlockingCorrections, ...candidate.nextActions.fastFollows]),
+  ];
+  const unresolvedConcernLimitations = candidate.preliminaryConcernDispositions.flatMap(
+    (disposition) => {
+      if (disposition.disposition !== "REMAINS" || !disposition.preliminaryConcern) return [];
+      const kind = disposition.kind === "EVIDENCE_GAP" ? "evidence gap" : "limitation";
+      return [`Preliminary ${kind} remains unresolved: ${disposition.preliminaryConcern}`];
+    },
+  );
+  const unassessedRuleIds = (candidate.ruleAssessments ?? [])
+    .filter((assessment) => assessment.status === "UNASSESSED")
+    .map((assessment) => assessment.ruleId)
+    .sort();
+  const conflictedRuleIds = (candidate.ruleAssessments ?? [])
+    .filter((assessment) => assessment.status === "CONFLICT")
+    .map((assessment) => assessment.ruleId)
+    .sort();
+  const standardsLimitations = [
+    ...(unassessedRuleIds.length
+      ? [`Standards remain unassessed: ${unassessedRuleIds.join(", ")}.`]
+      : []),
+    ...(conflictedRuleIds.length
+      ? [`Standards conflict remains unresolved: ${conflictedRuleIds.join(", ")}.`]
+      : []),
+  ];
+  const limitations = [
+    ...new Set([
+      ...candidate.limitations,
+      ...unresolvedConcernLimitations,
+      ...standardsLimitations,
+    ]),
+  ];
+  const incomplete =
+    limitations.length > 0 ||
+    candidate.preliminaryConcernDispositions.some(
+      (disposition) => disposition.disposition === "REMAINS",
+    );
+  const verdict =
+    (standards && incomplete) || (blockingFindings.length === 0 && incomplete)
+      ? "UNABLE_TO_VERIFY"
+      : blockingFindings.length > 0
+        ? "NOT_READY"
+        : fastFollows.length > 0
+          ? "READY_WITH_FOLLOW_UPS"
+          : "READY";
+  return {
+    ...candidate,
+    limitations,
+    verdict,
+    nextActions: { blockers, fastFollows },
   };
 }
 
@@ -72,6 +144,7 @@ function materializeExpandedCandidate(
   preliminary: Pick<PreliminaryAssessmentV1, "evidenceGaps" | "limitations">,
   claims: AuthorPacketV1["claimedVerification"],
   standards = false,
+  runnerOwnsBookkeeping = false,
 ): ReviewReport {
   const candidate = standards
     ? StandardsExpandedCandidateV2Schema.parse(value)
@@ -94,7 +167,7 @@ function materializeExpandedCandidate(
       `Preliminary ${kind} dispositions`,
     );
   }
-  const report = (standards ? StandardsReportV2Schema : FinalReviewReportV1Schema).parse({
+  const expandedCandidate = {
     ...candidate,
     authorVerificationClaims: candidate.authorVerificationClaims.map((claim) => {
       const source = claims[claim.claimIndex];
@@ -112,7 +185,12 @@ function materializeExpandedCandidate(
         preliminaryConcern: concerns[disposition.kind][concernIndex],
       }),
     ),
-  });
+  };
+  const report = (standards ? StandardsReportV2Schema : FinalReviewReportV1Schema).parse(
+    runnerOwnsBookkeeping
+      ? applyRunnerBookkeeping(expandedCandidate, standards)
+      : expandedCandidate,
+  );
   // Missing evidence requests are review workflow, not permission to invent standards or edit code.
   if (
     report.schemaVersion === 2 &&
@@ -217,6 +295,7 @@ export function materializeFinalCandidate(
     preliminary,
     claims,
     standards,
+    true,
   );
 }
 

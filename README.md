@@ -157,7 +157,14 @@ Use `--base <ref>` to override base resolution and `--output <new-directory>`
 to choose the packet directory. Packets default to `<repository root>/.review-runs/<snapshot-id>`,
 not a path relative to the current directory. `prepare` never overwrites an
 existing packet. It stores the manifest, canonical inputs, optional author
-packet, and captured blobs as separate private files. `inspect --json` prints a versioned
+packet, language-neutral context map, and captured blobs as separate private
+files. Supported JavaScript, TypeScript/TSX, Python, Go, and Java files gain
+Tree-sitter declaration regions; other languages retain file-level fallback
+coverage. Declaration enrichment is bounded, parser uncertainty stays visible,
+and packet inspection checks every range against frozen blob content. A review
+persists a deterministic `review-unit-plan.json` before provider calls and
+never attaches supporting context dropped from the transmitted brief.
+`inspect --json` prints a versioned
 [`InspectionReportV1`](schemas/inspection-report-v1.schema.json) — snapshot
 manifest, canonical inputs, blob count, config reference, and
 `authorPacketPresent`. The author packet's *existence* is reported; its content

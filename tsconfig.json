@@ -15,7 +15,7 @@
     "sourceMap": true,
     "strict": true,
     "target": "ES2024",
-    "types": ["node"]
+    "types": ["node", "emscripten"]
   },
   "include": ["scripts/**/*.ts", "src/**/*.ts", "test/**/*.ts"]
 }

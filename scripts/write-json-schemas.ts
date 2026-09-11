@@ -8,6 +8,7 @@ import {
   NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,
   StandardsReviewBriefV2Schema,
 } from "../src/contracts/neutral-review-brief.js";
+import { REVIEW_CONTEXT_MAP_V1_JSON_SCHEMA } from "../src/contracts/review-context-map.js";
 import { REVIEW_REQUEST_V1_JSON_SCHEMA } from "../src/contracts/review-request.js";
 import {
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
@@ -17,6 +18,7 @@ import {
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
 } from "../src/contracts/review-results.js";
 import { REVIEW_RUN_CONFIG_V3_JSON_SCHEMA } from "../src/contracts/review-run-config.js";
+import { REVIEW_UNIT_PLAN_V1_JSON_SCHEMA } from "../src/contracts/review-unit-plan.js";
 import { SNAPSHOT_MANIFEST_V1_JSON_SCHEMA } from "../src/contracts/snapshot-manifest.js";
 import {
   STANDARDS_CANDIDATE_V2_JSON_SCHEMA,
@@ -58,6 +60,8 @@ const schemaArtifacts = [
   ["review-run-config-v3.schema.json", REVIEW_RUN_CONFIG_V3_JSON_SCHEMA],
   ["inspection-report-v1.schema.json", INSPECTION_REPORT_V1_JSON_SCHEMA],
   ["snapshot-manifest-v1.schema.json", SNAPSHOT_MANIFEST_V1_JSON_SCHEMA],
+  ["review-context-map-v1.schema.json", REVIEW_CONTEXT_MAP_V1_JSON_SCHEMA],
+  ["review-unit-plan-v1.schema.json", REVIEW_UNIT_PLAN_V1_JSON_SCHEMA],
 ] as const;
 
 await Promise.all(
