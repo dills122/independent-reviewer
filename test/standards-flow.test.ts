@@ -157,8 +157,7 @@ for (const scenario of [
             stage: "FINDING_VERIFICATION",
             snapshotDigest: brief.blindReviewEvidence.snapshotManifest.snapshotDigest,
             briefDigest: brief.blindReviewEvidence.briefDigest,
-            assessments: brief.preliminaryAssessment.findings.map((finding: { id: string }) => ({
-              preliminaryFindingId: finding.id,
+            assessments: brief.preliminaryFindings.map(() => ({
               status: "CONFIRMED",
               rationale: "Changed evidence demonstrates the selected naming-rule violation.",
             })),

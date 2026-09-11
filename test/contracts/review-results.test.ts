@@ -429,7 +429,7 @@ describe("final candidate assembly", () => {
       verdict: "NOT_READY",
       nextActions: {
         blockers: ["Run the author-reported tests before approval."],
-        fastFollows: [],
+        fastFollows: ["Add validation for inputs outside the documented domain."],
       },
     });
 
@@ -444,7 +444,7 @@ describe("final candidate assembly", () => {
     );
 
     assert.equal(report.verdict, "READY");
-    assert.deepEqual(report.nextActions.blockers, []);
+    assert.deepEqual(report.nextActions, { blockers: [], fastFollows: [] });
   });
 
   it("derives blocker and follow-up actions from finding severity", () => {
@@ -523,7 +523,7 @@ describe("final candidate assembly", () => {
     assert.equal(followUp.verdict, "READY_WITH_FOLLOW_UPS");
     assert.deepEqual(followUp.nextActions, {
       blockers: [],
-      fastFollows: ["Handle the uncommon valid request.", "Keep the API note."],
+      fastFollows: ["Handle the uncommon valid request."],
     });
   });
 

@@ -25,14 +25,15 @@ bookkeeping and make the general tool brittle.
 
 After persisting a non-empty preliminary assessment, orchestration makes one
 fresh blind finding-verification call. It receives the same frozen blind evidence
-and the persisted preliminary assessment, but no author packet or prior reviewer
-conversation. It may assess only existing finding IDs and cannot add findings.
+and an ordered projection of the persisted preliminary findings, but no author
+packet, prior reviewer conversation, or finding IDs. It cannot add findings.
 
-Each preliminary finding receives exactly one `CONFIRMED`, `REJECTED`, or
-`INCONCLUSIVE` assessment with a concise rationale. The verifier must try to
-falsify the finding against canonical inputs, selected rules, changed evidence,
-and stated valid-input domains. Unknown, duplicate, or missing finding IDs fail
-closed before author disclosure.
+Verifier returns one ordered `CONFIRMED`, `REJECTED`, or `INCONCLUSIVE` judgment
+with a concise rationale for each input finding. It must try to falsify the finding
+against canonical inputs, selected rules, changed evidence, and stated valid-input
+domains. Provider schema fixes judgment count. Runner binds each judgment to its
+frozen finding ID by position and fails closed on a count mismatch before author
+disclosure. Provider never reproduces identity bookkeeping.
 
 The verification artifact is persisted before `AUTHOR_DELIVERED`. Final
 reconciliation receives it, and runner semantics require every `REJECTED`
@@ -76,5 +77,7 @@ provider cost.
 - Worst-case preflight reservation increases even when a clean run later skips
   the selective call.
 - Verification failure remains visible and cannot silently become a clean report.
+- Duplicate or missing provider-authored finding IDs are structurally impossible;
+  finding identity, completeness, and ordering remain runner-owned.
 - Verification does not discover missed defects; broader recall still depends on
   review units, evidence quality, and later evaluation.

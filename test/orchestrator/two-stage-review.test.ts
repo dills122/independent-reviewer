@@ -209,8 +209,7 @@ function confirmedFindingVerificationResponse(
     stage: "FINDING_VERIFICATION",
     snapshotDigest: input.blindReviewEvidence.snapshotManifest.snapshotDigest,
     briefDigest: input.blindReviewEvidence.briefDigest,
-    assessments: input.preliminaryAssessment.findings.map((finding: { id: string }) => ({
-      preliminaryFindingId: finding.id,
+    assessments: input.preliminaryFindings.map(() => ({
       status: "CONFIRMED",
       rationale: "The cited changed evidence supports this in-scope finding.",
     })),
@@ -340,9 +339,14 @@ describe("two-stage review orchestrator", () => {
         }
         if (providerRequest.stage === "FINDING_VERIFICATION") {
           assert.doesNotMatch(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
+          assert.doesNotMatch(
+            JSON.stringify(providerRequest.responseSchema.schema),
+            /preliminaryFindingId/,
+          );
           assert.equal(providerRequest.messages.length, 2);
           const input = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
-          assert.equal(input.preliminaryAssessment.findings[0].id, "finding_invalid_domain");
+          assert.equal(input.preliminaryFindings.length, 1);
+          assert.doesNotMatch(JSON.stringify(input.preliminaryFindings), /finding_invalid_domain/);
           return response({
             schemaVersion: 1,
             stage: "FINDING_VERIFICATION",
@@ -350,7 +354,6 @@ describe("two-stage review orchestrator", () => {
             briefDigest: input.blindReviewEvidence.briefDigest,
             assessments: [
               {
-                preliminaryFindingId: "finding_invalid_domain",
                 status: "REJECTED",
                 rationale:
                   "Page zero is outside the stated valid input domain and no validation behavior is required.",
@@ -501,13 +504,7 @@ describe("two-stage review orchestrator", () => {
           stage: "FINDING_VERIFICATION",
           snapshotDigest: input.blindReviewEvidence.snapshotManifest.snapshotDigest,
           briefDigest: input.blindReviewEvidence.briefDigest,
-          assessments: [
-            {
-              preliminaryFindingId: "finding_unknown",
-              status: "CONFIRMED",
-              rationale: "This identifier was not present in the preliminary assessment.",
-            },
-          ],
+          assessments: [],
         });
       },
     };
@@ -515,7 +512,7 @@ describe("two-stage review orchestrator", () => {
     try {
       await assert.rejects(
         () => runTwoStageReviewV1(packetPath, config, provider),
-        /finding verification must assess every preliminary finding exactly once/i,
+        /exactly one judgment per frozen finding/i,
       );
       assert.deepEqual(
         calls.map((call) => call.stage),
@@ -841,7 +838,7 @@ describe("two-stage review orchestrator", () => {
       auditRequest: mockAuditRequest,
       complete: async () => {
         calls += 1;
-        return response({ verdict: "READY" }, 70_000);
+        return response({ verdict: "READY" }, 90_000);
       },
     };
 

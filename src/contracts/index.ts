@@ -33,10 +33,16 @@ export {
   sha256BytesHex,
 } from "./json-document.js";
 export { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
-export type { FindingVerificationV1 } from "./finding-verification.js";
+export type {
+  FindingVerificationCandidateV1,
+  FindingVerificationV1,
+} from "./finding-verification.js";
 export {
+  assembleFindingVerificationV1,
   assertFindingVerificationScopeV1,
+  FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
   FINDING_VERIFICATION_V1_JSON_SCHEMA,
+  FindingVerificationCandidateV1Schema,
   FindingVerificationV1Schema,
 } from "./finding-verification.js";
 export type { NeutralReviewBriefV1, ReviewBrief } from "./neutral-review-brief.js";

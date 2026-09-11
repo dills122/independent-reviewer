@@ -72,9 +72,7 @@ function applyRunnerBookkeeping(
     .filter((finding) => !["P0", "P1", "REQUIRED"].includes(finding.severity))
     .map((finding) => finding.correction);
   const blockers = [...new Set(blockingFindings.map((finding) => finding.correction))];
-  const fastFollows = [
-    ...new Set([...nonBlockingCorrections, ...candidate.nextActions.fastFollows]),
-  ];
+  const fastFollows = [...new Set(nonBlockingCorrections)];
   const unresolvedConcernLimitations = candidate.preliminaryConcernDispositions.flatMap(
     (disposition) => {
       if (disposition.disposition !== "REMAINS" || !disposition.preliminaryConcern) return [];

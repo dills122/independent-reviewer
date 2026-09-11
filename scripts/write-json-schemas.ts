@@ -4,7 +4,10 @@ import {
   INSPECTION_REPORT_V1_JSON_SCHEMA,
   StandardsInspectionReportV2Schema,
 } from "../src/contracts/inspection-report.js";
-import { FINDING_VERIFICATION_V1_JSON_SCHEMA } from "../src/contracts/finding-verification.js";
+import {
+  FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
+  FINDING_VERIFICATION_V1_JSON_SCHEMA,
+} from "../src/contracts/finding-verification.js";
 import {
   NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,
   StandardsReviewBriefV2Schema,
@@ -38,6 +41,7 @@ const schemaDirectory = resolve("schemas");
 await mkdir(schemaDirectory, { recursive: true });
 
 const schemaArtifacts = [
+  ["finding-verification-candidate-v1.schema.json", FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA],
   ["finding-verification-v1.schema.json", FINDING_VERIFICATION_V1_JSON_SCHEMA],
   ["standards-profile-v1.schema.json", STANDARDS_PROFILE_V1_JSON_SCHEMA],
   ["standards-profile-v2.schema.json", STANDARDS_PROFILE_V2_JSON_SCHEMA],

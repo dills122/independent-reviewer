@@ -234,6 +234,19 @@ function constrainLedgers(root: JsonSchemaNodeV1, options: ConstrainResponseSche
   );
 }
 
+/** Final next actions are runner-owned; provider may not create unbound fast follows. */
+function constrainRunnerOwnedFastFollows(root: JsonSchemaNodeV1): boolean {
+  const nextActions = optionalNode(optionalProperties(root).nextActions);
+  if (!nextActions) return false;
+  const fastFollows = requireNode(
+    requireProperties(nextActions, "nextActions").fastFollows,
+    "nextActions.fastFollows",
+  );
+  fastFollows.minItems = 0;
+  fastFollows.maxItems = 0;
+  return true;
+}
+
 /**
  * Pass 4: bounds every prose string and every array the earlier passes left unbounded.
  *
@@ -287,6 +300,7 @@ export function constrainResponseSchemaV1(
   pinIdentityConstants(root, options.identities);
   constrainEvidencePaths(root, options.evidencePaths);
   constrainLedgers(root, options);
+  const hasRunnerOwnedFastFollows = constrainRunnerOwnedFastFollows(root);
   if (options.ruleIds)
     visitNodes(root, (node, name) => {
       if ((name === "ruleIds" || name === "conflictingRuleIds") && node.type === "array") {
@@ -300,6 +314,7 @@ export function constrainResponseSchemaV1(
       }
     });
   const appliedArrayLimits = boundUnspecifiedProse(root, Math.max(options.changedPaths.length, 1));
+  if (hasRunnerOwnedFastFollows) appliedArrayLimits.fastFollows = 0;
   const concerns = optionalNode(optionalProperties(root).preliminaryConcernDispositions);
   if (concerns) {
     // Reserve the widest count/index digits now; actual scope only shrinks after call one.
@@ -315,24 +330,20 @@ export function constrainResponseSchemaV1(
   return { schema: root, appliedArrayLimits };
 }
 
-/** Pins the small adversarial ledger to the exact preliminary findings it must assess. */
-export function constrainFindingVerificationSchemaV1(
+/** Pins ordered provider judgments to the exact number the runner must bind. */
+export function constrainFindingVerificationCandidateSchemaV1(
   schema: unknown,
-  findingIds: string[],
+  findingCount: number,
   identities: ConstrainResponseSchemaOptionsV1["identities"],
 ): ConstrainedResponseSchemaV1 {
   const root = requireNode(structuredClone(schema), "(root)");
   pinIdentityConstants(root, identities);
   const properties = requireProperties(root, "(root)");
   const assessments = requireNode(properties.assessments, "assessments");
-  const item = requireNode(assessments.items, "assessments.items");
-  const itemProperties = requireProperties(item, "assessments.items");
-  requireNode(itemProperties.preliminaryFindingId, "assessments.items.preliminaryFindingId").enum =
-    findingIds;
-  assessments.minItems = findingIds.length;
-  assessments.maxItems = findingIds.length;
+  assessments.minItems = findingCount;
+  assessments.maxItems = findingCount;
   const appliedArrayLimits = boundUnspecifiedProse(root, 1);
-  appliedArrayLimits.assessments = findingIds.length;
+  appliedArrayLimits.assessments = findingCount;
   return { schema: root, appliedArrayLimits };
 }
 

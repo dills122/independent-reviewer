@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import {
+  assembleFindingVerificationV1,
   assertFindingVerificationScopeV1,
+  FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
+  FindingVerificationCandidateV1Schema,
   FINDING_VERIFICATION_V1_JSON_SCHEMA,
   FindingVerificationV1Schema,
 } from "../../src/contracts/finding-verification.js";
@@ -27,6 +30,37 @@ function verification() {
 }
 
 describe("finding verification contract", () => {
+  it("binds provider judgments to frozen finding IDs without asking provider to repeat IDs", () => {
+    const candidate = FindingVerificationCandidateV1Schema.parse({
+      schemaVersion: 1,
+      stage: "FINDING_VERIFICATION",
+      snapshotDigest: digest,
+      briefDigest: digest,
+      assessments: [
+        { status: "CONFIRMED", rationale: "First finding is supported." },
+        { status: "REJECTED", rationale: "Second finding is outside the valid domain." },
+      ],
+    });
+
+    const assembled = assembleFindingVerificationV1(candidate, ["finding_first", "finding_second"]);
+
+    assert.deepEqual(
+      assembled.assessments.map(({ preliminaryFindingId, status }) => ({
+        preliminaryFindingId,
+        status,
+      })),
+      [
+        { preliminaryFindingId: "finding_first", status: "CONFIRMED" },
+        { preliminaryFindingId: "finding_second", status: "REJECTED" },
+      ],
+    );
+    assert.doesNotMatch(JSON.stringify(candidate), /preliminaryFindingId/);
+    assert.throws(
+      () => assembleFindingVerificationV1(candidate, ["finding_first"]),
+      /exactly one judgment/i,
+    );
+  });
+
   it("accepts one bounded assessment for every preliminary finding", () => {
     const parsed = FindingVerificationV1Schema.parse(verification());
     assert.doesNotThrow(() => assertFindingVerificationScopeV1(parsed, ["finding_boundary"]));
@@ -49,6 +83,10 @@ describe("finding verification contract", () => {
   });
 
   it("matches the committed JSON Schema", async () => {
+    assert.deepEqual(
+      JSON.parse(await readFile("schemas/finding-verification-candidate-v1.schema.json", "utf8")),
+      FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
+    );
     assert.deepEqual(
       JSON.parse(await readFile("schemas/finding-verification-v1.schema.json", "utf8")),
       FINDING_VERIFICATION_V1_JSON_SCHEMA,
