@@ -239,7 +239,8 @@ blind assessment instead of asking the model to repeat those ledgers,
 and downgrades a ready candidate to Unable to verify when that runner-owned coverage remains
 unassessed,
 using exact original author-claim and preliminary-concern text, validates
-identities and evidence paths,
+identities and evidence paths, rejects citations outside transmitted hunks even when the line exists
+elsewhere in the frozen file,
 requires exact changed-path/canonical-input coverage and preliminary-concern
 dispositions, narrows the first final-call concern schema to the persisted
 preliminary scope (zero concerns permits only an empty ledger), validates line/symbol anchors against frozen blobs, and renders

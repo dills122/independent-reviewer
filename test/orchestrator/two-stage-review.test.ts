@@ -63,17 +63,19 @@ async function arrangePacket(
   authorVerificationSummary = "Reported by author.",
   includeOutOfScopePath = false,
   includeAdditionalSource = false,
+  reviewedBefore = "before\n",
+  reviewedAfter = "after\n",
 ): Promise<{ repositoryPath: string; packetPath: string }> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-flow-"));
   await git(repositoryPath, "init", "--initial-branch=main");
   await git(repositoryPath, "config", "user.name", "Flow Test");
   await git(repositoryPath, "config", "user.email", "flow@example.invalid");
   await git(repositoryPath, "config", "commit.gpgsign", "false");
-  await writeFile(join(repositoryPath, "reviewed.ts"), "before\n");
+  await writeFile(join(repositoryPath, "reviewed.ts"), reviewedBefore);
   await git(repositoryPath, "add", ".");
   await git(repositoryPath, "commit", "-m", "initial");
   await git(repositoryPath, "switch", "-c", "feature/flow");
-  await writeFile(join(repositoryPath, "reviewed.ts"), "after\n");
+  await writeFile(join(repositoryPath, "reviewed.ts"), reviewedAfter);
   if (includeExcludedPath) {
     await writeFile(join(repositoryPath, ".env"), "DO_NOT_SEND=secret\n");
   }
@@ -268,6 +270,75 @@ function collectArrayLimits(schema: unknown, propertyName: string): number[] {
 }
 
 describe("two-stage review orchestrator", () => {
+  it("rejects a frozen line citation that was not present in transmitted evidence", async () => {
+    const before = Array.from({ length: 80 }, (_, index) => `line ${index + 1}`).join("\n");
+    const afterLines = before.split("\n");
+    afterLines[41] = "changed line 42";
+    const { repositoryPath, packetPath } = await arrangePacket(
+      false,
+      "AUTHOR_SECRET",
+      undefined,
+      undefined,
+      false,
+      false,
+      `${before}\n`,
+      `${afterLines.join("\n")}\n`,
+    );
+    let calls = 0;
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls += 1;
+        assert.equal(providerRequest.stage, "PRELIMINARY");
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        assert.match(brief.initialEvidence[0].content, /changed line 42/);
+        assert.doesNotMatch(brief.initialEvidence[0].content, /line 10/);
+        return response({
+          schemaVersion: 1,
+          stage: "PRELIMINARY",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "The change has a blocking defect.",
+          inspectedPaths: ["reviewed.ts"],
+          canonicalInputCoverage: canonicalInputCoverage(),
+          findings: [
+            {
+              id: "finding_unseen_line",
+              severity: "P1",
+              title: "Unsupported finding",
+              scenario: "The reviewer cites source it was not sent.",
+              impact: "The claimed evidence cannot support the finding.",
+              evidence: [
+                {
+                  path: "reviewed.ts",
+                  anchor: "LINE_RANGE",
+                  side: "HEAD",
+                  startLine: 10,
+                  endLine: 10,
+                  detail: "Line 10 allegedly proves the defect.",
+                },
+              ],
+              correction: "Cite transmitted changed evidence.",
+            },
+          ],
+          evidenceGaps: [],
+          limitations: [],
+          nextAction: "REQUEST_AUTHOR_PACKET",
+        });
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () => runTwoStageReviewV1(packetPath, config, provider),
+        /not included in transmitted evidence/i,
+      );
+      assert.equal(calls, 1);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("assembles exact final coverage from frozen scope without asking the model to repeat ledgers", async () => {
     const { repositoryPath, packetPath } = await arrangePacket(
       false,

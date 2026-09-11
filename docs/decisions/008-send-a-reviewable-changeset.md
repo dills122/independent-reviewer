@@ -84,8 +84,9 @@ declared exclusion reason that capture never produces.
 Initial evidence becomes the unified diff of each reviewable path with bounded
 context, not both full sides. Native Git renders reconstructed frozen BASE/HEAD
 files with explicit algorithm and helper controls; `parse-diff` validates and
-structures hunks. Manifest remains identity/status authority. Findings already
-cite BASE/HEAD coordinates, which hunk headers carry, so anchoring is unaffected.
+structures hunks. Manifest remains identity/status authority. Findings cite BASE/HEAD
+coordinates carried by hunk headers, and validation rejects coordinates outside transmitted
+hunks even when that line exists elsewhere in the frozen source.
 
 A whole side is still sent when the file is small enough that the diff saves
 nothing, or when the change touches a large enough fraction of the file that
