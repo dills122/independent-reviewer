@@ -29,9 +29,7 @@ function verification() {
 describe("finding verification contract", () => {
   it("accepts one bounded assessment for every preliminary finding", () => {
     const parsed = FindingVerificationV1Schema.parse(verification());
-    assert.doesNotThrow(() =>
-      assertFindingVerificationScopeV1(parsed, ["finding_boundary"]),
-    );
+    assert.doesNotThrow(() => assertFindingVerificationScopeV1(parsed, ["finding_boundary"]));
   });
 
   it("rejects duplicate, missing, and unknown preliminary finding IDs", () => {
@@ -43,16 +41,9 @@ describe("finding verification contract", () => {
       ],
     };
     assert.throws(() => FindingVerificationV1Schema.parse(duplicate), /unique/i);
+    assert.throws(() => assertFindingVerificationScopeV1(verification(), []), /exactly once/i);
     assert.throws(
-      () => assertFindingVerificationScopeV1(verification(), []),
-      /exactly once/i,
-    );
-    assert.throws(
-      () =>
-        assertFindingVerificationScopeV1(verification(), [
-          "finding_boundary",
-          "finding_other",
-        ]),
+      () => assertFindingVerificationScopeV1(verification(), ["finding_boundary", "finding_other"]),
       /exactly once/i,
     );
   });

@@ -17,6 +17,8 @@ Runner-owned final bookkeeping is recorded in
 [ADR-010](decisions/010-derive-final-bookkeeping-in-runner.md).
 Explicit standards evidence selection is recorded in
 [ADR-011](decisions/011-separate-reference-selection-from-file-classification.md).
+Fresh blind finding verification is recorded in
+[ADR-012](decisions/012-adversarially-verify-preliminary-findings.md).
 
 
 ## Standards review mode (v2)
@@ -24,8 +26,10 @@ Explicit standards evidence selection is recorded in
 Standards mode implements the agreed [product plan](research/2026-09-09-first-use-product-plan.md).
 It accepts selected standards and a separate author overview without business
 requirements or an implementation plan. The existing v1 mode remains available.
-Call one sees frozen code and standards only; call two receives the persisted
-assessment plus the overview collected upfront. Standards inputs are validated
+The blind call sees frozen code and standards only; final reconciliation receives
+the persisted assessment plus the overview collected upfront. When preliminary
+findings exist, a fresh verifier challenges them before final reconciliation and
+without seeing the overview. Standards inputs are validated
 profile JSON in digest-bound PROJECT_GUIDANCE documents; no placeholder plan or
 requirements are synthesized. Brief v2 binds the mode and selected inputs under
 a separate identity profile. Packet metadata v2 binds the author digest before
@@ -112,11 +116,12 @@ SDK. See [ADR-002](decisions/002-use-typescript-node-runtime.md).
 2. **Validate.** Hash captured content and write the manifest. Check scope, file policy, size limits, and model capabilities. Produce a local dry-run packet showing exactly what will be sent. Never silently truncate a diff or silently exclude relevant files.
 3. **Blind review.** Start an external conversation containing trusted review policy, neutral requirements, scope, diff, tests, and initial surrounding code. Withhold the author packet at the orchestrator boundary. The shipped model receives one fixed payload; on-demand evidence reads remain deferred under ADR-005.
 4. **Persist preliminary assessment.** Require a structured preliminary findings and coverage ledger before unlocking the author packet. Persist the response and its input identity. This is a durable artifact; it cannot be overwritten by reconciliation.
-5. **Reconcile author claims.** Continue the external review conversation with the author packet. Ask the reviewer to confirm, contradict, or mark claims unverified and explain any changes to preliminary findings. Record missing author explanation explicitly if absent.
-6. **Validate and report.** Validate report shape, snapshot identity, path/line anchors, verification provenance, and required coverage fields. Preserve limitations; invalid output, incomplete scope, or exhausted context cannot become an empty successful review. An evidence anchor proves a location exists, not that a finding is true.
-7. **Return control.** The implementation workflow accepts, disputes with evidence, or defers each finding. A materially changed target needs a new snapshot and review instance within the original flow limit. The reviewer cannot dispatch fixes or start new reviews.
+5. **Challenge findings.** When the preliminary contains findings, send the frozen blind evidence and persisted assessment to a fresh verifier with no author context. Persist exactly one confirmed, rejected, or inconclusive assessment per preliminary finding. For an empty finding set, persist an empty local ledger without a provider call.
+6. **Reconcile author claims.** Continue the original external review conversation with the verification ledger and author packet. Ask the reviewer to confirm, contradict, or mark claims unverified and explain any changes to preliminary findings. Every verifier-rejected finding must be withdrawn. Record missing author explanation explicitly if absent.
+7. **Validate and report.** Validate report shape, snapshot identity, path/line anchors, verification provenance, and required coverage fields. Preserve limitations; invalid output, incomplete scope, or exhausted context cannot become an empty successful review. An evidence anchor proves a location exists, not that a finding is true.
+8. **Return control.** The implementation workflow accepts, disputes with evidence, or defers each finding. A materially changed target needs a new snapshot and review instance within the original flow limit. The reviewer cannot dispatch fixes or start new reviews.
 
-Both model stages belong to one review instance. Transport retries do not create new review instances and must not be used to shop for a favorable verdict. A resumed run uses persisted stage state; it must not leak the author packet into a restarted blind stage.
+Both author-visibility stages and the selective verifier call belong to one review instance. Transport retries do not create new review instances and must not be used to shop for a favorable verdict. A resumed run uses persisted stage state; it must not leak the author packet into a restarted blind stage or verifier.
 
 ## Context and trust model
 
@@ -185,8 +190,9 @@ For source review that carries a data-handling requirement, opt into `data_colle
 
 Read the API key at runtime from environment or an external secret store. Keep it out of packets, model messages, tool results, and logs. Bound completion tokens, calls, retries, and time; use pricing estimates for preflight, record actual usage when returned, and never describe a local estimate as a guaranteed billing cap.
 
-The orchestrator owns retries. Before the first call it reserves both mandatory
-stages plus one provider retry at the larger stage reservation. The example
+The orchestrator owns retries. Before the first call it reserves the preliminary,
+possible finding-verification, and final calls plus one provider retry at the
+largest call reservation. The example
 120B configuration permits 240,000 conservatively counted tokens under a $0.20
 cost ceiling. Definite 408/409/429/500/502/503/504/524/529 responses (including
 non-JSON HTTP errors), normally terminated empty completions, and uncertain
@@ -242,9 +248,12 @@ Progress: the offline engine is complete. It builds a digest-bound neutral
 brief from the packet, classifies changed paths, sends bounded unified hunks or
 justified whole-file diffs, distinguishes visible out-of-scope paths from
 blocking missing coverage, and fails rather than clipping an oversized initial
-evidence set. It persists the raw and validated preliminary result before author delivery,
-makes one reconciliation call and permits at most one separately recorded
-same-model repair when a complete final candidate fails local validation,
+evidence set. It persists the raw and validated preliminary result, then persists
+a fresh author-blind assessment of every preliminary finding before author
+delivery. Finding-free reviews create the empty verification ledger locally;
+finding-bearing reviews make one schema-constrained verifier call. Final
+reconciliation must withdraw every verifier-rejected finding. It permits at most
+one separately recorded same-model repair when a complete final candidate fails local validation,
 assembles `final-review-candidate-v3` judgments into the unchanged final report,
 projects exact final path and canonical-input coverage from the frozen manifest and persisted
 blind assessment instead of asking the model to repeat those ledgers,
@@ -267,12 +276,12 @@ schema with the frozen snapshot's permitted evidence paths, exact identities,
 coverage sizes, and author-verification indices, while retaining
 local semantic and anchor validation. Compact project guidance preserves every
 non-empty heading/list/prose block and fails before a provider call if the full
-digest cannot fit. It conservatively reserves both
-message/schema inputs and outputs before the first submission, uses that same
+digest cannot fit. It conservatively reserves preliminary, possible verifier,
+and final message/schema inputs and outputs before the first submission, uses that same
 token-unit reservation when retransmitting the preliminary result, and retains
 reservations when usage is missing or malformed. It also rejects a known
 author-inclusive final conversation skeleton that exceeds the byte cap before
-making call one, then rechecks the actual preliminary content before call two.
+making call one, then rechecks actual generated content before each later call.
 Its private run record binds each attempt to the provider-policy version and
 credential-free wire/body digests and records stage, identity, timing, route,
 valid usage, errors, and lifecycle-terminal events. The OpenRouter adapter uses
@@ -334,7 +343,7 @@ not a separate product milestone.[^openai-evals][^anthropic-evals]
 
 ## Initial product scope
 
-First useful release: local CLI, one external reviewer, two enforced stages, bounded snapshot reads, static inspection, structured findings, local audit artifacts, and AI Central invocation. Preserve module boundaries for a bot while keeping hosting-specific APIs outside the core.
+First useful release: local CLI, one primary reviewer conversation, selective fresh-context finding verification, enforced author withholding, bounded snapshot reads, static inspection, structured findings, local audit artifacts, and AI Central invocation. Preserve module boundaries for a bot while keeping hosting-specific APIs outside the core.
 
 Proposed future command surface:
 
@@ -359,10 +368,12 @@ The initial scope now includes cumulative working-tree snapshots. The base
 resolves from an explicit value, repository configuration, branch upstream, or
 remote default branch in that order and fails when still ambiguous. The shipped
 local engine uses one external reviewer conversation, an immutable blind
-assessment, a separately delivered author packet, two mandatory calls, and at
-most one same-model output repair per stage. Preliminary repair remains blind,
-persists both candidates, and must reserve its own call plus the still-mandatory
-final call before spending.
+assessment, a selective fresh-context finding verifier, and a separately delivered
+author packet. Clean reviews use two provider calls; finding-bearing reviews use
+three. At most one same-model output repair remains available for preliminary and
+final stages; verification output fails closed without repair. Preliminary repair
+remains blind, persists both candidates, and must reserve its own call plus the
+still-possible verifier and mandatory final call before spending.
 Interactive author ask-backs and a named-check executor remain protocol
 extensions rather than first-release requirements. Token efficiency is a
 first-class correctness constraint; required evidence cannot be silently

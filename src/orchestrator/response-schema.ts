@@ -315,6 +315,27 @@ export function constrainResponseSchemaV1(
   return { schema: root, appliedArrayLimits };
 }
 
+/** Pins the small adversarial ledger to the exact preliminary findings it must assess. */
+export function constrainFindingVerificationSchemaV1(
+  schema: unknown,
+  findingIds: string[],
+  identities: ConstrainResponseSchemaOptionsV1["identities"],
+): ConstrainedResponseSchemaV1 {
+  const root = requireNode(structuredClone(schema), "(root)");
+  pinIdentityConstants(root, identities);
+  const properties = requireProperties(root, "(root)");
+  const assessments = requireNode(properties.assessments, "assessments");
+  const item = requireNode(assessments.items, "assessments.items");
+  const itemProperties = requireProperties(item, "assessments.items");
+  requireNode(itemProperties.preliminaryFindingId, "assessments.items.preliminaryFindingId").enum =
+    findingIds;
+  assessments.minItems = findingIds.length;
+  assessments.maxItems = findingIds.length;
+  const appliedArrayLimits = boundUnspecifiedProse(root, 1);
+  appliedArrayLimits.assessments = findingIds.length;
+  return { schema: root, appliedArrayLimits };
+}
+
 /** Narrow concern scope before call two without enlarging its reserved schema. */
 export function constrainFinalConcernScopeV1(
   final: ConstrainedResponseSchemaV1,

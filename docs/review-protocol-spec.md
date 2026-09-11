@@ -1,7 +1,7 @@
 # Review protocol technical specification
 
-Status: accepted protocol; minimal two-stage local release implemented and
-smoke-tested, with the explicitly listed interactive and verification extensions deferred.
+Status: accepted protocol; staged local release implemented and smoke-tested,
+with explicitly listed interactive and command-execution extensions deferred.
 
 This specification turns the independent-review workflow in
 [`docs/architecture-and-roadmap.md`](architecture-and-roadmap.md) into an
@@ -17,8 +17,10 @@ budget protocol is adopted in
 Standards mode implements the agreed [product plan](research/2026-09-09-first-use-product-plan.md).
 It accepts selected standards and a separate author overview without business
 requirements or an implementation plan. The existing v1 mode remains available.
-Call one sees frozen code and standards only; call two receives the persisted
-assessment plus the overview collected upfront. Standards inputs are validated
+The blind call sees frozen code and standards only; final reconciliation receives
+the persisted assessment plus the overview collected upfront. A fresh verifier
+challenges any preliminary findings before final reconciliation and without the
+overview. Standards inputs are validated
 profile JSON in digest-bound PROJECT_GUIDANCE documents; no placeholder plan or
 requirements are synthesized. Brief v2 binds the mode and selected inputs under
 a separate identity profile. Packet metadata v2 binds the author digest before
@@ -41,8 +43,10 @@ repository target, neutral task context, and a separate author explanation in
 one invocation. The engine must give a fresh external reviewer the neutral
 material first, durably record its preliminary assessment, and only then expose
 the author explanation. The first release supplies a complete bounded evidence
-packet and returns a validated readiness report in two mandatory calls, with at
-most one same-model repair per stage for a complete locally invalid candidate.
+packet and returns a validated readiness report through blind and reconciliation
+stages. Clean reviews use two provider calls; a non-empty preliminary adds one
+fresh author-blind finding-verification call. Preliminary and final stages permit
+at most one same-model repair for a complete locally invalid candidate.
 Preliminary repair cannot receive author context and only its accepted replacement
 crosses the stage boundary. Later
 protocol extensions may let the same reviewer request additional bounded
@@ -70,8 +74,9 @@ CLI using OpenRouter. Hosting-provider automation is out of scope.
    Each ask-back may contain multiple related questions.
 7. Evidence reads and verification requests have independent limits; they do
    not consume author ask-backs.
-8. Verification is performed by a bounded local executor, not another agent.
-   The reviewer selects only configured named checks.
+8. Command execution is performed by a bounded local executor, not an agent.
+   The reviewer selects only configured named checks. Finding verification is a
+   separate author-blind model judgment over already frozen evidence.
 9. Token efficiency is a product invariant. Limits are explicit, measurable,
    and failure-producing; the engine must not silently truncate evidence or
    convert budget exhaustion into a successful review.
@@ -110,7 +115,8 @@ all of the following without a live model call:
   verification claim.
 - Finding coordinates resolve to a valid side plus line range or exact symbol
   in the frozen snapshot.
-- Conservative reservation of both mandatory calls fits before the first call;
+- Conservative reservation of preliminary, possible finding-verification, final,
+  and retry calls fits before the first call;
   insufficient capacity makes no provider request.
 - Attempt records preserve stage/input identity, provider-policy version,
   credential-free wire-request and exact body digests, body byte count, timing,
@@ -126,7 +132,7 @@ ask-backs retain the broader rules below but are deferred from this release.
 
 ## Non-goals for the first implementation
 
-- Multiple reviewers, debate, voting, or model ensembles.
+- Reviewer ensembles, debate, or voting beyond the selective verifier.
 - A general-purpose shell tool controlled by the external reviewer.
 - Universal dependency installation or hermetic execution for every repository.
 - Autonomous fixes, commits, new review instances, or publication.
@@ -152,7 +158,11 @@ Fresh external reviewer
   v
 Validate and persist immutable preliminary record
   |
-  | author packet
+  | findings + same blind evidence, no author packet
+  v
+Fresh finding verifier (only when findings exist)
+  |
+  | persisted verification ledger + author packet
   v
 Same reviewer conversation
   |\
@@ -329,9 +339,10 @@ head side. Canonical-input reconciliation compares typed
 provenance fields rather than delimiter-joined text. Each initial-evidence
 digest is SHA-256 over the exact UTF-8 content, and source-context content must
 contain exactly the declared logical line count (with CRLF treated as one line
-separator and a terminal separator not creating an extra line). The two-call
-orchestrator sends only this artifact before preliminary persistence; the
-separately stored author packet is appended only afterward.
+separator and a terminal separator not creating an extra line). The staged
+orchestrator sends only this artifact before preliminary persistence; the fresh
+verifier receives it with the preliminary but without author content, and the
+separately stored author packet is appended only during final reconciliation.
 A required `briefDigest` now binds the exact ordered blind-stage content, and
 its finalizer refuses an embedded manifest whose snapshot identity does not
 verify.
@@ -633,11 +644,12 @@ zero.
    explicit with continuation coordinates.
 8. Use concise schema fields and structured ledgers; generate human-readable
    Markdown locally from validated structured output.
-9. Conservatively reserve both mandatory calls before the first call. The
+9. Conservatively reserve preliminary, possible finding-verification, and final
+   calls plus one provider retry before the first call. The
    current model-independent bound includes messages and structured-output
    schemas, treats each serialized UTF-8 byte as a possible token, adds
-   message-framing margin, and reserves the preliminary maximum once as
-   generated output and once, in the same token units, as second-call input.
+   message-framing margin, and reserves generated preliminary and verification
+   maxima again, in the same token units, when later calls retransmit them.
    The post-preliminary check retains that admitted retransmission reservation
    rather than reinterpreting the actual output as a UTF-8-byte token bound.
    This is a token-admission bound, not a dollar billing guarantee. Missing,
@@ -645,8 +657,8 @@ zero.
    conservative reservation rather than becoming zero or aborting a valid run.
    Before call one, both the blind messages and the known final-message skeleton
    containing the held-back author packet must also fit `maxConversationBytes`.
-   The actual preliminary content is checked against the same byte cap before
-   call two.
+   Actual generated content is checked against the same byte cap before each
+   later call.
 10. Reconcile each reservation against complete, non-negative integer provider
     usage with a consistent prompt-plus-completion total, and record cost when
     available. Optional malformed or inconsistent usage telemetry is normalized
@@ -826,8 +838,8 @@ outcomes. Exact numeric values belong in the CLI contract.
 Runs are stored under a configured private directory excluded from Git. The
 current release keeps the packet inputs, preliminary/final provider candidates,
 validated preliminary/final records, Markdown report, and an append-only
-run-attempt ledger as separate artifacts. Later resume and verification work
-will add the broader transmission, verification, and error artifacts described
+run-attempt ledger as separate artifacts. Later command-execution work will add
+the broader transmission, execution, and error artifacts described
 by the full protocol.
 
 Persistence is append-oriented. Sensitive proprietary content is not placed in
@@ -840,8 +852,9 @@ decisions before live use.
    and review-configuration contracts with generated schemas.
 2. Complete: canonical identities, base resolution, cumulative working-tree
    capture, packet inspection, and bounded initial evidence.
-3. Complete: persisted two-stage orchestrator against a mock provider, with at
-   most one separately recorded output repair per stage,
+3. Complete: persisted staged orchestrator against a mock provider, with a
+   selective author-blind finding verifier and at most one separately recorded
+   output repair for preliminary and final stages,
    including author withholding, conservative token admission, coverage and
    source-anchor validation, full Markdown reconciliation, and run-attempt
    records.

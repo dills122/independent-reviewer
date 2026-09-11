@@ -20,6 +20,7 @@ credential-safety defects. Product decisions remain owned by
 | RQ-5 | Integrate contracts, schemas, documentation, and provider-free real-commit admission check | RQ-1–RQ-4 | Lead | `npm run schemas:write`, `npm run check`, context checks, and real-commit dry-run pass | Complete |
 | RQ-6 | Evaluate proposed Git, diff, syntax, matching, and token libraries against frozen-snapshot invariants | RQ-1–RQ-4 | Lead + research subagents | Source-backed adopt/spike/defer/reject decision retained in repository | Complete |
 | RQ-7 | Replace custom diff algorithm with native Git plus `parse-diff` after adversarial review | RQ-6 | Lead | CRLF-only and large sparse edits remain visible and bounded; real-range packet and full gates pass | Complete |
+| RQ-8 | Challenge preliminary findings in a fresh author-blind verification call | RQ-4–RQ-7 | Lead | Exact finding ledger persists before author disclosure; rejected findings cannot survive final reconciliation; clean runs skip the provider call; resume reuses verified state | Complete |
 
 ## Verification
 
@@ -28,6 +29,10 @@ credential-safety defects. Product decisions remain owned by
 - `npm run check`.
 - `python3 -B scripts/check-ai-context.py --ci`.
 - Provider-free dry-run against commit range `f52f4e8..d6ba399`.
+
+RQ-8 additionally exercises rejected-finding enforcement, malformed verifier
+scope, clean-run call elision, standards mode, and finding-bearing final resume
+through provider mocks. Live quality qualification remains a separate paid gate.
 
 Live OpenRouter qualification is excluded from this implementation pass. It
 requires a separately frozen matrix and explicit paid-call authorization after
@@ -46,3 +51,24 @@ evidence shaping lands.
   changing only that ceiling to 1,500,000 passed at 1,435,492 reserved units and
   $0.160752 maximum reserved cost. Production config remains unchanged; accurate
   token admission is separate work.
+
+### RQ-8 evidence — 2026-09-11
+
+- `npm run check`: 328 tests passed; format, lint, type checks, and complete test
+  suite passed. Lint retains two pre-existing warnings and three informational
+  suggestions in `src/cli.ts`.
+- `npm run schemas:write`: generated contracts match committed artifacts.
+- `python3 -B scripts/check-ai-context.py --ci`: passed.
+- Provider-mock coverage proves fresh author-blind verification, exact finding-ID
+  scope, enforced withdrawal after rejection, clean-run call elision, standards
+  behavior, retry budgeting, and finding-bearing final resume without rerunning
+  verification.
+- Real cumulative `main..codex/review-quality-pivot` dry-run: 70 changed paths,
+  21 visible exclusions, 2,603,648 conservative token units, $0.283302 maximum
+  reserved cost, and zero provider calls. Validation used temporary ceilings of
+  400,000 evidence bytes, 700,000 conversation bytes, 2,700,000 total token units,
+  and $0.35. The committed 350,000-byte/1,400,000-token example does not admit this
+  unusually large cumulative branch and remains unchanged.
+- Dry-run also reproduced a copy-source collision when Git classified one schema
+  as a copy of another modified schema. Context construction now shares the
+  owner path's BASE file/declaration regions; focused regression and full gates pass.

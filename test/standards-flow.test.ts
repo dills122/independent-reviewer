@@ -149,7 +149,29 @@ for (const scenario of [
       }),
       async complete(request) {
         calls++;
-        const brief = JSON.parse(request.messages[1]!.content);
+        const brief = JSON.parse(request.messages[1]?.content ?? "{}");
+        if (request.stage === "FINDING_VERIFICATION") {
+          assert.doesNotMatch(JSON.stringify(request.messages), /AUTHOR_PRIVATE/);
+          const value = {
+            schemaVersion: 1,
+            stage: "FINDING_VERIFICATION",
+            snapshotDigest: brief.blindReviewEvidence.snapshotManifest.snapshotDigest,
+            briefDigest: brief.blindReviewEvidence.briefDigest,
+            assessments: brief.preliminaryAssessment.findings.map((finding: { id: string }) => ({
+              preliminaryFindingId: finding.id,
+              status: "CONFIRMED",
+              rationale: "Changed evidence demonstrates the selected naming-rule violation.",
+            })),
+          };
+          return {
+            value,
+            rawContent: JSON.stringify(value),
+            responseId: "test",
+            model: request.models[0] as string,
+            provider: "test/fp4",
+            usage: { promptTokens: 100, completionTokens: 100, totalTokens: 200, cost: 0.00001 },
+          };
+        }
         const evidence = [
           {
             path: "code.ts",
@@ -222,7 +244,7 @@ for (const scenario of [
             nextAction: "REQUEST_AUTHOR_PACKET",
           };
         } else {
-          assert.match(request.messages.at(-1)!.content, /AUTHOR_PRIVATE/);
+          assert.match(request.messages.at(-1)?.content ?? "", /AUTHOR_PRIVATE/);
           const saved = JSON.parse(
             await readFile(join(f.packet, "review", "preliminary.json"), "utf8"),
           );
@@ -302,7 +324,12 @@ for (const scenario of [
         { readOpenRouterApiKey: () => "test", createProvider: () => provider },
       );
       assert.equal(result, expectedExit, errors.join("\n"));
-      assert.equal(calls, scenario === "conflict" ? 0 : 2, errors.join("\n"));
+      const findingBearing = ["required", "exception", "recommended", "mixed-unavailable"];
+      assert.equal(
+        calls,
+        scenario === "conflict" ? 0 : findingBearing.includes(scenario) ? 3 : 2,
+        errors.join("\n"),
+      );
       if (invalidRule) assert.match(errors.join("\n"), /Unknown standard rule/);
       else if (expectedExit !== 1) {
         assert.match(output.join("\n"), /Standards/);

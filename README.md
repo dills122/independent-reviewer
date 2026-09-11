@@ -31,8 +31,8 @@ Deterministic snapshot and blind-brief identities are accepted in
 ## Proposed first release
 
 - Frozen Git review targets and inspectable evidence packets.
-- One external reviewer through OpenRouter, with controlled repository evidence access.
-- Two enforced stages: blind review, then author-claim reconciliation.
+- External review through OpenRouter, with controlled repository evidence access.
+- Blind review, selective fresh-context finding verification, then author-claim reconciliation.
 - Validated JSON and Markdown reports with bounded review loops.
 - AI Central skill integration.
 
@@ -119,8 +119,9 @@ which one to enforce.
 
 Author input accepts plain text/Markdown or an existing structured author packet
 JSON. Plain text makes no verification claims. The input files are excluded from
-ordinary code evidence. The overview's digest is frozen before call one, and
-its content is delivered only in call two. Edited author artifacts fail inspection.
+ordinary code evidence. The overview's digest is frozen before the blind call,
+and its content is delivered only in final reconciliation. A selective finding-
+verification call never receives it. Edited author artifacts fail inspection.
 
 Progress goes to stderr; `--quiet` suppresses it. The summary shows required or
 recommended changes, rule IDs, locations and corrections. The full Markdown
@@ -240,6 +241,12 @@ and `4` means the provider submission became transport-uncertain. Other input
 or execution failures use exit `1`. Request and config control files are
 excluded from captured review evidence even when placed inside the worktree.
 
+A non-empty preliminary finding set triggers one fresh author-blind verification
+call. `finding-verification.json` records exactly one challenge result per
+preliminary finding before author disclosure; an empty finding set records an
+empty local artifact without a provider call. Final reconciliation must withdraw
+every verifier-rejected finding.
+
 Rejected completions with a parseable envelope retain sanitized response ID,
 model, provider, finish reason, and normalized usage in `CALL_FAILED.responseMetadata`
 and CLI failure output. Sum usage across successful and failed calls when
@@ -248,7 +255,7 @@ or invalid telemetry is unknown, not zero. Raw private response files remain
 separate from this bounded metadata. Null or truncated completions still fail;
 they are never converted to successful reports or automatically replayed.
 
-Final provider output uses `final-review-candidate-v1`: author claims reference
+Final provider output uses `final-review-candidate-v3`: author claims reference
 `claimIndex`; concerns reference `kind` and `concernIndex` in the corresponding
 preliminary array. The runner inserts exact original text into the unchanged
 final report format, then applies existing semantic checks. Missing, duplicate,
