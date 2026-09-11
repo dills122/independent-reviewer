@@ -19,6 +19,7 @@ credential-safety defects. Product decisions remain owned by
 | RQ-4 | Replace unmatched-path blocking semantics with explicit out-of-scope accounting and role-aware review depth | RQ-1 | Lead | Clean mixed changes can reach Ready; reviewable unassessed paths still block | Complete |
 | RQ-5 | Integrate contracts, schemas, documentation, and provider-free real-commit admission check | RQ-1–RQ-4 | Lead | `npm run schemas:write`, `npm run check`, context checks, and real-commit dry-run pass | Complete |
 | RQ-6 | Evaluate proposed Git, diff, syntax, matching, and token libraries against frozen-snapshot invariants | RQ-1–RQ-4 | Lead + research subagents | Source-backed adopt/spike/defer/reject decision retained in repository | Complete |
+| RQ-7 | Replace custom diff algorithm with native Git plus `parse-diff` after adversarial review | RQ-6 | Lead | CRLF-only and large sparse edits remain visible and bounded; real-range packet and full gates pass | Complete |
 
 ## Verification
 
@@ -34,14 +35,14 @@ evidence shaping lands.
 
 ## Final evidence
 
-- `npm run check`: 260 tests passed; format, lint, and type checks completed.
+- `npm run check`: 262 tests passed; format, lint, and type checks completed.
   Lint retains nine pre-existing warnings.
 - `python3 -B scripts/check-ai-context.py --ci`: passed.
 - Range `f52f4e8..d6ba399`: 46 reviewable paths, 10 visible out-of-scope
-  documentation exclusions, 34 bounded-hunk items, 12 whole-file items, 264,631
+  documentation exclusions, 34 bounded-hunk items, 12 whole-file items, 264,489
   evidence bytes, and no blocking coverage constraint.
-- Existing 1,400,000-token example ceiling remains 35,900 conservative units
+- Existing 1,400,000-token example ceiling remains 28,806 conservative units
   short on the final packet. A provider-free validation config
-  changing only that ceiling to 1,500,000 passed at 1,435,900 reserved units and
-  $0.160793 maximum reserved cost. Production config remains unchanged; accurate
+  changing only that ceiling to 1,500,000 passed at 1,435,492 reserved units and
+  $0.160752 maximum reserved cost. Production config remains unchanged; accurate
   token admission is separate work.

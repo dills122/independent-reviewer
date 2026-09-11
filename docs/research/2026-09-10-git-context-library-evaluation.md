@@ -1,22 +1,21 @@
 # Git and context library evaluation
 
-Status: complete. Decision owner: project maintainer.
+Status: revised after adversarial validation and first implementation slice.
+Decision owner: project maintainer.
 
 ## Executive conclusion
 
-Adopt no new Git abstraction now. Existing `runGit` preserves exact byte output,
-explicit environment isolation, allowed exit codes, timeouts, and frozen capture
-semantics with less integration risk than the proposed wrappers.
+Adopt focused libraries behind product-owned policy adapters. Native Git plus
+`parse-diff@0.12.0` now replaces custom line-diff computation while manifest
+remains path/status authority. This removes commodity algorithm code and fixes
+two reproduced failures: a CRLF-only edit disappeared, and 264 sparse edits in a
+20,000-line file degraded into 455,389 bytes of whole-file evidence.
 
-Run two optional, bounded experiments after this review-quality pivot:
-
-1. `@ast-grep/napi` for TypeScript/JavaScript declaration context from packet
-   bytes only, with line-based fallback and platform CI.
-2. `gpt-tokenizer` for ranking and telemetry only. It must not replace the
-   conservative byte admission bound for arbitrary OpenRouter models.
-
-Treat `@ataraxy-labs/sem` and `diff-core` as architecture references and
-benchmarks, not dependencies. Defer or reject the remaining libraries.
+Adopt `execa` next for process lifecycle and `picomatch` for one explicit path
+dialect. Make `@ast-grep/napi` the next review-quality slice, parsing packet
+bytes with line-based fallback. Use `gpt-tokenizer` for supported-model packing
+and measurement while retaining conservative fallback for unknown OpenRouter
+tokenizers. Treat `@ataraxy-labs/sem` and `diff-core` as architecture references.
 
 ## Decision question
 
@@ -72,15 +71,15 @@ Primary source index:
 
 | Option | Evidence | Repository fit | Decision |
 | --- | --- | --- | --- |
-| `execa` | Mature subprocess API supports argument arrays, byte buffers, timeouts, cancellation, and non-throwing exits. Environment extension is enabled by default. | Replaces only the small process runner; exact isolation would still require `extendEnv: false` plus current output and exit policies. No review-signal gain. | Defer until process orchestration grows materially. |
+| `execa` | Mature subprocess API supports argument arrays, byte buffers, timeouts, cancellation, and non-throwing exits. Environment extension is enabled by default. | Owns commodity lifecycle mechanics while a small adapter retains `extendEnv: false`, Git environment, output, and exit policy. | Adopt in next maintenance slice. |
 | `simple-git` | High-level Git wrapper; complex plumbing still uses raw commands and some parsers depend on porcelain text. | Current capture intentionally uses NUL-delimited plumbing and byte output. Wrapper enlarges parser and dependency surface without replacing core logic. | Reject for capture. |
 | `isomorphic-git` | Pure-JavaScript object/database implementation with status, blob, and merge-base APIs. | Missing required parity for attributes, native diff/rename behavior, and current cumulative working-tree semantics. `statusMatrix` refresh can update index metadata unless disabled. | Reject for current pipeline. |
-| `parse-diff` | Small, zero-dependency parser for already-rendered patches. | Evidence renderer starts from digest-bound BASE/HEAD blobs. Rendering then reparsing loses value and does not solve path identity or capture. | Reject now; reconsider only if raw patches become packet artifacts. |
-| `@ast-grep/napi` | Parses source strings and exposes structural matching through native Node bindings. API remains marked experimental and native-platform failures remain possible. | Can operate on packet bytes and enrich changed hunks with containing declarations without live filesystem access. | Timeboxed optional spike. |
+| `parse-diff` | Small, zero-dependency parser for native unified patches. | Native Git renders frozen temporary BASE/HEAD files; parser validates one-file output and supplies structured hunks/statistics. Manifest still owns identity. | Adopted at exact version `0.12.0`. |
+| `@ast-grep/napi` | Parses source strings and exposes structural matching through native Node bindings. API remains marked experimental and native-platform failures remain possible. | Can operate on packet bytes and enrich changed hunks with containing declarations without live filesystem access. | Next required quality slice, with native-failure fallback. |
 | `ts-morph` | Rich TypeScript compiler wrapper with in-memory filesystems and TypeScript 6 support. | Valuable only if type-aware evidence proves necessary; default project loading risks crossing frozen boundary and dependency weight is high. | Defer; require packet-only virtual filesystem. |
 | `tree-sitter` | Multi-language incremental syntax foundation with per-language grammars and native bindings. | Duplicates the near-term ast-grep experiment and adds grammar/platform management. | Defer until multi-language demand exists. |
 | `ignore` | Implements many `.gitignore` rules but documents differences from Git. | Git already supplies canonical tracked/untracked and ignore decisions. Reimplementation risks drift. | Reject. |
-| `picomatch` | Fast general glob matcher. Node 24 provides stable `path.matchesGlob`. | Current rule paths need a documented dialect more than another matcher. | Do not add; specify dialect first. |
+| `picomatch` | Fast general glob matcher. Node 24 also provides stable `path.matchesGlob`. | Repository already had two dialects: a custom case-insensitive compiler and direct Node matching. One adapter can define semantics and delete both paths. | Adopt after defining exact case/glob semantics. |
 | `fast-glob` | Filesystem traversal and matching; result order is not inherently the product contract. | Live-tree traversal violates snapshot-first evidence selection and duplicates Git enumeration. | Reject. |
 | `gpt-tokenizer` | Local OpenAI-family encodings and model mappings, including current `o200k` families. | OpenRouter can route to non-OpenAI tokenizers, so counts cannot safely admit calls. Useful for packing heuristics and measured telemetry. | Telemetry-only spike. |
 | `@langchain/textsplitters` | Generic RAG chunkers with additional runtime dependencies. | Syntax-unaware chunking can sever diffs and evidence coordinates; current problem is review context, not document retrieval. | Reject. |
@@ -91,15 +90,20 @@ Primary source index:
 
 - **Fact:** Git supports bounded unified context and can invoke configured
   external diff/text-conversion helpers unless callers disable them.
-- **Observation:** Current renderer works from frozen blobs, so it avoids both
-  helper execution and live-worktree drift.
-- **Inference:** Replacing it with `git diff` is safe only with explicit
-  `--no-ext-diff --no-textconv` and a packet-compatible object source; that adds
-  no near-term benefit.
+- **Observation:** Native renderer reconstructs fixed-name temporary files from
+  frozen packet blobs, invokes Git with explicit algorithm/context/config flags,
+  disables external diff and text conversion, parses one file, and removes the
+  temporary directory.
+- **Observation:** The earlier custom renderer normalized CRLF/LF before
+  comparison and its bounded Myers fallback could turn sparse changes into a
+  whole-file replacement above the evidence budget.
+- **Inference:** Frozen input and side-effect controls belong in the adapter;
+  line differencing and unified parsing are commodity library responsibilities.
 - **Fact:** Node 24 documents `path.matchesGlob` as stable.
 - **Observation:** Current standards rules already use that built-in matcher.
-- **Inference:** Adding `picomatch` before defining compatibility semantics would
-  create two glob dialects rather than fix classification.
+- **Observation:** A custom exclusion matcher and Node `path.matchesGlob` already
+  created two dialects.
+- **Inference:** Define one dialect, then use `picomatch` behind one adapter.
 - **Fact:** `gpt-tokenizer` models OpenAI tokenizer families, not every provider
   tokenizer available through OpenRouter.
 - **Inference:** Token estimates may prioritize evidence but cannot authorize a
@@ -109,23 +113,27 @@ Primary source index:
 
 Owner: project maintainer.
 
-1. Keep native Git plumbing and local deterministic diff renderer for this
-   release. Harden Git invocations rather than replace them.
-2. After the current branch merges, spike `@ast-grep/napi` against a fixed corpus:
+1. Keep adopted native Git plus `parse-diff` renderer. Its edge corpus and full
+   suite must remain green.
+2. Replace subprocess lifecycle with exact-pinned `execa`, preserving the
+   current Git adapter contract and environment isolation.
+3. Define path glob semantics and consolidate matching through `picomatch`.
+4. Implement `@ast-grep/napi` against a fixed corpus:
    changed declarations, overloads, JSX, parse errors, 10k-line files, Linux
    arm64, Linux x64, and macOS. Gate: measurable finding/coverage improvement,
    deterministic output, bounded latency, and exact line fallback on failure.
-3. Separately compare `gpt-tokenizer` estimates with provider-reported usage.
+5. Separately compare `gpt-tokenizer` estimates with provider-reported usage.
    Gate: telemetry error distribution only; no admission-policy change.
-4. Benchmark `sem` as an isolated executable and mine `diff-core` for IR,
+6. Benchmark `sem` as an isolated executable and mine `diff-core` for IR,
    dependency-flow, and risk-grouping ideas. Do not permit either to read live
    state in production evaluation.
 
 ## Confidence, limits, and unresolved questions
 
-Confidence: high for no Git dependency now; medium for the syntax-context spike.
-Package APIs and release metadata can change. No package was installed, no
-transitive dependency audit ran, and no native-platform benchmark ran. Main
+Confidence: high for native Git plus `parse-diff`; medium for syntax-context
+gain. Exact dependency installed with zero npm audit findings, public API and
+types inspected, and full repository suite passed. No broad transitive/native
+platform audit ran. Main
 unresolved question is whether declaration context improves reviewer accuracy
 enough to offset native binary operations and packet growth. That is the next
 experiment, not an assumption in this decision.

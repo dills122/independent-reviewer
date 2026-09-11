@@ -82,8 +82,10 @@ declared exclusion reason that capture never produces.
 ### 2. Send diffs, with whole files only where they earn it
 
 Initial evidence becomes the unified diff of each reviewable path with bounded
-context, not both full sides. Findings already cite BASE/HEAD coordinates, which
-hunk headers carry, so anchoring is unaffected.
+context, not both full sides. Native Git renders reconstructed frozen BASE/HEAD
+files with explicit algorithm and helper controls; `parse-diff` validates and
+structures hunks. Manifest remains identity/status authority. Findings already
+cite BASE/HEAD coordinates, which hunk headers carry, so anchoring is unaffected.
 
 A whole side is still sent when the file is small enough that the diff saves
 nothing, or when the change touches a large enough fraction of the file that
@@ -132,7 +134,7 @@ without a round trip, and the request loop covers what it cannot predict.
 ## Consequences
 
 Provider-free validation on `f52f4e8..d6ba399` captured 46 reviewable paths,
-classified ten documentation paths out of scope, and produced 264,631 evidence
+classified ten documentation paths out of scope, and produced 264,489 evidence
 bytes: 34 bounded-hunk items and 12 justified whole-file items. That is 38.4%
 below the previous 429,629-byte whole-file packet, with no blocking coverage
 constraint. This is a material reduction, but not the originally projected order

@@ -54,7 +54,8 @@ measuring performance remain out of scope.
 
 Capture classifies changed paths as source, test, configuration,
 documentation, generated, or binary. Reviewable text is transmitted as
-deterministic unified hunks with three lines of context; files at most 40 lines
+deterministic native-Git unified hunks parsed by `parse-diff`, with three lines
+of context; files at most 40 lines
 or changes affecting at least 60% of both sides use whole-file diff evidence.
 Documentation and generated/binary exclusions remain visible without consuming
 review attention. Tests and configuration receive role-specific review depth.
