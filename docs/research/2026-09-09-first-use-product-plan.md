@@ -1,6 +1,6 @@
 # Standards-based code review: implementation plan
 
-Status: slices 1–5 implemented and verified offline; eight live cases executed, exposing delivery and semantic acceptance gaps. See [live results](../validation/2026-09-09-standards-live.md). Updated 2026-09-09. Baseline: `8322b9edad655f932352329e6db11bda43383ef8` (PR #66). This revision supersedes the earlier requirements/plan-driven product proposal in this file.
+Status: slices 1–5 implemented and verified offline; eight live cases executed, exposing delivery and semantic acceptance gaps. See [live results](../validation/2026-09-09-standards-live.md). Updated 2026-09-09. Baseline: `8322b9edad655f932352329e6db11bda43383ef8` (PR #66). This revision supersedes the earlier requirements/plan-driven product proposal in this file. Its structured-profile onboarding is now the legacy/advanced path; the accepted next user-facing layer is tracked in the [friendly operations plan](../plans/2026-09-11-friendly-reviewer-operations-plan.md).
 
 ## Agreed outcome
 
