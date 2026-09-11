@@ -65,7 +65,20 @@ function changedRegions(
  * referenced-source relations; language analyzers can add finer regions without changing planner.
  */
 export function buildFallbackReviewContextMapV1(manifest: SnapshotManifestV1): ReviewContextMapV1 {
-  const regions = manifest.paths.flatMap((entry) => changedRegions(manifest, entry));
+  const changedById = new Map<
+    string,
+    { region: ReviewContextMapV1["regions"][number]; ownedPath: boolean }
+  >();
+  for (const entry of manifest.paths) {
+    for (const region of changedRegions(manifest, entry)) {
+      const candidate = { region, ownedPath: entry.path === region.path };
+      const current = changedById.get(region.regionId);
+      if (!current || (candidate.ownedPath && !current.ownedPath)) {
+        changedById.set(region.regionId, candidate);
+      }
+    }
+  }
+  const regions = [...changedById.values()].map(({ region }) => region);
   for (const source of manifest.referencedSources) {
     const region = regionFor(manifest, source.path, "HEAD", source.content, "SUPPORTING_CONTEXT");
     if (region) regions.push(region);
