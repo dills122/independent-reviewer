@@ -12,6 +12,7 @@
       "import": "./dist/src/index.js"
     },
     "./schemas/neutral-review-brief-v1": "./schemas/neutral-review-brief-v1.schema.json",
+    "./schemas/finding-verification-v1": "./schemas/finding-verification-v1.schema.json",
     "./schemas/preliminary-assessment-v1": "./schemas/preliminary-assessment-v1.schema.json",
     "./schemas/final-review-candidate-v2": "./schemas/final-review-candidate-v2.schema.json",
     "./schemas/final-review-candidate-v3": "./schemas/final-review-candidate-v3.schema.json",
