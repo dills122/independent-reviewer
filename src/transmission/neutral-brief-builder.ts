@@ -94,7 +94,7 @@ export async function buildReviewBrief(
     const before = await capturedSource(packetPath, entry.before);
     const after = await capturedSource(packetPath, entry.after);
     const previous = "previousPath" in entry ? ` (from ${entry.previousPath})` : "";
-    const diff = renderUnifiedDiff(
+    const diff = await renderUnifiedDiff(
       before,
       after,
       "previousPath" in entry ? entry.previousPath : entry.path,

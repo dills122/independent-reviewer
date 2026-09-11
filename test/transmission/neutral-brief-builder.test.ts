@@ -226,13 +226,38 @@ describe("buildReviewBrief diff evidence", () => {
 });
 
 describe("renderUnifiedDiff", () => {
-  it("keeps separated changes in separate three-line-context hunks", () => {
+  it("preserves a line-ending-only change as review evidence", async () => {
+    const rendered = await renderUnifiedDiff("value\r\n", "value\n", "reviewed.ts", "reviewed.ts");
+
+    assert.match(rendered.content, /-value\r\n\+value/);
+  });
+
+  it("keeps many sparse edits bounded instead of degrading to a whole-file replacement", async () => {
+    const changedLines = new Set(Array.from({ length: 264 }, (_, index) => index * 75));
+    const before = Array.from({ length: 20_000 }, (_, index) => `line ${index + 1}`);
+    const after = before.map((line, index) =>
+      changedLines.has(index) ? `changed ${index + 1}` : line,
+    );
+
+    const rendered = await renderUnifiedDiff(
+      `${before.join("\n")}\n`,
+      `${after.join("\n")}\n`,
+      "reviewed.ts",
+      "reviewed.ts",
+    );
+
+    assert.equal(rendered.form, "UNIFIED_HUNKS");
+    assert.ok(Buffer.byteLength(rendered.content, "utf8") < 350_000);
+    assert.ok((rendered.content.match(/^@@ /gm) ?? []).length > 100);
+  });
+
+  it("keeps separated changes in separate three-line-context hunks", async () => {
     const before = Array.from({ length: 100 }, (_, index) => `line ${index + 1}`);
     const after = [...before];
     after[9] = "line 10 changed";
     after[89] = "line 90 changed";
 
-    const rendered = renderUnifiedDiff(
+    const rendered = await renderUnifiedDiff(
       `${before.join("\n")}\n`,
       `${after.join("\n")}\n`,
       "reviewed.ts",
@@ -245,8 +270,8 @@ describe("renderUnifiedDiff", () => {
     assert.doesNotMatch(rendered.content, /line 50/);
   });
 
-  it("uses whole-file evidence for a small changed file", () => {
-    const rendered = renderUnifiedDiff(
+  it("uses whole-file evidence for a small changed file", async () => {
+    const rendered = await renderUnifiedDiff(
       "first\nsecond\nthird\n",
       "first\nchanged\nthird\n",
       "reviewed.ts",
@@ -258,11 +283,11 @@ describe("renderUnifiedDiff", () => {
     assert.match(rendered.content, / first\n-second\n\+changed\n third/);
   });
 
-  it("uses whole-file evidence when most lines changed", () => {
+  it("uses whole-file evidence when most lines changed", async () => {
     const before = Array.from({ length: 60 }, (_, index) => `line ${index + 1}`);
     const after = before.map((line, index) => (index < 20 ? line : `changed ${index + 1}`));
 
-    const rendered = renderUnifiedDiff(
+    const rendered = await renderUnifiedDiff(
       `${before.join("\n")}\n`,
       `${after.join("\n")}\n`,
       "reviewed.ts",
@@ -275,8 +300,8 @@ describe("renderUnifiedDiff", () => {
     assert.match(rendered.content, /\+changed 60/);
   });
 
-  it("preserves a missing-final-newline change", () => {
-    const rendered = renderUnifiedDiff(
+  it("preserves a missing-final-newline change", async () => {
+    const rendered = await renderUnifiedDiff(
       "first\nlast",
       "first\nlast\n",
       "reviewed.ts",
@@ -286,11 +311,11 @@ describe("renderUnifiedDiff", () => {
     assert.match(rendered.content, /-last\n\\ No newline at end of file\n\+last/);
   });
 
-  it("falls back to a bounded coarse diff for highly divergent files", () => {
+  it("uses whole-file evidence for highly divergent files", async () => {
     const before = Array.from({ length: 400 }, (_, index) => `before ${index + 1}`);
     const after = Array.from({ length: 400 }, (_, index) => `after ${index + 1}`);
 
-    const rendered = renderUnifiedDiff(
+    const rendered = await renderUnifiedDiff(
       `${before.join("\n")}\n`,
       `${after.join("\n")}\n`,
       "reviewed.ts",
