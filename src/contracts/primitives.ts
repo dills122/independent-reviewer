@@ -19,6 +19,7 @@ export type IdentifierPrefixV1 =
   | "input"
   | "plan"
   | "producer"
+  | "reference"
   | "region"
   | "relation"
   | "rule"

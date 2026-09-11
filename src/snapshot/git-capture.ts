@@ -1,21 +1,24 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { lstat, readFile, readlink, realpath } from "node:fs/promises";
-import { basename, isAbsolute, join, relative } from "node:path";
+import { basename, isAbsolute, join, matchesGlob, relative } from "node:path";
 import {
   compareUtf16,
   computeCanonicalInputDigestV1,
   type DigestV1,
   digestCanonicalJson,
   finalizeSnapshotManifestV1,
-  type ReviewRequestV1,
-  ReviewRequestV1Schema,
+  resolveSnapshotSourceContentV1,
   type SnapshotContentV1,
   type SnapshotManifestIdentityInputV1,
   type SnapshotManifestV1,
   SnapshotPathV1Schema,
   sha256BytesDigestV1,
 } from "../contracts/index.js";
-import { canonicalInputList, ReviewRequestSchema } from "../contracts/standards-review.js";
+import {
+  canonicalInputList,
+  ReviewRequestSchema,
+  selectedReferences,
+} from "../contracts/standards-review.js";
 import { mapWithConcurrencyV1 } from "./concurrency.js";
 import {
   classifyPathV1,
@@ -338,12 +341,14 @@ const MAX_REFERENCED_SOURCE_BYTES_V1 = 128 * 1024;
 interface CaptureReferencedSourcesOptionsV1 {
   repositoryPath: string;
   revision: string;
+  baseRevision: string;
   captureWorkingTree: boolean;
   maxFileBytes: number;
   paths: SnapshotManifestIdentityInputV1["paths"];
   blobs: Map<string, Uint8Array>;
   omissions: SnapshotManifestIdentityInputV1["omissions"];
   isExcluded: (path: string) => boolean;
+  explicitReferences: ReturnType<typeof selectedReferences>;
 }
 
 /**
@@ -379,9 +384,10 @@ async function captureReferencedSources(
   );
 
   const importersByPath = new Map<string, string[]>();
+  const explicitReferencePaths = new Set(options.explicitReferences.map(({ path }) => path));
   for (const entry of options.paths) {
     const after = "after" in entry ? entry.after : null;
-    if (!after || after.kind !== "TEXT") continue;
+    if (after?.kind !== "TEXT") continue;
     const bytes = options.blobs.get(after.digest.value);
     if (!bytes) continue;
     const source = Buffer.from(bytes).toString("utf8");
@@ -398,58 +404,123 @@ async function captureReferencedSources(
     }
   }
 
+  const importedReferencePaths = new Set(importersByPath.keys());
+  const requiredExplicitPaths = new Set<string>();
+  const standardReferenceIdsByPath = new Map<string, string[]>();
+  for (const reference of options.explicitReferences) {
+    const applicableBindings = reference.bindings.filter((binding) =>
+      options.paths.some((entry) =>
+        binding.paths.some((pattern) => matchesGlob(entry.path, pattern)),
+      ),
+    );
+    const requiredBy = options.paths
+      .filter((entry) =>
+        applicableBindings.some((binding) =>
+          binding.paths.some((pattern) => matchesGlob(entry.path, pattern)),
+        ),
+      )
+      .map((entry) => entry.path);
+    if (requiredBy.length === 0) continue;
+    if (applicableBindings.some(({ required }) => required))
+      requiredExplicitPaths.add(reference.path);
+    if (options.isExcluded(reference.path)) {
+      if (requiredExplicitPaths.has(reference.path))
+        options.omissions.push({
+          scope: reference.path,
+          reason: "CAPTURE_FAILED",
+          detail: "Required BASE reference conflicts with a caller exclusion.",
+        });
+      continue;
+    }
+    if (changedPaths.has(reference.path)) {
+      const available = resolveSnapshotSourceContentV1(options.paths, reference.path, "BASE");
+      if (!available && requiredExplicitPaths.has(reference.path))
+        options.omissions.push({
+          scope: reference.path,
+          reason: "CAPTURE_FAILED",
+          detail:
+            "Required BASE reference is unavailable; changed HEAD content cannot authorize itself.",
+        });
+      continue;
+    }
+    const referenceIds = standardReferenceIdsByPath.get(reference.path) ?? [];
+    if (!referenceIds.includes(reference.id)) referenceIds.push(reference.id);
+    standardReferenceIdsByPath.set(reference.path, referenceIds);
+  }
+
   const referencedSources: SnapshotManifestIdentityInputV1["referencedSources"] = [];
   let capturedBytes = 0;
-  for (const [path, importedBy] of importersByPath) {
+  const referencePaths = new Set([...importersByPath.keys(), ...standardReferenceIdsByPath.keys()]);
+  for (const path of referencePaths) {
+    const importedBy = importersByPath.get(path) ?? [];
+    const standardReferenceIds = standardReferenceIdsByPath.get(path) ?? [];
     if (isSecretPath(path)) {
-      options.omissions.push({
-        scope: path,
-        reason: "OTHER",
-        detail: "Referenced source omitted by capture-v2 secret filename policy.",
-      });
+      if (requiredExplicitPaths.has(path) || importedReferencePaths.has(path))
+        options.omissions.push({
+          scope: path,
+          reason: requiredExplicitPaths.has(path) ? "CAPTURE_FAILED" : "OTHER",
+          detail: `${requiredExplicitPaths.has(path) ? "Required BASE reference" : "Referenced source"} omitted by capture-v2 secret filename policy.`,
+        });
       continue;
     }
     let side: Awaited<ReturnType<typeof captureTreeSide>>;
     try {
-      side = options.captureWorkingTree
-        ? await captureWorkingSide(options.repositoryPath, path, options.maxFileBytes)
-        : await captureTreeSide(
+      side = explicitReferencePaths.has(path)
+        ? await captureTreeSide(
             options.repositoryPath,
-            options.revision,
+            options.baseRevision,
             path,
             options.maxFileBytes,
-          );
+          )
+        : options.captureWorkingTree
+          ? await captureWorkingSide(options.repositoryPath, path, options.maxFileBytes)
+          : await captureTreeSide(
+              options.repositoryPath,
+              options.revision,
+              path,
+              options.maxFileBytes,
+            );
     } catch {
       side = "UNSUPPORTED_KIND";
     }
     if (typeof side === "string" || side.content.kind !== "TEXT") {
-      options.omissions.push({
-        scope: path,
-        reason: "OTHER",
-        detail: `Referenced source could not be captured as text (${typeof side === "string" ? side : side.content.kind}).`,
-      });
+      const required = requiredExplicitPaths.has(path);
+      if (required)
+        options.omissions.push({
+          scope: path,
+          reason: "CAPTURE_FAILED",
+          detail: `Required BASE reference could not be captured as text (${typeof side === "string" ? side : side.content.kind}).`,
+        });
+      else if (importedReferencePaths.has(path))
+        options.omissions.push({
+          scope: path,
+          reason: "OTHER",
+          detail: `Referenced source could not be captured as text (${typeof side === "string" ? side : side.content.kind}).`,
+        });
       continue;
     }
     const secretMarker = secretContentMarker(side.bytes);
     if (secretMarker) {
-      options.omissions.push({
-        scope: path,
-        reason: "OTHER",
-        detail: `Referenced source omitted by capture-v2 content policy: ${secretMarker} detected.`,
-      });
+      if (requiredExplicitPaths.has(path) || importedReferencePaths.has(path))
+        options.omissions.push({
+          scope: path,
+          reason: requiredExplicitPaths.has(path) ? "CAPTURE_FAILED" : "OTHER",
+          detail: `${requiredExplicitPaths.has(path) ? "Required BASE reference" : "Referenced source"} omitted by capture-v2 content policy: ${secretMarker} detected.`,
+        });
       continue;
     }
     if (capturedBytes + side.content.byteLength > MAX_REFERENCED_SOURCE_BYTES_V1) {
-      options.omissions.push({
-        scope: path,
-        reason: "OTHER",
-        detail: `Referenced source omitted; the ${MAX_REFERENCED_SOURCE_BYTES_V1}-byte context budget is exhausted.`,
-      });
+      if (requiredExplicitPaths.has(path) || importedReferencePaths.has(path))
+        options.omissions.push({
+          scope: path,
+          reason: requiredExplicitPaths.has(path) ? "CAPTURE_FAILED" : "OTHER",
+          detail: `${requiredExplicitPaths.has(path) ? "Required BASE reference" : "Referenced source"} omitted; the ${MAX_REFERENCED_SOURCE_BYTES_V1}-byte context budget is exhausted.`,
+        });
       continue;
     }
     capturedBytes += side.content.byteLength;
     options.blobs.set(side.content.digest.value, side.bytes);
-    referencedSources.push({ path, content: side.content, importedBy });
+    referencedSources.push({ path, content: side.content, importedBy, standardReferenceIds });
   }
   return referencedSources.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
 }
@@ -654,6 +725,7 @@ async function collectState(
   excludedPaths: ReadonlySet<string>,
   excludedPatterns: readonly RegExp[],
   roleOverrides: ReadonlyMap<string, PathRoleV1>,
+  explicitReferences: ReturnType<typeof selectedReferences>,
 ): Promise<CollectedState> {
   const observedHeadCommit = captureWorkingTree
     ? await gitText(repositoryPath, ["rev-parse", "--verify", "HEAD^{commit}"])
@@ -781,7 +853,8 @@ async function collectState(
       ...(capturedBytes ? { bytes: capturedBytes } : {}),
       overrides: roleOverrides,
     });
-    if (!isReviewableRoleV1(declaredRole)) {
+    const explicitlyTargeted = explicitReferences.some(({ path }) => path === spec.path);
+    if (!isReviewableRoleV1(declaredRole) && !explicitlyTargeted) {
       exclusions.push({
         path: spec.path,
         reason: declaredRole === "GENERATED" ? "GENERATED_POLICY" : "PATH_POLICY",
@@ -896,6 +969,7 @@ async function collectState(
   const referencedSources = await captureReferencedSources({
     repositoryPath,
     revision: headCommit,
+    baseRevision: baseCommit,
     captureWorkingTree,
     maxFileBytes,
     paths,
@@ -904,6 +978,7 @@ async function collectState(
     isExcluded: (path: string) =>
       isUnderExcludedPath(path, excludedPaths) ||
       excludedPatterns.some((pattern) => pattern.test(path)),
+    explicitReferences,
   });
 
   const stableState = {
@@ -1072,6 +1147,8 @@ export async function captureGitSnapshotV1(
 
   const excludedPatterns = compileExclusionPatterns(options.excludedPathPatterns ?? []);
   const roleOverrides = options.pathRoleOverrides ?? new Map<string, PathRoleV1>();
+  const explicitReferences =
+    request.schemaVersion === 2 ? selectedReferences(request.canonicalInputs) : [];
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const first = await collectState(
@@ -1084,6 +1161,7 @@ export async function captureGitSnapshotV1(
       excludedPaths,
       excludedPatterns,
       roleOverrides,
+      explicitReferences,
     );
     const second = await collectState(
       repositoryPath,
@@ -1095,6 +1173,7 @@ export async function captureGitSnapshotV1(
       excludedPaths,
       excludedPatterns,
       roleOverrides,
+      explicitReferences,
     );
     if (first.stateDigest.value !== second.stateDigest.value) {
       continue;

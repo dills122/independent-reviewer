@@ -2,8 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { ReviewRequestV1Schema } from "../../src/contracts/review-request.js";
+import { StandardsReviewBriefV2Schema } from "../../src/contracts/neutral-review-brief.js";
 import {
+  contractJsonSchema,
+  StandardsProfileSchema,
   StandardsProfileV1Schema,
+  STANDARDS_PROFILE_V2_JSON_SCHEMA,
+  StandardsProfileV2Schema,
   StandardsReviewRequestV2Schema,
 } from "../../src/contracts/standards-review.js";
 
@@ -67,5 +72,54 @@ test("selected standards reject duplicate rule identities and empty applicabilit
     StandardsProfileV1Schema.safeParse({ ...profile, rules: [{ ...profile.rules[0], paths: [] }] })
       .success,
     false,
+  );
+});
+
+test("standards profile v2 binds typed BASE references to rules", () => {
+  const versioned = {
+    ...profile,
+    schemaVersion: 2,
+    references: [
+      {
+        id: "reference_api_names",
+        path: "API_NAMES.md",
+        purpose: "Authoritative public API name registry.",
+        authority: "BASE",
+      },
+    ],
+    referenceBindings: [
+      { ruleId: "rule_layering", referenceId: "reference_api_names", required: true },
+    ],
+  };
+
+  assert.equal(StandardsProfileV2Schema.safeParse(versioned).success, true);
+  assert.equal(StandardsProfileSchema.safeParse(versioned).success, true);
+  assert.equal(StandardsProfileV1Schema.safeParse(versioned).success, false);
+  assert.equal(
+    StandardsProfileV2Schema.safeParse({
+      ...versioned,
+      referenceBindings: [
+        { ruleId: "rule_missing", referenceId: "reference_api_names", required: true },
+      ],
+    }).success,
+    false,
+  );
+  assert.equal(
+    StandardsProfileV2Schema.safeParse({
+      ...versioned,
+      referenceBindings: [...versioned.referenceBindings, ...versioned.referenceBindings],
+    }).success,
+    false,
+  );
+});
+
+test("standards profile and brief v2 match committed JSON Schemas", async () => {
+  assert.deepEqual(
+    JSON.parse(await readFile("schemas/standards-profile-v2.schema.json", "utf8")),
+    STANDARDS_PROFILE_V2_JSON_SCHEMA,
+  );
+  assert.deepEqual(
+    JSON.parse(await readFile("schemas/standards-review-brief-v2.schema.json", "utf8")),
+    contractJsonSchema(StandardsReviewBriefV2Schema, "standards-review-brief:v2"),
   );
 });

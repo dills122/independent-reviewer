@@ -1,3 +1,4 @@
+import { matchesGlob } from "node:path";
 import * as z from "zod";
 import { computeCanonicalInputDigestV1 } from "./canonical-input-identity.js";
 import { sha256Utf8 } from "./canonical-json.js";
@@ -14,6 +15,7 @@ import {
 import {
   canonicalInputList,
   type ReviewCanonicalInputs,
+  selectedReferences,
   StandardsCanonicalInputsV2Schema,
 } from "./standards-review.js";
 
@@ -92,7 +94,8 @@ const NeutralReviewBriefBaseV1Schema = z.strictObject({
   referencedSources: z.array(
     z.strictObject({
       path: SnapshotPathV1Schema,
-      importedBy: z.array(SnapshotPathV1Schema).min(1),
+      importedBy: z.array(SnapshotPathV1Schema),
+      standardReferenceIds: z.array(prefixedIdentifier("reference")).optional(),
       content: NonEmptyTextSchema,
     }),
   ),
@@ -252,14 +255,106 @@ function validateBrief(
   });
 }
 export const NeutralReviewBriefV1Schema = NeutralReviewBriefBaseV1Schema.superRefine(validateBrief);
+export const ReferenceEvidenceV2Schema = z.strictObject({
+  referenceId: prefixedIdentifier("reference"),
+  path: SnapshotPathV1Schema,
+  roles: z.array(z.enum(["REVIEW_TARGET", "SUPPORTING_REFERENCE"])).min(1),
+  captureStatus: z.enum(["CAPTURED", "OUT_OF_SCOPE", "UNAVAILABLE", "OMITTED"]),
+  authoritySide: z.literal("BASE"),
+  required: z.boolean(),
+  boundRuleIds: z.array(prefixedIdentifier("rule")).min(1),
+});
 export const StandardsReviewBriefV2Schema = z
   .strictObject({
     ...NeutralReviewBriefBaseV1Schema.shape,
     schemaVersion: z.literal(2),
     mode: z.literal("STANDARDS"),
     canonicalInputs: StandardsCanonicalInputsV2Schema,
+    referenceEvidence: z.array(ReferenceEvidenceV2Schema),
   })
-  .superRefine(validateBrief);
+  .superRefine((brief, context) => {
+    validateBrief(brief, context);
+    const declaredReferences = new Map(
+      selectedReferences(brief.canonicalInputs).map((reference) => [reference.id, reference]),
+    );
+    const observedIds = brief.referenceEvidence.map(({ referenceId }) => referenceId);
+    if (
+      new Set(observedIds).size !== observedIds.length ||
+      observedIds.length !== declaredReferences.size ||
+      observedIds.some((id) => !declaredReferences.has(id))
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["referenceEvidence"],
+        message: "Reference evidence must account for every declared reference exactly once.",
+      });
+    brief.referenceEvidence.forEach((entry, index) => {
+      const reference = declaredReferences.get(entry.referenceId);
+      if (reference?.path !== entry.path)
+        context.addIssue({
+          code: "custom",
+          path: ["referenceEvidence", index, "path"],
+          message: "Reference evidence path must match its declaration.",
+        });
+      if (!reference) return;
+      const target = brief.snapshotManifest.paths.some(({ path }) => path === entry.path);
+      const applicableBindings = reference.bindings.filter((binding) =>
+        brief.snapshotManifest.paths.some((path) =>
+          binding.paths.some((pattern) => matchesGlob(path.path, pattern)),
+        ),
+      );
+      const capturedAsContext = brief.snapshotManifest.referencedSources.some(
+        ({ path }) => path === entry.path,
+      );
+      const capturedAtBase = target
+        ? resolveSnapshotSourceContentV1(brief.snapshotManifest.paths, entry.path, "BASE") !==
+          undefined
+        : capturedAsContext;
+      const omitted = brief.snapshotManifest.omissions.some(({ scope }) => scope === entry.path);
+      const expectedStatus =
+        target || applicableBindings.length > 0
+          ? capturedAtBase
+            ? "CAPTURED"
+            : omitted
+              ? "OMITTED"
+              : "UNAVAILABLE"
+          : "OUT_OF_SCOPE";
+      const expectedRoles = target
+        ? ["REVIEW_TARGET", "SUPPORTING_REFERENCE"]
+        : ["SUPPORTING_REFERENCE"];
+      if (
+        entry.roles.length !== expectedRoles.length ||
+        expectedRoles.some((role) => !entry.roles.includes(role as (typeof entry.roles)[number]))
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["referenceEvidence", index, "roles"],
+          message: "Reference roles must match frozen target participation.",
+        });
+      if (entry.captureStatus !== expectedStatus)
+        context.addIssue({
+          code: "custom",
+          path: ["referenceEvidence", index, "captureStatus"],
+          message: "Reference capture status must match frozen evidence availability.",
+        });
+      if (entry.required !== applicableBindings.some(({ required }) => required))
+        context.addIssue({
+          code: "custom",
+          path: ["referenceEvidence", index, "required"],
+          message: "Reference requirement must match applicable rule bindings.",
+        });
+      const expectedRuleIds = reference.bindings.map(({ ruleId }) => ruleId);
+      if (
+        entry.boundRuleIds.length !== expectedRuleIds.length ||
+        expectedRuleIds.some((ruleId) => !entry.boundRuleIds.includes(ruleId))
+      )
+        context.addIssue({
+          code: "custom",
+          path: ["referenceEvidence", index, "boundRuleIds"],
+          message: "Reference rule bindings must match the selected standards profile.",
+        });
+    });
+  });
 export const ReviewBriefSchema = z.union([
   NeutralReviewBriefV1Schema,
   StandardsReviewBriefV2Schema,

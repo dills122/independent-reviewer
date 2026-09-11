@@ -3,10 +3,15 @@ import { finalizeReviewBrief } from "../contracts/artifact-identity.js";
 import {
   computeInitialEvidenceContentDigestV1,
   type NeutralReviewBriefV1,
+  resolveSnapshotSourceContentV1,
   type SnapshotContentV1,
 } from "../contracts/index.js";
 import { NeutralReviewBriefV1Schema, type ReviewBrief } from "../contracts/neutral-review-brief.js";
-import { canonicalInputList, selectedRules } from "../contracts/standards-review.js";
+import {
+  canonicalInputList,
+  selectedReferences,
+  selectedRules,
+} from "../contracts/standards-review.js";
 import { inspectSnapshotPacket, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
 import { renderUnifiedDiff } from "./unified-diff.js";
 
@@ -81,8 +86,12 @@ export async function buildReviewBrief(
   const canonicalInputIds = canonicalInputList(packet.canonicalInputs).map((input) => input.id);
   const standardsRules =
     "standards" in packet.canonicalInputs ? selectedRules(packet.canonicalInputs) : undefined;
+  const standardsReferences =
+    "standards" in packet.canonicalInputs ? selectedReferences(packet.canonicalInputs) : [];
+  const declaredReferencePaths = new Set(standardsReferences.map(({ path }) => path));
   const isOutsideSelectedStandards = (path: string): boolean =>
     standardsRules !== undefined &&
+    !declaredReferencePaths.has(path) &&
     !standardsRules.some((rule) => rule.paths.some((pattern) => matchesGlob(path, pattern)));
 
   let transmittedBytes = 0;
@@ -137,6 +146,7 @@ export async function buildReviewBrief(
     referencedSources.push({
       path: entry.path,
       importedBy: [...entry.importedBy],
+      standardReferenceIds: [...(entry.standardReferenceIds ?? [])],
       content,
     });
   }
@@ -193,9 +203,42 @@ export async function buildReviewBrief(
       })),
   ];
 
+  const referenceEvidence = standardsReferences.map((reference) => {
+    const target = packet.manifest.paths.find(({ path }) => path === reference.path);
+    const applicableBindings = reference.bindings.filter((binding) =>
+      packet.manifest.paths.some((entry) =>
+        binding.paths.some((pattern) => matchesGlob(entry.path, pattern)),
+      ),
+    );
+    const required = applicableBindings.some((binding) => binding.required);
+    const capturedAsContext = packet.manifest.referencedSources.some(
+      ({ path }) => path === reference.path,
+    );
+    const capturedAtBase = target
+      ? resolveSnapshotSourceContentV1(packet.manifest.paths, reference.path, "BASE") !== undefined
+      : capturedAsContext;
+    const omitted = packet.manifest.omissions.some(({ scope }) => scope === reference.path);
+    return {
+      referenceId: reference.id,
+      path: reference.path,
+      roles: [...(target ? (["REVIEW_TARGET"] as const) : []), "SUPPORTING_REFERENCE" as const],
+      captureStatus:
+        target || applicableBindings.length > 0
+          ? capturedAtBase
+            ? ("CAPTURED" as const)
+            : omitted
+              ? ("OMITTED" as const)
+              : ("UNAVAILABLE" as const)
+          : ("OUT_OF_SCOPE" as const),
+      authoritySide: "BASE" as const,
+      required,
+      boundRuleIds: reference.bindings.map(({ ruleId }) => ruleId),
+    };
+  });
+
   return finalizeReviewBrief({
     ...("standards" in packet.canonicalInputs
-      ? { schemaVersion: 2, mode: "STANDARDS" }
+      ? { schemaVersion: 2, mode: "STANDARDS", referenceEvidence }
       : { schemaVersion: 1 }),
     briefId: `brief_${packet.manifest.snapshotDigest.value.slice(0, 24)}`,
     objective: {

@@ -8,7 +8,7 @@ import { FlowIdSchema } from "../contracts/review-request.js";
 import { ReviewRunConfigV3Schema } from "../contracts/review-run-config.js";
 import {
   ReviewAuthorSchema,
-  StandardsProfileV1Schema,
+  StandardsProfileSchema,
   StandardsReviewRequestV2Schema,
 } from "../contracts/standards-review.js";
 import { resolveRepositoryRootV1 } from "../snapshot/git-capture.js";
@@ -54,7 +54,7 @@ export async function saveLocalSettings(options: Options): Promise<string> {
   );
   const settings = LocalReviewSettingsV1Schema.parse({ schemaVersion: 1, ...paths });
   ReviewRunConfigV3Schema.parse(JSON.parse(await readFile(settings.config, "utf8")));
-  StandardsProfileV1Schema.parse(JSON.parse(await readFile(settings.standards, "utf8")));
+  StandardsProfileSchema.parse(JSON.parse(await readFile(settings.standards, "utf8")));
   await readAuthor(settings.author);
   const directory = await localReviewDirectory(repo);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -84,7 +84,7 @@ export async function assembleStandardsRequest(options: Options) {
   const configPath = option(options, "--config");
   if (!standardPath || !authorPath || !configPath)
     throw new Error("Provide --standards, --author and --config, or save them with init.");
-  const profile = StandardsProfileV1Schema.parse(
+  const profile = StandardsProfileSchema.parse(
     JSON.parse(await readFile(resolve(standardPath), "utf8")),
   );
   const author = await readAuthor(resolve(authorPath));

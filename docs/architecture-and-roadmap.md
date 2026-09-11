@@ -15,6 +15,8 @@ The deterministic artifact identity profile is recorded in
 [ADR-004](decisions/004-use-jcs-sha256-artifact-identities.md).
 Runner-owned final bookkeeping is recorded in
 [ADR-010](decisions/010-derive-final-bookkeeping-in-runner.md).
+Explicit standards evidence selection is recorded in
+[ADR-011](decisions/011-separate-reference-selection-from-file-classification.md).
 
 
 ## Standards review mode (v2)
@@ -38,6 +40,14 @@ references fail validation. Conflicting rule IDs require explicit selection of
 one definition. Subjective disagreement with a standard is not an exception.
 Bug hunting, fuzzing and runtime verification are outside this mode. Transport,
 privacy and spending bounds remain; protocols cannot be mixed during resume.
+
+Standards profile v2 can declare normalized repository references and bind each
+to selected rules with an explicit required flag. File classification remains a
+content-kind signal, not the sole eligibility decision. Unchanged applicable
+references are frozen as supporting context; changed references retain their
+classification, enter target scope, and use BASE as authority so a patch cannot
+authorize itself. Standards brief v2 records independent artifact roles and
+capture status. Findings remain anchored to transmitted changed evidence.
 
 ## Objective
 

@@ -29,6 +29,7 @@ import {
 import {
   contractJsonSchema,
   STANDARDS_PROFILE_V1_JSON_SCHEMA,
+  STANDARDS_PROFILE_V2_JSON_SCHEMA,
   STANDARDS_REVIEW_REQUEST_V2_JSON_SCHEMA,
 } from "../src/contracts/standards-review.js";
 
@@ -37,6 +38,7 @@ await mkdir(schemaDirectory, { recursive: true });
 
 const schemaArtifacts = [
   ["standards-profile-v1.schema.json", STANDARDS_PROFILE_V1_JSON_SCHEMA],
+  ["standards-profile-v2.schema.json", STANDARDS_PROFILE_V2_JSON_SCHEMA],
   ["standards-review-request-v2.schema.json", STANDARDS_REVIEW_REQUEST_V2_JSON_SCHEMA],
   ["standards-preliminary-v2.schema.json", STANDARDS_PRELIMINARY_V2_JSON_SCHEMA],
   ["standards-report-v2.schema.json", STANDARDS_REPORT_V2_JSON_SCHEMA],

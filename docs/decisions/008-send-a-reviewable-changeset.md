@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; slices 1-3 implemented, slice 4 deferred
+Accepted; slices 1-3 implemented, slice 4 deferred; eligibility refined by ADR-011
 
 ## Date
 
