@@ -318,7 +318,10 @@ async function preparePacket(
   const packetRoot =
     typeof requestedOutput === "string" ? resolve(requestedOutput) : defaultPacketRoot;
   const priorPacketRoots =
-    typeof requestedOutput === "string" ? await findSiblingSnapshotPacketsV1(packetRoot) : [];
+    typeof requestedOutput === "string" &&
+    (await isStrictDescendantFileSystemPathV1(repositoryRoot, packetRoot))
+      ? await findSiblingSnapshotPacketsV1(packetRoot)
+      : [];
   const captured = await captureGitSnapshotV1(request, {
     ...(typeof base === "string" ? { base } : {}),
     excludedFileSystemPaths: [
@@ -402,6 +405,14 @@ async function realpathNearestAncestor(path: string): Promise<string> {
   }
 }
 
+async function isStrictDescendantFileSystemPathV1(
+  parentPath: string,
+  candidatePath: string,
+): Promise<boolean> {
+  const relativePath = relative(parentPath, await realpathNearestAncestor(candidatePath));
+  return relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+}
+
 /** Warns when packets are written into the reviewed worktree without being ignored by Git. */
 async function warnUnignoredPacketLocation(
   repositoryRoot: string,
@@ -411,9 +422,7 @@ async function warnUnignoredPacketLocation(
   // Compare and query Git with symlinks resolved: on macOS a /tmp path and its /private/tmp
   // realpath would otherwise look like different repositories.
   const resolvedPacketPath = await realpathNearestAncestor(packetPath);
-  const relativePath = relative(repositoryRoot, resolvedPacketPath);
-  const insideWorktree =
-    relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
+  const insideWorktree = await isStrictDescendantFileSystemPathV1(repositoryRoot, packetPath);
   if (!insideWorktree || (await isPathIgnoredV1(repositoryRoot, resolvedPacketPath))) {
     return;
   }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
@@ -639,8 +639,13 @@ it("never captures a prior packet, and warns when packets are not ignored", asyn
 it("keeps changed source beside a custom packet output in review scope", async () => {
   const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-cli-output-scope-"));
   const requestPath = `${repositoryPath}-request.json`;
-  const outsidePacketPath = `${repositoryPath}-packet`;
+  const outsideParentPath = await mkdtemp(
+    join(tmpdir(), "independent-reviewer-cli-output-parent-"),
+  );
+  const inaccessibleSiblingPath = join(outsideParentPath, "unrelated-private");
+  const outsidePacketPath = join(outsideParentPath, "packet");
   try {
+    await mkdir(inaccessibleSiblingPath, { mode: 0o000 });
     await git(repositoryPath, "init", "--initial-branch=main");
     await git(repositoryPath, "config", "user.name", "CLI Output Scope Test");
     await git(repositoryPath, "config", "user.email", "cli-output-scope@example.invalid");
@@ -724,7 +729,8 @@ it("keeps changed source beside a custom packet output in review scope", async (
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });
     await rm(requestPath, { force: true });
-    await rm(outsidePacketPath, { recursive: true, force: true });
+    await chmod(inaccessibleSiblingPath, 0o700).catch(() => undefined);
+    await rm(outsideParentPath, { recursive: true, force: true });
   }
 });
 
