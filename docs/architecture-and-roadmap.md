@@ -333,7 +333,9 @@ resolves from an explicit value, repository configuration, branch upstream, or
 remote default branch in that order and fails when still ambiguous. The shipped
 local engine uses one external reviewer conversation, an immutable blind
 assessment, a separately delivered author packet, two mandatory calls, and at
-most one same-model final-output repair.
+most one same-model output repair per stage. Preliminary repair remains blind,
+persists both candidates, and must reserve its own call plus the still-mandatory
+final call before spending.
 Interactive author ask-backs and a named-check executor remain protocol
 extensions rather than first-release requirements. Token efficiency is a
 first-class correctness constraint; required evidence cannot be silently

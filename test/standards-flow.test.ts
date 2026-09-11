@@ -299,15 +299,7 @@ for (const scenario of [
         { readOpenRouterApiKey: () => "test", createProvider: () => provider },
       );
       assert.equal(result, expectedExit, errors.join("\n"));
-      assert.equal(
-        calls,
-        scenario === "conflict"
-          ? 0
-          : ["unknown", "inapplicable", "omitted-rule"].includes(scenario)
-            ? 1
-            : 2,
-        errors.join("\n"),
-      );
+      assert.equal(calls, scenario === "conflict" ? 0 : 2, errors.join("\n"));
       if (invalidRule) assert.match(errors.join("\n"), /Unknown standard rule/);
       else if (expectedExit !== 1) {
         assert.match(output.join("\n"), /Standards/);

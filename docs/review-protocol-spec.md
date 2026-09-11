@@ -42,7 +42,9 @@ one invocation. The engine must give a fresh external reviewer the neutral
 material first, durably record its preliminary assessment, and only then expose
 the author explanation. The first release supplies a complete bounded evidence
 packet and returns a validated readiness report in two mandatory calls, with at
-most one same-model repair for a complete locally invalid final candidate. Later
+most one same-model repair per stage for a complete locally invalid candidate.
+Preliminary repair cannot receive author context and only its accepted replacement
+crosses the stage boundary. Later
 protocol extensions may let the same reviewer request additional bounded
 evidence, configured local verification, and at most three author follow-up
 rounds.
@@ -835,7 +837,7 @@ decisions before live use.
 2. Complete: canonical identities, base resolution, cumulative working-tree
    capture, packet inspection, and bounded initial evidence.
 3. Complete: persisted two-stage orchestrator against a mock provider, with at
-   most one separately recorded final-output repair,
+   most one separately recorded output repair per stage,
    including author withholding, conservative token admission, coverage and
    source-anchor validation, full Markdown reconciliation, and run-attempt
    records.

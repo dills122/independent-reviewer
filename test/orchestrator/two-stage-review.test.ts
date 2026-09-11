@@ -270,7 +270,234 @@ function collectArrayLimits(schema: unknown, propertyName: string): number[] {
 }
 
 describe("two-stage review orchestrator", () => {
-  it("rejects a frozen line citation that was not present in transmitted evidence", async () => {
+  it("repairs one invalid preliminary candidate before revealing author context", async () => {
+    const before = Array.from({ length: 80 }, (_, index) => `line ${index + 1}`).join("\n");
+    const afterLines = before.split("\n");
+    afterLines[41] = "changed line 42";
+    const { repositoryPath, packetPath } = await arrangePacket(
+      false,
+      "AUTHOR_SECRET",
+      undefined,
+      undefined,
+      false,
+      false,
+      `${before}\n`,
+      `${afterLines.join("\n")}\n`,
+    );
+    const calls: ReviewProviderRequestV1[] = [];
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls.push(providerRequest);
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        if (providerRequest.stage === "PRELIMINARY") {
+          assert.doesNotMatch(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
+          if (calls.length === 1) {
+            return {
+              ...response({
+                schemaVersion: 1,
+                stage: "PRELIMINARY",
+                snapshotDigest: brief.snapshotManifest.snapshotDigest,
+                briefDigest: brief.briefDigest,
+                summary: "The change has a blocking defect.",
+                inspectedPaths: ["reviewed.ts"],
+                canonicalInputCoverage: canonicalInputCoverage(),
+                findings: [
+                  {
+                    id: "finding_unseen_line",
+                    severity: "P1",
+                    title: "Unsupported finding",
+                    scenario: "The reviewer cites source it was not sent.",
+                    impact: "The claimed evidence cannot support the finding.",
+                    evidence: [
+                      {
+                        path: "reviewed.ts",
+                        anchor: "LINE_RANGE",
+                        side: "HEAD",
+                        startLine: 10,
+                        endLine: 10,
+                        detail: "Line 10 allegedly proves the defect.",
+                      },
+                    ],
+                    correction: "Cite transmitted changed evidence.",
+                  },
+                ],
+                evidenceGaps: [],
+                limitations: [],
+                nextAction: "REQUEST_AUTHOR_PACKET",
+              }),
+              model: "fallback/reviewer",
+            };
+          }
+          assert.deepEqual(providerRequest.models, ["fallback/reviewer"]);
+          assert.match(JSON.stringify(providerRequest.messages), /PRELIMINARY_OUTPUT_REPAIR/);
+          assert.match(
+            JSON.stringify(providerRequest.messages),
+            /not included in transmitted evidence/i,
+          );
+          return {
+            ...response({
+              schemaVersion: 1,
+              stage: "PRELIMINARY",
+              snapshotDigest: brief.snapshotManifest.snapshotDigest,
+              briefDigest: brief.briefDigest,
+              summary: "No supported defect was found.",
+              inspectedPaths: ["reviewed.ts"],
+              canonicalInputCoverage: canonicalInputCoverage(),
+              findings: [],
+              evidenceGaps: [],
+              limitations: [],
+              nextAction: "REQUEST_AUTHOR_PACKET",
+            }),
+            model: "fallback/reviewer",
+          };
+        }
+        assert.match(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
+        assert.doesNotMatch(providerRequest.messages.at(-2)?.content ?? "", /finding_unseen_line/);
+        return response({
+          schemaVersion: 3,
+          stage: "FINAL",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "No defect remains after reconciliation.",
+          findings: [],
+          withdrawnPreliminaryFindings: [],
+          authorClaims: [],
+          authorVerificationClaims: finalCoverage().authorVerificationClaims,
+          preliminaryConcernDispositions: [],
+          limitations: [],
+          verdict: "READY",
+          nextActions: { blockers: [], fastFollows: [] },
+        });
+      },
+    };
+
+    try {
+      const result = await runTwoStageReviewV1(
+        packetPath,
+        { ...config, fallbackModels: ["fallback/reviewer"] },
+        provider,
+      );
+
+      assert.equal(result.report.verdict, "READY");
+      assert.deepEqual(
+        calls.map((call) => call.stage),
+        ["PRELIMINARY", "PRELIMINARY", "FINAL"],
+      );
+      await readFile(
+        join(packetPath, "review", "preliminary-repair-provider-response.json"),
+        "utf8",
+      );
+      const events = (await readFile(result.runRecordPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      assert.deepEqual(
+        events.map((event) => event.type),
+        [
+          "RUN_STARTED",
+          "CALL_STARTED",
+          "CALL_SUCCEEDED",
+          "PRELIMINARY_CANDIDATE_REJECTED",
+          "PRELIMINARY_REPAIR_REQUESTED",
+          "CALL_STARTED",
+          "CALL_SUCCEEDED",
+          "PRELIMINARY_PERSISTED",
+          "AUTHOR_DELIVERED",
+          "CALL_STARTED",
+          "CALL_SUCCEEDED",
+          "RUN_COMPLETED",
+        ],
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not buy a preliminary repair for a local frozen-evidence failure", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    let calls = 0;
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls += 1;
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        const manifest = JSON.parse(
+          await readFile(join(packetPath, "snapshot-manifest.json"), "utf8"),
+        );
+        await writeFile(
+          join(packetPath, "blobs", manifest.paths[0].after.digest.value),
+          "tampered\n",
+        );
+        return response({
+          schemaVersion: 1,
+          stage: "PRELIMINARY",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "The changed line has a defect.",
+          inspectedPaths: ["reviewed.ts"],
+          canonicalInputCoverage: canonicalInputCoverage(),
+          findings: [
+            {
+              id: "finding_valid_anchor",
+              severity: "P2",
+              title: "Changed behavior",
+              scenario: "The changed input produces the wrong result.",
+              impact: "The caller receives an incorrect value.",
+              evidence: [
+                {
+                  path: "reviewed.ts",
+                  anchor: "LINE_RANGE",
+                  side: "HEAD",
+                  startLine: 1,
+                  endLine: 1,
+                  detail: "The changed line produces the result.",
+                },
+              ],
+              correction: "Return the expected value.",
+            },
+          ],
+          evidenceGaps: [],
+          limitations: [],
+          nextAction: "REQUEST_AUTHOR_PACKET",
+        });
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () => runTwoStageReviewV1(packetPath, config, provider),
+        /captured evidence could not be validated locally/i,
+      );
+      assert.equal(calls, 1);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("does not buy a preliminary repair that would starve the mandatory final call", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket();
+    let calls = 0;
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async () => {
+        calls += 1;
+        return response({ verdict: "READY" }, 70_000);
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () => runTwoStageReviewV1(packetPath, config, provider),
+        /cannot reserve one preliminary-output repair and the mandatory final call/i,
+      );
+      assert.equal(calls, 1);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a frozen line citation after one bounded preliminary repair", async () => {
     const before = Array.from({ length: 80 }, (_, index) => `line ${index + 1}`).join("\n");
     const afterLines = before.split("\n");
     afterLines[41] = "changed line 42";
@@ -333,7 +560,7 @@ describe("two-stage review orchestrator", () => {
         () => runTwoStageReviewV1(packetPath, config, provider),
         /not included in transmitted evidence/i,
       );
-      assert.equal(calls, 1);
+      assert.equal(calls, 2);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
@@ -426,6 +653,10 @@ describe("two-stage review orchestrator", () => {
         calls.push(providerRequest);
         if (providerRequest.stage === "PRELIMINARY") {
           assert.doesNotMatch(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
+          assert.match(
+            providerRequest.messages[0]?.content ?? "",
+            /referencedSources.*context, not a review target.*never report a finding against.*never cite/s,
+          );
           const blindEvidence = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
           assert.deepEqual(blindEvidence.requiredCoverage, {
             changedPaths: ["reviewed.ts"],
@@ -634,6 +865,7 @@ describe("two-stage review orchestrator", () => {
         }
         const isRepair = JSON.stringify(providerRequest.messages).includes("FINAL_OUTPUT_REPAIR");
         if (isRepair) {
+          assert.deepEqual(providerRequest.models, ["fallback/reviewer"]);
           assert.deepEqual(
             valueAtPath(providerRequest.responseSchema.schema, [
               "properties",
@@ -659,32 +891,39 @@ describe("two-stage review orchestrator", () => {
           origin: "PRELIMINARY",
           emergenceRationale: isRepair ? null : "This must be null for preliminary findings.",
         };
-        return response({
-          schemaVersion: 1,
-          stage: "FINAL",
-          snapshotDigest: brief.snapshotManifest.snapshotDigest,
-          briefDigest: brief.briefDigest,
-          summary: "The behavior change remains unresolved.",
-          findings: [finalFinding],
-          preliminaryFindingDispositions: [
-            {
-              preliminaryFindingId: isRepair ? "finding_repair" : "finding_missing",
-              disposition: "RETAINED",
-              finalFindingId: "finding_repair",
-              rationale: "The author packet does not resolve the changed behavior.",
-            },
-          ],
-          ...finalCoverage(),
-          authorClaims: [],
-          limitations: [],
-          verdict: "NOT_READY",
-          nextActions: { blockers: ["Restore the required behavior."], fastFollows: [] },
-        });
+        return {
+          ...response({
+            schemaVersion: 1,
+            stage: "FINAL",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "The behavior change remains unresolved.",
+            findings: [finalFinding],
+            preliminaryFindingDispositions: [
+              {
+                preliminaryFindingId: isRepair ? "finding_repair" : "finding_missing",
+                disposition: "RETAINED",
+                finalFindingId: "finding_repair",
+                rationale: "The author packet does not resolve the changed behavior.",
+              },
+            ],
+            ...finalCoverage(),
+            authorClaims: [],
+            limitations: [],
+            verdict: "NOT_READY",
+            nextActions: { blockers: ["Restore the required behavior."], fastFollows: [] },
+          }),
+          model: "fallback/reviewer",
+        };
       },
     };
 
     try {
-      const result = await runTwoStageReviewV1(packetPath, config, provider);
+      const result = await runTwoStageReviewV1(
+        packetPath,
+        { ...config, fallbackModels: ["fallback/reviewer"] },
+        provider,
+      );
 
       assert.equal(result.report.verdict, "NOT_READY");
       assert.equal(calls.length, 3);
@@ -792,7 +1031,7 @@ describe("two-stage review orchestrator", () => {
 
     try {
       await assert.rejects(() => runTwoStageReviewV1(packetPath, config, provider), /preliminary/i);
-      assert.equal(calls, 1);
+      assert.equal(calls, 2);
       const candidate = await readFile(
         join(packetPath, "review", "preliminary-provider-response.json"),
         "utf8",
@@ -958,13 +1197,18 @@ describe("two-stage review orchestrator", () => {
     }
   });
 
-  it("resumes only the failed final stage when optional model metadata is missing", async () => {
+  it("resumes only the failed final stage after a repaired preliminary", async () => {
     const { repositoryPath, packetPath } = await arrangePacket();
+    let preliminaryCalls = 0;
     const firstProvider: ReviewProviderV1 = {
       auditRequest: mockAuditRequest,
       complete: async (providerRequest) => {
         const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
         if (providerRequest.stage === "PRELIMINARY") {
+          preliminaryCalls += 1;
+          if (preliminaryCalls === 1) {
+            return response({ verdict: "READY" });
+          }
           return {
             ...response({
               schemaVersion: 1,
@@ -1044,6 +1288,39 @@ describe("two-stage review orchestrator", () => {
       );
       assert.equal(resumedCalls.length, 0);
 
+      const rejectedProviderPath = join(packetPath, "review", "preliminary-provider-response.json");
+      const rejectedProviderDocument = await readFile(rejectedProviderPath, "utf8");
+      const tamperedRejectedProvider = JSON.parse(rejectedProviderDocument);
+      tamperedRejectedProvider.rawContent = "{}";
+      await writeFile(rejectedProviderPath, `${JSON.stringify(tamperedRejectedProvider)}\n`);
+      await assert.rejects(
+        () => resumeFinalReviewV1(packetPath, config, resumedProvider),
+        /preliminary repair.*input digest/i,
+      );
+      assert.equal(resumedCalls.length, 0);
+      await writeFile(rejectedProviderPath, rejectedProviderDocument);
+
+      const runRecordPath = join(packetPath, "review", "run-record.jsonl");
+      const originalRunRecord = await readFile(runRecordPath, "utf8");
+      const pointerEvents = originalRunRecord
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const preliminaryPersisted = pointerEvents.find(
+        (event) => event.type === "PRELIMINARY_PERSISTED",
+      );
+      preliminaryPersisted.acceptedAttemptNumber = 1;
+      await writeFile(
+        runRecordPath,
+        `${pointerEvents.map((event) => JSON.stringify(event)).join("\n")}\n`,
+      );
+      await assert.rejects(
+        () => resumeFinalReviewV1(packetPath, config, resumedProvider),
+        /persisted run state is not eligible/i,
+      );
+      assert.equal(resumedCalls.length, 0);
+      await writeFile(runRecordPath, originalRunRecord);
+
       const result = await resumeFinalReviewV1(packetPath, config, resumedProvider);
 
       assert.equal(result.report.verdict, "READY");
@@ -1067,8 +1344,8 @@ describe("two-stage review orchestrator", () => {
         {
           schemaVersion: 1,
           stage: "FINAL",
-          failedAttemptNumber: 2,
-          claimedAttemptNumber: 3,
+          failedAttemptNumber: 3,
+          claimedAttemptNumber: 4,
         },
       );
       assert.equal(resumeClaim.configDigest.algorithm, "SHA256");
@@ -1081,6 +1358,10 @@ describe("two-stage review orchestrator", () => {
         events.map((event) => event.type),
         [
           "RUN_STARTED",
+          "CALL_STARTED",
+          "CALL_SUCCEEDED",
+          "PRELIMINARY_CANDIDATE_REJECTED",
+          "PRELIMINARY_REPAIR_REQUESTED",
           "CALL_STARTED",
           "CALL_SUCCEEDED",
           "PRELIMINARY_PERSISTED",
@@ -1096,7 +1377,7 @@ describe("two-stage review orchestrator", () => {
       );
       assert.deepEqual(
         events.filter((event) => event.type === "CALL_STARTED").map((event) => event.attemptNumber),
-        [1, 2, 3],
+        [1, 2, 3, 4],
       );
 
       let repeatCalls = 0;
@@ -1800,6 +2081,78 @@ function successfulEmptyResponse(request: ReviewProviderRequestV1) {
         },
   );
 }
+
+it("charges persisted transport retries when admitting a final-stage resume", async () => {
+  const { repositoryPath, packetPath } = await arrangePacket();
+  let finalAttempts = 0;
+  const firstProvider: ReviewProviderV1 = {
+    auditRequest: mockAuditRequest,
+    complete: async (request) => {
+      if (request.stage === "PRELIMINARY") return successfulEmptyResponse(request);
+      finalAttempts += 1;
+      if (finalAttempts === 1) {
+        throw new ProviderCallError("INVALID_RESPONSE", "Malformed provider response.", {
+          retryable: true,
+          diagnostic: {
+            httpStatus: 503,
+            providerErrorCode: "503",
+            providerMessage: "Temporarily unavailable",
+            errorType: null,
+            providerCode: null,
+            providerName: "mock",
+            model: "mock/reviewer",
+            responseId: "failed-with-usage",
+            retryAfter: "0",
+          },
+          responseMetadata: {
+            responseId: "failed-with-usage",
+            model: "mock/reviewer",
+            provider: "mock",
+            finishReason: "error",
+            usage: {
+              promptTokens: 79_999,
+              completionTokens: 1,
+              totalTokens: 80_000,
+              cost: null,
+            },
+          },
+        });
+      }
+      throw new ProviderCallError("PROVIDER_ERROR", "OpenRouter rate limit exceeded.", {
+        diagnostic: {
+          httpStatus: 429,
+          providerErrorCode: "429",
+          providerMessage: "Rate limit exceeded",
+          errorType: "rate_limit_exceeded",
+          providerCode: "rate_limited",
+          providerName: "mock",
+          model: "mock/reviewer",
+          responseId: null,
+          retryAfter: "45",
+        },
+      });
+    },
+  };
+
+  try {
+    await assert.rejects(() => runTwoStageReviewV1(packetPath, config, firstProvider), /rate/i);
+    let resumeCalls = 0;
+    await assert.rejects(
+      () =>
+        resumeFinalReviewV1(packetPath, config, {
+          auditRequest: mockAuditRequest,
+          complete: async (request) => {
+            resumeCalls += 1;
+            return successfulEmptyResponse(request);
+          },
+        }),
+      /remaining token budget cannot reserve the final review call/i,
+    );
+    assert.equal(resumeCalls, 0);
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
 
 for (const status of [503, 529])
   it(`retries only the failed final ${status} call with identical inputs and unique attempt numbers`, async () => {
