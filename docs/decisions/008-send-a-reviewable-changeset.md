@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed
+Accepted; slices 1-3 implemented, slice 4 deferred
 
 ## Date
 
@@ -87,8 +87,9 @@ hunk headers carry, so anchoring is unaffected.
 
 A whole side is still sent when the file is small enough that the diff saves
 nothing, or when the change touches a large enough fraction of the file that
-reviewing it in isolation would be misleading. Both thresholds are configured,
-not inferred. This preserves the one thing whole-file evidence buys — noticing
+reviewing it in isolation would be misleading. V1 uses explicit deterministic
+constants; configuration is deferred until real-range measurements justify it.
+This preserves the one thing whole-file evidence buys — noticing
 that a new helper duplicates something further down the same file — for the cases
 where it plausibly applies.
 
@@ -130,11 +131,12 @@ without a round trip, and the request loop covers what it cannot predict.
 
 ## Consequences
 
-A typical review should fall to roughly 5,000-20,000 tokens, from the 40,000-plus
-that current whole-file evidence produces. That removes the evidence budget as
-the binding constraint, cuts cost roughly an order of magnitude, and brings
-larger commits — currently refused outright at 3.16M reserved tokens — inside a
-131,072-token context.
+Provider-free validation on `f52f4e8..d6ba399` captured 46 reviewable paths,
+classified ten documentation paths out of scope, and produced 264,631 evidence
+bytes: 34 bounded-hunk items and 12 justified whole-file items. That is 38.4%
+below the previous 429,629-byte whole-file packet, with no blocking coverage
+constraint. This is a material reduction, but not the originally projected order
+of magnitude; conservative token reservation remains a separate bottleneck.
 
 That headroom is what makes a stronger review model affordable, which is the
 change the model-selection research argues for. Model choice should not move

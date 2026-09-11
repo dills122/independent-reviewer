@@ -52,6 +52,13 @@ other modules, callers, concurrency, deployment, external services or runtime
 state is out of scope and is not reported. Fuzzing, executing tests and
 measuring performance remain out of scope.
 
+Capture classifies changed paths as source, test, configuration,
+documentation, generated, or binary. Reviewable text is transmitted as
+deterministic unified hunks with three lines of context; files at most 40 lines
+or changes affecting at least 60% of both sides use whole-file diff evidence.
+Documentation and generated/binary exclusions remain visible without consuming
+review attention. Tests and configuration receive role-specific review depth.
+
 To make that boundary real, capture also freezes the unchanged TypeScript and
 JavaScript files the changed code imports directly, read-only, so a call can be
 checked against the contract it targets. They are context, not review targets:
@@ -87,8 +94,8 @@ Skip initialization by passing `--standards`, `--author` and `--config` directly
 to `review`. The [example profile](examples/standards.javascript-typescript.json)
 contains advisory JavaScript/TypeScript rules; select or customize rules to match
 your project. The [GPT-OSS 120B example config](examples/review-config.gpt-oss-120b.json)
-is the budget baseline: a 16,384-token output allowance, a 240,000 total-token
-and $0.20 per-review ceiling, open provider routing with CoreWeave and DeepInfra
+is the budget baseline: an 8,192-token output allowance, a 1,400,000
+conservative token-unit and $0.25 per-review ceiling, open provider routing with CoreWeave and DeepInfra
 preferred, and GLM 5.3 Flash then DeepSeek V4 Flash as fallback models.
 The [pinned example](examples/review-config.pinned-endpoint.json) shows the
 diagnostic shape — one endpoint, no failover, both privacy filters on — and is
@@ -104,7 +111,8 @@ Run dry-run with your actual scope to check admission; the allowance is not a
 completion guarantee. Profile fields are defined by
 [standards-profile-v1](schemas/standards-profile-v1.schema.json). Rule IDs must be
 unique across selected definitions. `paths` are repository-relative Node glob
-patterns; paths with no applicable rule remain visibly unassessed. Duplicate
+patterns; paths with no applicable rule remain visibly out of scope and do not
+block a ready verdict. Duplicate
 rule definitions require explicit resolution, rather than letting a model pick
 which one to enforce.
 

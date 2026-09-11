@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { describe, it } from "node:test";
+import { promisify } from "node:util";
 
 import { captureGitSnapshotV1, type ReviewRequestV1 } from "../../src/index.js";
 
@@ -125,6 +125,78 @@ describe("captureGitSnapshotV1", () => {
         captured.manifest.raceCheck.beforeStateDigest.value,
         captured.manifest.raceCheck.afterStateDigest.value,
       );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("reconciles a staged deletion and changed unstaged recreation into one modification", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/recreated");
+      await git(repositoryPath, "rm", "modified.ts");
+      await writeFile(join(repositoryPath, "modified.ts"), "recreated\n");
+      const statusBefore = await git(repositoryPath, "status", "--short");
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const entries = captured.manifest.paths.filter((entry) => entry.path === "modified.ts");
+
+      assert.equal(entries.length, 1);
+      const entry = entries[0];
+      assert.ok(entry?.before?.digest && entry.after?.digest);
+      assert.equal(entry.changeType, "MODIFIED");
+      assert.notEqual(entry.before.digest.value, entry.after.digest.value);
+      assert.equal(captured.manifest.workingTree.hasStagedChanges, true);
+      assert.equal(captured.manifest.workingTree.hasUnstagedChanges, false);
+      assert.deepEqual(captured.manifest.workingTree.includedUntrackedPaths, []);
+      assert.equal(await git(repositoryPath, "status", "--short"), statusBefore);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("omits a byte-identical recreation from the net base-to-working-tree changes", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/recreated-identical");
+      await git(repositoryPath, "rm", "modified.ts");
+      await writeFile(join(repositoryPath, "modified.ts"), "before\n");
+      const statusBefore = await git(repositoryPath, "status", "--short");
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+
+      assert.equal(
+        captured.manifest.paths.some((entry) => entry.path === "modified.ts"),
+        false,
+      );
+      assert.equal(captured.manifest.workingTree.hasStagedChanges, true);
+      assert.equal(captured.manifest.workingTree.hasUnstagedChanges, false);
+      assert.deepEqual(captured.manifest.workingTree.includedUntrackedPaths, []);
+      assert.equal(await git(repositoryPath, "status", "--short"), statusBefore);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("captures a staged deletion recreated as a symlink as one type change", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/recreated-symlink");
+      await git(repositoryPath, "rm", "modified.ts");
+      await symlink("renamed.ts", join(repositoryPath, "modified.ts"));
+      const statusBefore = await git(repositoryPath, "status", "--short");
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const entries = captured.manifest.paths.filter((entry) => entry.path === "modified.ts");
+
+      assert.equal(entries.length, 1);
+      assert.equal(entries[0]?.changeType, "TYPE_CHANGED");
+      assert.equal(entries[0]?.before?.kind, "TEXT");
+      assert.equal(entries[0]?.after?.kind, "SYMLINK");
+      assert.equal(captured.manifest.workingTree.hasStagedChanges, true);
+      assert.equal(captured.manifest.workingTree.hasUnstagedChanges, false);
+      assert.deepEqual(captured.manifest.workingTree.includedUntrackedPaths, []);
+      assert.equal(await git(repositoryPath, "status", "--short"), statusBefore);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
@@ -307,6 +379,14 @@ describe("captureGitSnapshotV1", () => {
       await writeFile(join(repositoryPath, "terraform.tfvars"), 'token = "value"\n');
       await writeFile(join(repositoryPath, "keystore.jks"), "binary-ish\n");
       await writeFile(join(repositoryPath, "kept.ts"), "ordinary source\n");
+      await writeFile(
+        join(repositoryPath, "scanner.ts"),
+        [
+          "const pem = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;",
+          "const pgp = /-----BEGIN PGP PRIVATE KEY BLOCK-----/;",
+          'const publicExample = "AKIAIOSFODNN7EXAMPLE";',
+        ].join("\n"),
+      );
 
       const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
       const excluded = new Set(captured.manifest.exclusions.map((entry) => entry.path));
@@ -317,6 +397,7 @@ describe("captureGitSnapshotV1", () => {
         assert.equal(capturedPaths.has(path), false, `${path} must not be captured`);
       }
       assert.equal(capturedPaths.has("kept.ts"), true);
+      assert.equal(capturedPaths.has("scanner.ts"), true);
       assert.equal(
         captured.manifest.exclusions.every((entry) => entry.reason === "SECRET_POLICY"),
         true,
@@ -332,7 +413,7 @@ describe("captureGitSnapshotV1", () => {
       await git(repositoryPath, "switch", "-c", "feature/secret-content");
       await writeFile(
         join(repositoryPath, "config.ts"),
-        'export const token = "AKIAIOSFODNN7EXAMPLE";\n',
+        'export const token = "AKIAABCDEFGHIJKLMNOP";\n',
       );
       await writeFile(
         join(repositoryPath, "fixture.pem.txt"),

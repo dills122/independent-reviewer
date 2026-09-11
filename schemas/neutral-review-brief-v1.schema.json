@@ -2805,7 +2805,8 @@
               "EXCLUDED_PATH",
               "OMITTED_CONTENT",
               "UNSUPPORTED_CONTENT",
-              "EVIDENCE_BUDGET"
+              "EVIDENCE_BUDGET",
+              "OUT_OF_SCOPE"
             ]
           },
           "detail": {

@@ -549,9 +549,42 @@ describe("OpenRouterProviderV1", () => {
         assert.ok(error instanceof ProviderCallError);
         assert.equal(error.code, "INVALID_RESPONSE");
         assert.doesNotMatch(error.message, /secret-key/);
+        assert.equal(error.responseBody, null);
+        assert.equal(error.responseMetadata, null);
         return true;
       },
     );
+  });
+
+  it("discards decoded credential reflections in nested values and object keys", async () => {
+    const reflectedContents = [
+      '{"outer":[{"echo":"\\u0073ecret-key"}]}',
+      '{"outer":{"\\u0073ecret-key":"reflected as a key"}}',
+    ];
+
+    for (const content of reflectedContents) {
+      const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+        Response.json({
+          id: "generation-reflected-escaped",
+          model: "vendor/model",
+          provider: "Mock Provider",
+          choices: [{ finish_reason: "stop", message: { content } }],
+        }),
+      );
+
+      await assert.rejects(
+        () => provider.complete(request),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderCallError);
+          assert.equal(error.code, "INVALID_RESPONSE");
+          assert.doesNotMatch(error.message, /secret-key/);
+          assert.equal(error.responseBody, null);
+          assert.equal(error.responseMetadata, null);
+          assert.equal(error.diagnostic, null);
+          return true;
+        },
+      );
+    }
   });
 
   it("does not echo a credential-shaped provider error code", async () => {

@@ -141,8 +141,8 @@ const SECRET_DIRECTORIES_V1 = new Set([".ssh", ".aws", ".gnupg", ".docker"]);
  * a key pasted into ordinary source, configuration, or a test fixture.
  */
 const SECRET_CONTENT_MARKERS_V1: ReadonlyArray<{ label: string; pattern: RegExp }> = [
-  { label: "PEM private key block", pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
-  { label: "PGP private key block", pattern: /-----BEGIN PGP PRIVATE KEY BLOCK-----/ },
+  { label: "PEM private key block", pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----\r?\n/ },
+  { label: "PGP private key block", pattern: /-----BEGIN PGP PRIVATE KEY BLOCK-----\r?\n/ },
   { label: "AWS access key id", pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
   { label: "GitHub token", pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\b/ },
   { label: "GitHub fine-grained token", pattern: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/ },
@@ -150,6 +150,9 @@ const SECRET_CONTENT_MARKERS_V1: ReadonlyArray<{ label: string; pattern: RegExp 
   { label: "Google API key", pattern: /\bAIza[0-9A-Za-z_-]{35}\b/ },
   { label: "OpenAI-style API key", pattern: /\bsk-[A-Za-z0-9]{20,}\b/ },
 ];
+
+/** Public dummy credentials that should not make test or documentation evidence disappear. */
+const KNOWN_PUBLIC_CREDENTIAL_EXAMPLES_V1 = ["AKIAIOSFODNN7EXAMPLE"] as const;
 
 /** Bytes scanned for content markers; a credential sits near the top of a file in practice. */
 const SECRET_SCAN_BYTES_V1 = 256 * 1024;
@@ -182,7 +185,11 @@ function secretContentMarker(bytes: Uint8Array): string | undefined {
   } catch {
     return undefined;
   }
-  return SECRET_CONTENT_MARKERS_V1.find(({ pattern }) => pattern.test(text))?.label;
+  const scanText = KNOWN_PUBLIC_CREDENTIAL_EXAMPLES_V1.reduce(
+    (candidate, example) => candidate.replaceAll(example, ""),
+    text,
+  );
+  return SECRET_CONTENT_MARKERS_V1.find(({ pattern }) => pattern.test(scanText))?.label;
 }
 
 /**
@@ -594,12 +601,16 @@ async function collectChangeSpecs(
     const untracked = decodeNulFields(
       (await runGit(repositoryPath, ["ls-files", "--others", "--exclude-standard", "-z"])).stdout,
     );
-    changes.push(
-      ...untracked.map((path) => ({
-        changeType: "UNTRACKED" as const,
-        path: validateSnapshotPath(path),
-      })),
-    );
+    for (const path of untracked.map(validateSnapshotPath)) {
+      const deletedIndex = changes.findIndex(
+        (change) => change.path === path && change.changeType === "DELETED",
+      );
+      if (deletedIndex >= 0) {
+        changes[deletedIndex] = { changeType: "MODIFIED", path };
+      } else {
+        changes.push({ changeType: "UNTRACKED", path });
+      }
+    }
   }
   return changes.sort((left, right) => compareUtf16(left.path, right.path));
 }
@@ -787,6 +798,23 @@ async function collectState(
     }
     if (typeof before === "string" || typeof after === "string") {
       throw new CaptureInvariantError("captured content has an unresolved availability state");
+    }
+    if (spec.changeType === "MODIFIED" && before && after) {
+      const sameContent =
+        before.content.digest?.value === after.content.digest?.value &&
+        before.content.byteLength === after.content.byteLength &&
+        before.content.gitMode === after.content.gitMode &&
+        before.content.kind === after.content.kind;
+      if (sameContent) {
+        continue;
+      }
+      const beforeIsRegular =
+        before.content.gitMode === "100644" || before.content.gitMode === "100755";
+      const afterIsRegular =
+        after.content.gitMode === "100644" || after.content.gitMode === "100755";
+      if (beforeIsRegular !== afterIsRegular) {
+        spec.changeType = "TYPE_CHANGED";
+      }
     }
     if (before) {
       const digest = before.content.digest;

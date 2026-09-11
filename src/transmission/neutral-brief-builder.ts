@@ -8,6 +8,7 @@ import {
 import { NeutralReviewBriefV1Schema, type ReviewBrief } from "../contracts/neutral-review-brief.js";
 import { canonicalInputList, selectedRules } from "../contracts/standards-review.js";
 import { inspectSnapshotPacket, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
+import { renderUnifiedDiff } from "./unified-diff.js";
 
 /**
  * How a captured side renders: either a standalone label, or a pointer to source bytes the caller
@@ -18,10 +19,7 @@ type CapturedRenderingV1 =
   | { readonly kind: "LABEL"; readonly label: string }
   | { readonly kind: "SOURCE"; readonly content: SnapshotContentV1 };
 
-function contentRendering(content: SnapshotContentV1 | null): CapturedRenderingV1 {
-  if (content === null) {
-    return { kind: "LABEL", label: "<absent>" };
-  }
+function contentRendering(content: SnapshotContentV1): CapturedRenderingV1 {
   switch (content.kind) {
     case "UNSUPPORTED":
       return { kind: "LABEL", label: `<unsupported ${content.gitMode}: ${content.reason}>` };
@@ -37,17 +35,27 @@ function contentRendering(content: SnapshotContentV1 | null): CapturedRenderingV
   }
 }
 
-async function capturedText(
+async function capturedSource(
   packetPath: string,
   content: SnapshotContentV1 | null,
 ): Promise<string> {
+  if (content === null) {
+    return "";
+  }
   const rendering = contentRendering(content);
   if (rendering.kind === "LABEL") {
     return rendering.label;
   }
-  const source = Buffer.from(
-    await readSnapshotBlobV1(packetPath, rendering.content.digest),
-  ).toString("utf8");
+  return Buffer.from(await readSnapshotBlobV1(packetPath, rendering.content.digest)).toString(
+    "utf8",
+  );
+}
+
+async function capturedText(
+  packetPath: string,
+  content: SnapshotContentV1 | null,
+): Promise<string> {
+  const source = await capturedSource(packetPath, content);
   if (source.length === 0) {
     return "";
   }
@@ -71,20 +79,30 @@ export async function buildReviewBrief(
   }
   const packet = await inspectSnapshotPacket(packetPath);
   const canonicalInputIds = canonicalInputList(packet.canonicalInputs).map((input) => input.id);
+  const standardsRules =
+    "standards" in packet.canonicalInputs ? selectedRules(packet.canonicalInputs) : undefined;
+  const isOutsideSelectedStandards = (path: string): boolean =>
+    standardsRules !== undefined &&
+    !standardsRules.some((rule) => rule.paths.some((pattern) => matchesGlob(path, pattern)));
 
   let transmittedBytes = 0;
   const initialEvidence = [];
-  for (const [index, entry] of packet.manifest.paths.entries()) {
-    const before = await capturedText(packetPath, entry.before);
-    const after = await capturedText(packetPath, entry.after);
+  const evidencePaths = packet.manifest.paths.filter(
+    (entry) => !isOutsideSelectedStandards(entry.path),
+  );
+  for (const [index, entry] of evidencePaths.entries()) {
+    const before = await capturedSource(packetPath, entry.before);
+    const after = await capturedSource(packetPath, entry.after);
     const previous = "previousPath" in entry ? ` (from ${entry.previousPath})` : "";
-    const content = [
-      `Change: ${entry.changeType} ${entry.path}${previous}`,
-      `--- BASE/${"previousPath" in entry ? entry.previousPath : entry.path}`,
+    const diff = renderUnifiedDiff(
       before,
-      `+++ HEAD/${entry.path}`,
       after,
-    ].join("\n");
+      "previousPath" in entry ? entry.previousPath : entry.path,
+      entry.path,
+    );
+    const content = [`Change: ${entry.changeType} ${entry.path}${previous}`, diff.content].join(
+      "\n",
+    );
     transmittedBytes += Buffer.byteLength(content, "utf8");
     if (transmittedBytes > maxInitialEvidenceBytes) {
       throw new Error(
@@ -123,19 +141,12 @@ export async function buildReviewBrief(
     });
   }
 
-  const standardsRules =
-    "standards" in packet.canonicalInputs ? selectedRules(packet.canonicalInputs) : undefined;
   const coverageConstraints = [
     ...(standardsRules
       ? packet.manifest.paths
-          .filter(
-            (entry) =>
-              !standardsRules.some((rule) =>
-                rule.paths.some((pattern) => matchesGlob(entry.path, pattern)),
-              ),
-          )
+          .filter((entry) => isOutsideSelectedStandards(entry.path))
           .map((entry) => ({
-            type: "UNSUPPORTED_CONTENT" as const,
+            type: "OUT_OF_SCOPE" as const,
             detail: "No selected standard applies to this changed path.",
             paths: [entry.path],
           }))
@@ -143,7 +154,10 @@ export async function buildReviewBrief(
     ...packet.manifest.exclusions
       .filter((exclusion) => exclusion.reason !== "RUNNER_CONTROL")
       .map((exclusion) => ({
-        type: "EXCLUDED_PATH" as const,
+        type:
+          exclusion.reason === "PATH_POLICY" || exclusion.reason === "GENERATED_POLICY"
+            ? ("OUT_OF_SCOPE" as const)
+            : ("EXCLUDED_PATH" as const),
         detail: `${exclusion.reason}: ${exclusion.detail}`,
         paths: [exclusion.path],
       })),

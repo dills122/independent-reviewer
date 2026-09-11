@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -89,6 +89,12 @@ interface CommandSpecV1 {
   summary: string;
   options: Record<string, CommandOptionSpecV1>;
 }
+
+const SNAPSHOT_PACKET_MARKERS_V1 = [
+  "snapshot-manifest.json",
+  "canonical-inputs.json",
+  "packet-metadata.json",
+] as const;
 
 const COMMAND_SPECS_V1: Record<string, CommandSpecV1> = {
   init: {
@@ -311,11 +317,8 @@ async function preparePacket(
   const defaultPacketRoot = join(repositoryRoot, ".review-runs");
   const packetRoot =
     typeof requestedOutput === "string" ? resolve(requestedOutput) : defaultPacketRoot;
-  // Sibling packets from earlier runs live beside the requested one, so the containing directory
-  // is excluded too, unless that would exclude the whole worktree.
-  const packetParent = dirname(packetRoot);
-  const packetSiblingRoot =
-    packetParent === repositoryRoot || packetParent === dirname(packetParent) ? [] : [packetParent];
+  const priorPacketRoots =
+    typeof requestedOutput === "string" ? await findSiblingSnapshotPacketsV1(packetRoot) : [];
   const captured = await captureGitSnapshotV1(request, {
     ...(typeof base === "string" ? { base } : {}),
     excludedFileSystemPaths: [
@@ -324,7 +327,7 @@ async function preparePacket(
       ...(typeof configPath === "string" ? [resolve(configPath)] : []),
       defaultPacketRoot,
       packetRoot,
-      ...packetSiblingRoot,
+      ...priorPacketRoots,
     ],
     ...(typeof excludePatterns === "string"
       ? { excludedPathPatterns: excludePatterns.split(",").filter((entry) => entry.length > 0) }
@@ -342,6 +345,40 @@ async function preparePacket(
     standards: request.schemaVersion === 2,
     ...(assembled ? { claim: assembled.claim } : {}),
   };
+}
+
+/** Finds complete sibling packets without treating their arbitrary parent as runner-owned. */
+async function findSiblingSnapshotPacketsV1(packetRoot: string): Promise<string[]> {
+  const packetParent = dirname(packetRoot);
+  const entries = await readdir(packetParent, { withFileTypes: true }).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  });
+  const candidates = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join(packetParent, entry.name))
+    .filter((candidate) => candidate !== packetRoot);
+  const identified = await Promise.all(
+    candidates.map(async (candidate) => {
+      try {
+        const [blobs, ...markers] = await Promise.all([
+          stat(join(candidate, "blobs")),
+          ...SNAPSHOT_PACKET_MARKERS_V1.map((marker) => stat(join(candidate, marker))),
+        ]);
+        return blobs.isDirectory() && markers.every((marker) => marker.isFile())
+          ? candidate
+          : undefined;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          return undefined;
+        }
+        throw error;
+      }
+    }),
+  );
+  return identified.filter((candidate): candidate is string => candidate !== undefined);
 }
 
 /**

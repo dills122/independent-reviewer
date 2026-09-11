@@ -227,8 +227,10 @@ withholding; malformed output cannot report Ready; basic call/token/time limits
 stop the run; one explicitly enabled live smoke review succeeds.
 
 Progress: the offline engine is complete. It builds a digest-bound neutral
-brief from the packet, fails rather than clipping an oversized initial evidence
-set, persists the raw and validated preliminary result before author delivery,
+brief from the packet, classifies changed paths, sends bounded unified hunks or
+justified whole-file diffs, distinguishes visible out-of-scope paths from
+blocking missing coverage, and fails rather than clipping an oversized initial
+evidence set. It persists the raw and validated preliminary result before author delivery,
 makes one reconciliation call and permits at most one separately recorded
 same-model repair when a complete final candidate fails local validation,
 assembles `final-review-candidate-v2` references into the unchanged final report

@@ -43,7 +43,7 @@ const CanonicalInputCoverageV1Schema = z.strictObject({
 
 const ChangedPathCoverageV1Schema = z.strictObject({
   path: SnapshotPathV1Schema,
-  status: z.enum(["INSPECTED", "UNASSESSED"]),
+  status: z.enum(["INSPECTED", "UNASSESSED", "OUT_OF_SCOPE"]),
   explanation: NonEmptyTextSchema,
 });
 
@@ -355,7 +355,7 @@ export const FinalReviewCandidateV2Schema = FinalReviewCandidateV1Schema.omit({
     ),
   changedPathCoverage: z.array(
     ChangedPathCoverageV1Schema.describe(
-      "INSPECTED means source was read and reviewed; it does not require running tests. UNASSESSED means not reviewed.",
+      "INSPECTED means source was read and reviewed; it does not require running tests. UNASSESSED means review was required but not completed. OUT_OF_SCOPE means no selected review rule applies and does not block readiness.",
     ),
   ),
 });

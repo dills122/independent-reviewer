@@ -182,6 +182,19 @@ describe("review result contracts", () => {
     assert.equal(FinalReviewReportV1Schema.safeParse(unassessedPlan).success, false);
   });
 
+  it("permits Ready when a changed path is explicitly outside the selected review scope", () => {
+    const report = finalReport();
+    report.changedPathCoverage = [
+      {
+        path: "docs/notes.md",
+        status: "OUT_OF_SCOPE",
+        explanation: "No selected review rule applies to documentation.",
+      },
+    ];
+
+    assert.equal(FinalReviewReportV1Schema.safeParse(report).success, true);
+  });
+
   it("does not promote author-reported verification to runner-confirmed evidence", () => {
     const report = finalReport();
     report.authorVerificationClaims = [

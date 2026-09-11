@@ -61,6 +61,7 @@ async function arrangePacket(
   authorIntent = "AUTHOR_SECRET: make the requested change.",
   projectGuidanceContent?: string,
   authorVerificationSummary = "Reported by author.",
+  includeOutOfScopePath = false,
 ): Promise<{ repositoryPath: string; packetPath: string }> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-flow-"));
   await git(repositoryPath, "init", "--initial-branch=main");
@@ -74,6 +75,9 @@ async function arrangePacket(
   await writeFile(join(repositoryPath, "reviewed.ts"), "after\n");
   if (includeExcludedPath) {
     await writeFile(join(repositoryPath, ".env"), "DO_NOT_SEND=secret\n");
+  }
+  if (includeOutOfScopePath) {
+    await writeFile(join(repositoryPath, "notes.md"), "Documentation only.\n");
   }
 
   const request = {
@@ -276,12 +280,9 @@ describe("two-stage review orchestrator", () => {
           });
           assert.match(
             blindEvidence.initialEvidence[0].content,
-            /--- BASE\/reviewed\.ts\n1 \| before/,
+            /--- BASE\/reviewed\.ts\n\+\+\+ HEAD\/reviewed\.ts\n@@ -1,1 \+1,1 @@\n-before\n\+after/,
           );
-          assert.match(
-            blindEvidence.initialEvidence[0].content,
-            /\+\+\+ HEAD\/reviewed\.ts\n1 \| after/,
-          );
+          assert.match(blindEvidence.initialEvidence[0].content, /Evidence form: WHOLE_FILE/);
           return response({
             schemaVersion: 1,
             stage: "PRELIMINARY",
@@ -1166,7 +1167,7 @@ describe("two-stage review orchestrator", () => {
           budgets: {
             ...config.budgets,
             maxOutputTokensPerCall: 15_000,
-            maxTotalTokens: 118_000,
+            maxTotalTokens: 120_000,
             maxTotalCostUsd: 1,
           },
         },
@@ -1412,6 +1413,61 @@ describe("two-stage review orchestrator", () => {
         () => runTwoStageReviewV1(packetPath, config, provider),
         /coverage constraint/i,
       );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts Ready when runner-classified paths are explicitly out of scope", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket(
+      false,
+      "AUTHOR_SECRET: make the requested change.",
+      undefined,
+      "Reported by author.",
+      true,
+    );
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        if (providerRequest.stage === "PRELIMINARY") {
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "The reviewable source change was inspected.",
+            inspectedPaths: ["reviewed.ts"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        return response({
+          schemaVersion: 1,
+          stage: "FINAL",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "The selected source scope is ready.",
+          findings: [],
+          preliminaryFindingDispositions: [],
+          ...finalCoverage(),
+          authorClaims: [],
+          limitations: [],
+          verdict: "READY",
+          nextActions: { blockers: [], fastFollows: [] },
+        });
+      },
+    };
+
+    try {
+      const result = await runTwoStageReviewV1(packetPath, config, provider);
+      assert.equal(result.report.verdict, "READY");
+      const markdown = await readFile(result.markdownPath, "utf8");
+      assert.match(markdown, /Out-of-scope paths/);
+      assert.match(markdown, /notes\\\.md/);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }

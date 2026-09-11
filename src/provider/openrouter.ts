@@ -166,6 +166,29 @@ function reflectsCredential(value: string, credential: string): boolean {
   return credential.length >= MIN_CREDENTIAL_MATCH_LENGTH && value.includes(credential);
 }
 
+function decodedJsonReflectsCredential(value: unknown, credential: string, depth = 0): boolean {
+  if (depth > MAX_REDACTION_DEPTH) {
+    throw new ProviderCallError(
+      "INVALID_RESPONSE",
+      `OpenRouter response nests deeper than ${MAX_REDACTION_DEPTH} levels.`,
+    );
+  }
+  if (typeof value === "string") {
+    return reflectsCredential(value, credential);
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => decodedJsonReflectsCredential(item, credential, depth + 1));
+  }
+  if (value && typeof value === "object") {
+    return Object.entries(value).some(
+      ([key, item]) =>
+        reflectsCredential(key, credential) ||
+        decodedJsonReflectsCredential(item, credential, depth + 1),
+    );
+  }
+  return false;
+}
+
 function safeProviderErrorLabel(value: unknown, credential: string): string {
   if (!value || typeof value !== "object") {
     return "unknown";
@@ -582,12 +605,12 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       nullableString(parsed.data.provider),
     ];
     if (
+      decodedJsonReflectsCredential(value, this.#apiKey) ||
       returnedStrings.some((candidate) => candidate && reflectsCredential(candidate, this.#apiKey))
     ) {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         "OpenRouter returned completion content that reflected the API credential.",
-        rejectedResponse,
       );
     }
 

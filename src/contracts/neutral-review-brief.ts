@@ -98,7 +98,13 @@ const NeutralReviewBriefBaseV1Schema = z.strictObject({
   ),
   coverageConstraints: z.array(
     z.strictObject({
-      type: z.enum(["EXCLUDED_PATH", "OMITTED_CONTENT", "UNSUPPORTED_CONTENT", "EVIDENCE_BUDGET"]),
+      type: z.enum([
+        "EXCLUDED_PATH",
+        "OMITTED_CONTENT",
+        "UNSUPPORTED_CONTENT",
+        "EVIDENCE_BUDGET",
+        "OUT_OF_SCOPE",
+      ]),
       detail: NonEmptyTextSchema,
       paths: z.array(SnapshotPathV1Schema),
     }),
