@@ -312,7 +312,8 @@
             "type": "string",
             "enum": [
               "INSPECTED",
-              "UNASSESSED"
+              "UNASSESSED",
+              "OUT_OF_SCOPE"
             ]
           },
           "explanation": {
@@ -326,7 +327,7 @@
           "explanation"
         ],
         "additionalProperties": false,
-        "description": "INSPECTED means source was read and reviewed; it does not require running tests. UNASSESSED means not reviewed."
+        "description": "INSPECTED means source was read and reviewed; it does not require running tests. UNASSESSED means review was required but not completed. OUT_OF_SCOPE means no selected review rule applies and does not block readiness."
       }
     },
     "canonicalInputCoverage": {

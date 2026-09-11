@@ -11,6 +11,8 @@ files.
 
 ## Slice 1 — Deterministic path classification
 
+Status: implemented.
+
 **Objective.** Give every changed path a role, and stop treating an out-of-scope
 path as a coverage gap.
 
@@ -34,26 +36,35 @@ heuristic at the edges; the config override is the escape hatch.
 
 ## Slice 2 — Diff-based initial evidence
 
+Status: core implemented; thresholds are deterministic V1 constants and evidence
+form is carried in each evidence item's content. Configuration and budget
+re-baselining remain follow-ups.
+
 **Objective.** Send what changed, not every byte of every changed file.
 
 - Render each reviewable path as a unified diff with bounded context.
 - Send a whole side only when the file is below a size threshold, or when the
-  change touches more than a configured fraction of it. Both are configuration,
-  not inference.
+  change touches more than a fixed fraction of it. V1 constants are explicit and
+  deterministic; expose configuration only after broader measurement.
 - Record which form each path used, so a report can say whether a judgement saw
   the whole file or a hunk.
 - Re-baseline the evidence budget downward once measured; the current 350,000
   bytes exists to absorb whole-file waste.
 
-**Done when.** The eight-path commit above transmits its two source files as
-hunks, total evidence is an order of magnitude smaller, and findings still anchor
-to correct BASE/HEAD coordinates.
+**Measured.** Range `f52f4e8..d6ba399` sends 34 bounded-hunk items and 12
+whole-file items with correct BASE/HEAD coordinates. Evidence is 264,631 bytes,
+38.4% below the previous 429,629-byte packet. Reduction is useful but below the
+order-of-magnitude target, so token admission remains a follow-up.
 
 **Risk.** Duplication spanning a large unchanged region becomes invisible. The
 size and fraction thresholds are the mitigation and need measuring against real
 commits, not guessing.
 
 ## Slice 3 — Graded coverage and depth
+
+Status: implemented for out-of-scope versus unassessed paths and role-aware
+prompting. Rule-specific unavailable evidence remains blocking under current
+contracts and can be refined with slice 4.
 
 **Objective.** Make a verdict mean something.
 
@@ -74,6 +85,8 @@ a commit with a genuinely unreviewed source path still cannot.
 to land in both modes at once, and requirements mode has its own gates.
 
 ## Slice 4 — Bounded evidence requests
+
+Status: deferred.
 
 **Objective.** Let the reviewer go and look, the way a person would.
 

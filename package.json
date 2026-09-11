@@ -12,14 +12,19 @@
       "import": "./dist/src/index.js"
     },
     "./schemas/neutral-review-brief-v1": "./schemas/neutral-review-brief-v1.schema.json",
+    "./schemas/finding-verification-v1": "./schemas/finding-verification-v1.schema.json",
     "./schemas/preliminary-assessment-v1": "./schemas/preliminary-assessment-v1.schema.json",
     "./schemas/final-review-candidate-v2": "./schemas/final-review-candidate-v2.schema.json",
+    "./schemas/final-review-candidate-v3": "./schemas/final-review-candidate-v3.schema.json",
     "./schemas/final-review-candidate-v1": "./schemas/final-review-candidate-v1.schema.json",
     "./schemas/final-review-report-v1": "./schemas/final-review-report-v1.schema.json",
     "./schemas/review-request-v1": "./schemas/review-request-v1.schema.json",
     "./schemas/inspection-report-v1": "./schemas/inspection-report-v1.schema.json",
     "./schemas/snapshot-manifest-v1": "./schemas/snapshot-manifest-v1.schema.json",
+    "./schemas/review-context-map-v1": "./schemas/review-context-map-v1.schema.json",
+    "./schemas/review-unit-plan-v1": "./schemas/review-unit-plan-v1.schema.json",
     "./schemas/standards-candidate-v2": "./schemas/standards-candidate-v2.schema.json",
+    "./schemas/standards-candidate-v3": "./schemas/standards-candidate-v3.schema.json",
     "./schemas/standards-inspection-report-v2": "./schemas/standards-inspection-report-v2.schema.json",
     "./schemas/standards-preliminary-v2": "./schemas/standards-preliminary-v2.schema.json",
     "./schemas/standards-profile-v1": "./schemas/standards-profile-v1.schema.json",
@@ -47,10 +52,19 @@
     "typecheck": "tsc --noEmit --project tsconfig.json"
   },
   "dependencies": {
+    "es-module-lexer": "3.0.2",
+    "parse-diff": "0.12.0",
+    "tree-sitter-go": "0.25.0",
+    "tree-sitter-java": "0.23.5",
+    "tree-sitter-javascript": "0.23.1",
+    "tree-sitter-python": "0.25.0",
+    "tree-sitter-typescript": "0.23.2",
+    "web-tree-sitter": "0.27.0",
     "zod": "4.5.4"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.12",
+    "@types/emscripten": "1.41.6",
     "@types/node": "24.13.3",
     "typescript": "6.0.3"
   }

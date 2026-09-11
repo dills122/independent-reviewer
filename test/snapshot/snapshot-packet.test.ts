@@ -3,12 +3,15 @@ import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { describe, it } from "node:test";
+import { promisify } from "node:util";
 
 import {
   captureGitSnapshotV1,
+  finalizeReviewContextMapV1,
   inspectSnapshotPacketV1,
+  type ReviewContextMapIdentityInputV1,
+  type ReviewContextMapV1,
   type ReviewRequestV1,
   writeSnapshotPacketV1,
 } from "../../src/index.js";
@@ -28,11 +31,17 @@ async function arrangeCapture(): Promise<{
   await git(repositoryPath, "config", "user.name", "Packet Test");
   await git(repositoryPath, "config", "user.email", "packet@example.invalid");
   await git(repositoryPath, "config", "commit.gpgsign", "false");
-  await writeFile(join(repositoryPath, "reviewed.ts"), "before\n");
+  await writeFile(
+    join(repositoryPath, "reviewed.ts"),
+    'const marker = "😀";\nexport function reviewed() { return "😀1"; }\n',
+  );
   await git(repositoryPath, "add", ".");
   await git(repositoryPath, "commit", "-m", "initial");
   await git(repositoryPath, "switch", "-c", "feature/packet");
-  await writeFile(join(repositoryPath, "reviewed.ts"), "after\n");
+  await writeFile(
+    join(repositoryPath, "reviewed.ts"),
+    'const marker = "😀";\nexport function reviewed() { return "😀2"; }\n',
+  );
 
   return {
     repositoryPath,
@@ -69,6 +78,31 @@ async function arrangeCapture(): Promise<{
   };
 }
 
+async function rewriteContextMap(
+  packetPath: string,
+  mutate: (draft: ReviewContextMapIdentityInputV1) => void,
+): Promise<void> {
+  const contextMapPath = join(packetPath, "review-context-map.json");
+  const persisted = JSON.parse(await readFile(contextMapPath, "utf8")) as ReviewContextMapV1;
+  const { contextMapDigest: _digest, ...draft } = persisted;
+  mutate(draft);
+  const contextMap = finalizeReviewContextMapV1(draft);
+  await writeFile(contextMapPath, `${JSON.stringify(contextMap)}\n`);
+
+  const metadataPath = join(packetPath, "packet-metadata.json");
+  const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as Record<string, unknown>;
+  metadata.contextMapDigest = contextMap.contextMapDigest;
+  await writeFile(metadataPath, `${JSON.stringify(metadata)}\n`);
+}
+
+function declarationRange(draft: ReviewContextMapIdentityInputV1) {
+  const declaration = draft.regions.find(
+    (region) => region.kind === "DECLARATION" && region.side === "HEAD",
+  );
+  assert.ok(declaration?.range);
+  return declaration.range;
+}
+
 describe("snapshot packet store", () => {
   it("writes and validates a private content-addressed packet", async () => {
     const { repositoryPath, request } = await arrangeCapture();
@@ -79,12 +113,27 @@ describe("snapshot packet store", () => {
 
       const inspected = await inspectSnapshotPacketV1(packetPath);
       assert.deepEqual(inspected.manifest, captured.manifest);
+      assert.equal(
+        inspected.contextMap.snapshotDigest.value,
+        captured.manifest.snapshotDigest.value,
+      );
+      assert.equal(inspected.contextMap.producers[0]?.producerId, "producer_snapshot_manifest");
+      assert.equal(
+        inspected.contextMap.regions.some(
+          (region) => region.kind === "DECLARATION" && region.displayName === "reviewed",
+        ),
+        true,
+      );
       assert.deepEqual(inspected.canonicalInputs, request.canonicalInputs);
       assert.equal(inspected.authorPacket, undefined);
       assert.equal(inspected.reviewConfigRef, "config_test");
       assert.equal(inspected.blobCount, 2);
       assert.equal(
         (await readFile(join(packetPath, "snapshot-manifest.json"), "utf8")).endsWith("\n"),
+        true,
+      );
+      assert.equal(
+        (await readFile(join(packetPath, "review-context-map.json"), "utf8")).endsWith("\n"),
         true,
       );
     } finally {
@@ -103,6 +152,176 @@ describe("snapshot packet store", () => {
       await writeFile(join(packetPath, "blobs", digest), "tampered\n");
 
       await assert.rejects(() => inspectSnapshotPacketV1(packetPath), /digest/i);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a packet whose context map was changed", async () => {
+    const { repositoryPath, request } = await arrangeCapture();
+    const packetPath = join(repositoryPath, ".review-runs", "packet-test");
+    try {
+      const captured = await captureGitSnapshotV1(request);
+      await writeSnapshotPacketV1(packetPath, captured, request);
+      const contextMapPath = join(packetPath, "review-context-map.json");
+      const contextMap = JSON.parse(await readFile(contextMapPath, "utf8")) as {
+        regions: Array<{ byteLength: number }>;
+      };
+      const firstRegion = contextMap.regions[0];
+      assert.ok(firstRegion);
+      firstRegion.byteLength += 1;
+      await writeFile(contextMapPath, `${JSON.stringify(contextMap)}\n`);
+
+      await assert.rejects(() => inspectSnapshotPacketV1(packetPath), /context map.*digest/i);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a validly re-digested context map that omits captured file coverage", async () => {
+    const { repositoryPath, request } = await arrangeCapture();
+    const packetPath = join(repositoryPath, ".review-runs", "packet-test");
+    try {
+      const captured = await captureGitSnapshotV1(request);
+      await writeSnapshotPacketV1(packetPath, captured, request);
+      const contextMapPath = join(packetPath, "review-context-map.json");
+      const persisted = JSON.parse(await readFile(contextMapPath, "utf8")) as Record<
+        string,
+        unknown
+      >;
+      const { contextMapDigest: _digest, ...draft } = persisted;
+      const regions = (draft.regions as Array<{ kind: string }>).filter(
+        (region) => region.kind !== "FILE",
+      );
+      const relations = (
+        draft.relations as Array<{
+          sourceRegionId: string;
+          targetRegionId: string;
+        }>
+      ).filter(
+        (relation) =>
+          regions.some(
+            (region) =>
+              "regionId" in region &&
+              (region.regionId === relation.sourceRegionId ||
+                region.regionId === relation.targetRegionId),
+          ) === false,
+      );
+      const contextMap = finalizeReviewContextMapV1({ ...draft, regions, relations });
+      await writeFile(contextMapPath, `${JSON.stringify(contextMap)}\n`);
+      const metadataPath = join(packetPath, "packet-metadata.json");
+      const metadata = JSON.parse(await readFile(metadataPath, "utf8")) as Record<string, unknown>;
+      metadata.contextMapDigest = contextMap.contextMapDigest;
+      await writeFile(metadataPath, `${JSON.stringify(metadata)}\n`);
+
+      await assert.rejects(() => inspectSnapshotPacketV1(packetPath), /file coverage/i);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a re-digested UTF-16 range outside its frozen source", async () => {
+    const { repositoryPath, request } = await arrangeCapture();
+    const packetPath = join(repositoryPath, ".review-runs", "packet-test");
+    try {
+      const captured = await captureGitSnapshotV1(request);
+      await writeSnapshotPacketV1(packetPath, captured, request);
+      await rewriteContextMap(packetPath, (draft) => {
+        const range = declarationRange(draft);
+        range.endOffsetExclusive += 10_000;
+        range.endLine += 10_000;
+      });
+
+      await assert.rejects(() => inspectSnapshotPacketV1(packetPath), /source range/i);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a re-digested range whose UTF-8 byte length is false", async () => {
+    const { repositoryPath, request } = await arrangeCapture();
+    const packetPath = join(repositoryPath, ".review-runs", "packet-test");
+    try {
+      const captured = await captureGitSnapshotV1(request);
+      await writeSnapshotPacketV1(packetPath, captured, request);
+      await rewriteContextMap(packetPath, (draft) => {
+        declarationRange(draft).contentByteLength += 1;
+      });
+
+      await assert.rejects(() => inspectSnapshotPacketV1(packetPath), /source range/i);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects re-digested line and column positions that disagree with source offsets", async () => {
+    const { repositoryPath, request } = await arrangeCapture();
+    const packetPath = join(repositoryPath, ".review-runs", "packet-test");
+    try {
+      const captured = await captureGitSnapshotV1(request);
+      await writeSnapshotPacketV1(packetPath, captured, request);
+      await rewriteContextMap(packetPath, (draft) => {
+        const range = declarationRange(draft);
+        range.startLine = 1;
+        range.startColumn += 1;
+      });
+
+      await assert.rejects(() => inspectSnapshotPacketV1(packetPath), /source range/i);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a re-digested UTF-8 range ending inside a multibyte code point", async () => {
+    const { repositoryPath, request } = await arrangeCapture();
+    const packetPath = join(repositoryPath, ".review-runs", "packet-test");
+    try {
+      const captured = await captureGitSnapshotV1(request);
+      await writeSnapshotPacketV1(packetPath, captured, request);
+      const source = 'const marker = "😀";\nexport function reviewed() { return "😀2"; }\n';
+      await rewriteContextMap(packetPath, (draft) => {
+        const range = declarationRange(draft);
+        const startOffset = Buffer.byteLength(source.slice(0, range.startOffset), "utf8");
+        const emojiIndex = source.indexOf("😀", range.startOffset);
+        assert.notEqual(emojiIndex, -1);
+        const insideEmoji = Buffer.byteLength(source.slice(0, emojiIndex), "utf8") + 1;
+        range.coordinateUnit = "UTF8_BYTE";
+        range.startOffset = startOffset;
+        range.endOffsetExclusive = insideEmoji;
+        range.contentByteLength = insideEmoji - startOffset;
+        range.endLine = 2;
+        range.endColumn = insideEmoji - Buffer.byteLength('const marker = "😀";\n', "utf8");
+      });
+
+      await assert.rejects(() => inspectSnapshotPacketV1(packetPath), /source range/i);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts an exact re-digested UTF-8 source range", async () => {
+    const { repositoryPath, request } = await arrangeCapture();
+    const packetPath = join(repositoryPath, ".review-runs", "packet-test");
+    try {
+      const captured = await captureGitSnapshotV1(request);
+      await writeSnapshotPacketV1(packetPath, captured, request);
+      const source = 'const marker = "😀";\nexport function reviewed() { return "😀2"; }\n';
+      const lineStart = source.indexOf("export function");
+      await rewriteContextMap(packetPath, (draft) => {
+        const range = declarationRange(draft);
+        const startUtf16 = range.startOffset;
+        const endUtf16 = range.endOffsetExclusive;
+        const startUtf8 = Buffer.byteLength(source.slice(0, startUtf16), "utf8");
+        const endUtf8 = Buffer.byteLength(source.slice(0, endUtf16), "utf8");
+        range.coordinateUnit = "UTF8_BYTE";
+        range.startOffset = startUtf8;
+        range.endOffsetExclusive = endUtf8;
+        range.contentByteLength = endUtf8 - startUtf8;
+        range.startColumn = Buffer.byteLength(source.slice(lineStart, startUtf16), "utf8");
+        range.endColumn = Buffer.byteLength(source.slice(lineStart, endUtf16), "utf8");
+      });
+
+      await inspectSnapshotPacketV1(packetPath);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }

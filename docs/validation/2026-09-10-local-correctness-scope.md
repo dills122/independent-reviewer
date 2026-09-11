@@ -56,6 +56,6 @@ easily an intended control turns out to contain a real defect.
 Referenced-source capture is unmeasured on a real import graph. These fixtures
 import two small files; a change importing a barrel file or a large module will
 pull far more, and the 128 KB capture ceiling and shared evidence budget have not
-been exercised against one. Import extraction is a regular expression that does
-not strip comments or string literals, so a commented-out import will still pull
-its file in.
+been exercised against one. A follow-up replaced ESM extraction with
+`es-module-lexer`, which ignores comments and string literals; ordinary CommonJS
+`require()` and malformed-source fallback remain conservatively matched.

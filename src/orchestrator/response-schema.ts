@@ -191,6 +191,7 @@ function constrainEvidencePaths(root: JsonSchemaNodeV1, paths: string[]): void {
  */
 function constrainLedgers(root: JsonSchemaNodeV1, options: ConstrainResponseSchemaOptionsV1): void {
   const properties = requireProperties(root, "(root)");
+  const stage = optionalNode(properties.stage)?.const;
 
   const constrainLedger = (
     propertyName: string,
@@ -218,7 +219,12 @@ function constrainLedgers(root: JsonSchemaNodeV1, options: ConstrainResponseSche
     itemIdentifier.enum = allowedValues;
   };
 
-  constrainLedger("canonicalInputCoverage", "canonicalInputId", options.canonicalInputIds, true);
+  constrainLedger(
+    "canonicalInputCoverage",
+    "canonicalInputId",
+    options.canonicalInputIds,
+    stage === "PRELIMINARY",
+  );
   constrainLedger("changedPathCoverage", "path", options.changedPaths, false);
   constrainLedger(
     "authorVerificationClaims",
@@ -226,6 +232,19 @@ function constrainLedgers(root: JsonSchemaNodeV1, options: ConstrainResponseSche
     options.authorVerificationClaims.map((_, index) => index),
     false,
   );
+}
+
+/** Final next actions are runner-owned; provider may not create unbound fast follows. */
+function constrainRunnerOwnedFastFollows(root: JsonSchemaNodeV1): boolean {
+  const nextActions = optionalNode(optionalProperties(root).nextActions);
+  if (!nextActions) return false;
+  const fastFollows = requireNode(
+    requireProperties(nextActions, "nextActions").fastFollows,
+    "nextActions.fastFollows",
+  );
+  fastFollows.minItems = 0;
+  fastFollows.maxItems = 0;
+  return true;
 }
 
 /**
@@ -281,6 +300,7 @@ export function constrainResponseSchemaV1(
   pinIdentityConstants(root, options.identities);
   constrainEvidencePaths(root, options.evidencePaths);
   constrainLedgers(root, options);
+  const hasRunnerOwnedFastFollows = constrainRunnerOwnedFastFollows(root);
   if (options.ruleIds)
     visitNodes(root, (node, name) => {
       if ((name === "ruleIds" || name === "conflictingRuleIds") && node.type === "array") {
@@ -294,6 +314,7 @@ export function constrainResponseSchemaV1(
       }
     });
   const appliedArrayLimits = boundUnspecifiedProse(root, Math.max(options.changedPaths.length, 1));
+  if (hasRunnerOwnedFastFollows) appliedArrayLimits.fastFollows = 0;
   const concerns = optionalNode(optionalProperties(root).preliminaryConcernDispositions);
   if (concerns) {
     // Reserve the widest count/index digits now; actual scope only shrinks after call one.
@@ -306,6 +327,23 @@ export function constrainResponseSchemaV1(
           RESPONSE_ARRAY_LIMITS_V1.limitations ?? 0,
         ) - 1;
   }
+  return { schema: root, appliedArrayLimits };
+}
+
+/** Pins ordered provider judgments to the exact number the runner must bind. */
+export function constrainFindingVerificationCandidateSchemaV1(
+  schema: unknown,
+  findingCount: number,
+  identities: ConstrainResponseSchemaOptionsV1["identities"],
+): ConstrainedResponseSchemaV1 {
+  const root = requireNode(structuredClone(schema), "(root)");
+  pinIdentityConstants(root, identities);
+  const properties = requireProperties(root, "(root)");
+  const assessments = requireNode(properties.assessments, "assessments");
+  assessments.minItems = findingCount;
+  assessments.maxItems = findingCount;
+  const appliedArrayLimits = boundUnspecifiedProse(root, 1);
+  appliedArrayLimits.assessments = findingCount;
   return { schema: root, appliedArrayLimits };
 }
 

@@ -1,3 +1,12 @@
+export { buildReviewContextMapV1 } from "./context/build-review-context-map.js";
+export type {
+  SourceAnalysisInputV1,
+  SourceAnalysisResultV1,
+} from "./context/tree-sitter-analyzer.js";
+export {
+  createTreeSitterContextAnalyzerV1,
+  TreeSitterContextAnalyzerV1,
+} from "./context/tree-sitter-analyzer.js";
 export * from "./contracts/index.js";
 export type {
   TwoStageReviewResult,
@@ -10,6 +19,9 @@ export {
   runTwoStageReview,
   runTwoStageReviewV1,
 } from "./orchestrator/two-stage-review.js";
+export { buildFallbackReviewContextMapV1 } from "./planning/fallback-context-map.js";
+export type { ReviewUnitPlannerOptionsV1 } from "./planning/review-unit-planner.js";
+export { planReviewUnitsV1 } from "./planning/review-unit-planner.js";
 export { OpenRouterProviderV1 } from "./provider/openrouter.js";
 export type {
   ProviderCallErrorCode,

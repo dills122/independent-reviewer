@@ -43,7 +43,7 @@ const CanonicalInputCoverageV1Schema = z.strictObject({
 
 const ChangedPathCoverageV1Schema = z.strictObject({
   path: SnapshotPathV1Schema,
-  status: z.enum(["INSPECTED", "UNASSESSED"]),
+  status: z.enum(["INSPECTED", "UNASSESSED", "OUT_OF_SCOPE"]),
   explanation: NonEmptyTextSchema,
 });
 
@@ -355,7 +355,7 @@ export const FinalReviewCandidateV2Schema = FinalReviewCandidateV1Schema.omit({
     ),
   changedPathCoverage: z.array(
     ChangedPathCoverageV1Schema.describe(
-      "INSPECTED means source was read and reviewed; it does not require running tests. UNASSESSED means not reviewed.",
+      "INSPECTED means source was read and reviewed; it does not require running tests. UNASSESSED means review was required but not completed. OUT_OF_SCOPE means no selected review rule applies and does not block readiness.",
     ),
   ),
 });
@@ -365,4 +365,19 @@ export const FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA = {
   $id: "urn:independent-reviewer:schema:final-review-candidate:v2",
   $comment: STRUCTURAL_JSON_SCHEMA_COMMENT_V1,
   ...z.toJSONSchema(FinalReviewCandidateV2Schema, { target: "draft-2020-12", io: "output" }),
+};
+
+/** Final provider output contains judgments only; runner assembles frozen-scope coverage. */
+export const FinalReviewCandidateV3Schema = FinalReviewCandidateV2Schema.omit({
+  changedPathCoverage: true,
+  canonicalInputCoverage: true,
+}).extend({
+  schemaVersion: z.literal(3),
+});
+
+export type FinalReviewCandidateV3 = z.infer<typeof FinalReviewCandidateV3Schema>;
+export const FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA = {
+  $id: "urn:independent-reviewer:schema:final-review-candidate:v3",
+  $comment: STRUCTURAL_JSON_SCHEMA_COMMENT_V1,
+  ...z.toJSONSchema(FinalReviewCandidateV3Schema, { target: "draft-2020-12", io: "output" }),
 };

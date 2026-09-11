@@ -11,14 +11,21 @@ export type IdentifierPrefixV1 =
   | "brief"
   | "check"
   | "config"
+  | "context"
   | "evidence"
   | "finding"
   | "flow"
   | "hunk"
   | "input"
+  | "plan"
+  | "producer"
+  | "reference"
+  | "region"
+  | "relation"
   | "rule"
   | "repo"
-  | "snapshot";
+  | "snapshot"
+  | "unit";
 
 export function prefixedIdentifier(prefix: IdentifierPrefixV1): z.ZodString {
   return z

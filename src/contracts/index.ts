@@ -33,6 +33,18 @@ export {
   sha256BytesHex,
 } from "./json-document.js";
 export { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
+export type {
+  FindingVerificationCandidateV1,
+  FindingVerificationV1,
+} from "./finding-verification.js";
+export {
+  assembleFindingVerificationV1,
+  assertFindingVerificationScopeV1,
+  FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
+  FINDING_VERIFICATION_V1_JSON_SCHEMA,
+  FindingVerificationCandidateV1Schema,
+  FindingVerificationV1Schema,
+} from "./finding-verification.js";
 export type { NeutralReviewBriefV1, ReviewBrief } from "./neutral-review-brief.js";
 export {
   computeInitialEvidenceContentDigestV1,
@@ -48,6 +60,16 @@ export {
   NonEmptyTextSchema,
   prefixedIdentifier,
 } from "./primitives.js";
+export type {
+  ReviewContextMapIdentityInputV1,
+  ReviewContextMapV1,
+} from "./review-context-map.js";
+export {
+  finalizeReviewContextMapV1,
+  REVIEW_CONTEXT_MAP_V1_JSON_SCHEMA,
+  ReviewContextMapV1Schema,
+  verifyReviewContextMapIdentityV1,
+} from "./review-context-map.js";
 export type { AuthorPacketV1, CanonicalInputV1, ReviewRequestV1 } from "./review-request.js";
 export {
   AuthorPacketV1Schema,
@@ -67,6 +89,7 @@ export {
 export type {
   FinalReviewCandidateV1,
   FinalReviewCandidateV2,
+  FinalReviewCandidateV3,
   FinalReviewReportV1,
   PreliminaryAssessmentV1,
   ReviewEvidenceV1,
@@ -75,9 +98,11 @@ export type {
 export {
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA,
+  FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
   FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
   FinalReviewCandidateV1Schema,
   FinalReviewCandidateV2Schema,
+  FinalReviewCandidateV3Schema,
   FinalReviewReportV1Schema,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
   PreliminaryAssessmentV1Schema,
@@ -94,6 +119,16 @@ export {
   REVIEW_RUN_CONFIG_V3_JSON_SCHEMA,
   ReviewRunConfigV3Schema,
 } from "./review-run-config.js";
+export type {
+  ReviewUnitPlanIdentityInputV1,
+  ReviewUnitPlanV1,
+} from "./review-unit-plan.js";
+export {
+  finalizeReviewUnitPlanV1,
+  REVIEW_UNIT_PLAN_V1_JSON_SCHEMA,
+  ReviewUnitPlanV1Schema,
+  verifyReviewUnitPlanIdentityV1,
+} from "./review-unit-plan.js";
 export type {
   DigestV1,
   SnapshotContentV1,

@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
+  FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
 } from "../../src/index.js";
 import {
+  constrainFindingVerificationCandidateSchemaV1,
   constrainResponseSchemaV1,
   constrainFinalConcernScopeV1,
   constrainRepairReferencesV1,
@@ -92,6 +95,25 @@ function rootProperty(schema: unknown, name: string): Record<string, unknown> {
 }
 
 describe("constrainResponseSchemaV1", () => {
+  it("keeps finding IDs out of provider verification output and binds judgment count", () => {
+    const verification = constrainFindingVerificationCandidateSchemaV1(
+      FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
+      2,
+      options.identities,
+    );
+    assert.equal(rootProperty(verification.schema, "assessments").minItems, 2);
+    assert.equal(rootProperty(verification.schema, "assessments").maxItems, 2);
+    assert.doesNotMatch(JSON.stringify(verification.schema), /preliminaryFindingId/);
+  });
+
+  it("requires provider fast follows to stay empty because runner derives next actions", () => {
+    const final = constrainResponseSchemaV1(FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA, options);
+    const nextActions = rootProperty(final.schema, "nextActions");
+    const fastFollows = rootProperty(nextActions, "fastFollows");
+    assert.equal(fastFollows.minItems, 0);
+    assert.equal(fastFollows.maxItems, 0);
+  });
+
   it("pins repair concern indices and counts without mutating the first-final schema", () => {
     const final = constrainResponseSchemaV1(FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA, options);
     const original = JSON.stringify(final);
@@ -141,6 +163,12 @@ describe("constrainResponseSchemaV1", () => {
     for (const values of pinnedEvidencePaths) {
       assert.deepEqual(values, options.evidencePaths);
     }
+  });
+
+  it("does not require runner-owned ledgers in the final candidate schema", () => {
+    const { schema } = constrainResponseSchemaV1(FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA, options);
+    assert.equal(rootProperty(schema, "changedPathCoverage"), undefined);
+    assert.equal(rootProperty(schema, "canonicalInputCoverage"), undefined);
   });
 
   it("applies named array limits instead of a blanket cap", () => {

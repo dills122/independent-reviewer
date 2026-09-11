@@ -247,7 +247,8 @@ export const SnapshotManifestV1Schema = z
       z.strictObject({
         path: SnapshotPathV1Schema,
         content: SnapshotContentV1Schema,
-        importedBy: z.array(SnapshotPathV1Schema).min(1),
+        importedBy: z.array(SnapshotPathV1Schema),
+        standardReferenceIds: z.array(prefixedIdentifier("reference")).optional(),
       }),
     ),
     canonicalInputs: z.array(
@@ -283,6 +284,23 @@ export const SnapshotManifestV1Schema = z
     }
     const changedPaths = new Set(manifest.paths.map((path) => path.path));
     manifest.referencedSources.forEach((source, index) => {
+      if (source.importedBy.length === 0 && (source.standardReferenceIds?.length ?? 0) === 0) {
+        context.addIssue({
+          code: "custom",
+          message: "a referenced source must have an import or standards-reference origin",
+          path: ["referencedSources", index],
+        });
+      }
+      if (
+        source.standardReferenceIds &&
+        new Set(source.standardReferenceIds).size !== source.standardReferenceIds.length
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "standards-reference identifiers must be distinct",
+          path: ["referencedSources", index, "standardReferenceIds"],
+        });
+      }
       // A changed file is already review evidence; capturing it again as context would let it be
       // read as unchanged and would double its transmitted bytes.
       if (changedPaths.has(source.path)) {

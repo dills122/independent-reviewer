@@ -131,6 +131,19 @@ describe("NeutralReviewBriefV1Schema", () => {
     assert.equal(brief.snapshotManifest.snapshotId, "snapshot_contract_fixture");
   });
 
+  it("records non-blocking paths that are outside selected review scope", async () => {
+    const brief = await createValidBrief();
+    brief.coverageConstraints = [
+      {
+        type: "OUT_OF_SCOPE",
+        detail: "No selected review rule applies to documentation.",
+        paths: ["docs/notes.md"],
+      },
+    ];
+
+    assert.equal(NeutralReviewBriefV1Schema.safeParse(brief).success, true);
+  });
+
   it("rejects author material at the strict brief boundary", async () => {
     const brief = { ...(await createValidBrief()), authorPacket: { intent: "trust me" } };
 

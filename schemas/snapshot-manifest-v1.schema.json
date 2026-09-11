@@ -2100,12 +2100,20 @@
             ]
           },
           "importedBy": {
-            "minItems": 1,
             "type": "array",
             "items": {
               "type": "string",
               "minLength": 1,
               "maxLength": 4096
+            }
+          },
+          "standardReferenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 11,
+              "maxLength": 128,
+              "pattern": "^reference_[A-Za-z0-9][A-Za-z0-9_-]*$"
             }
           }
         },

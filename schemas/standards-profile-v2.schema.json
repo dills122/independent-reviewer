@@ -1,0 +1,145 @@
+{
+  "$id": "urn:independent-reviewer:schema:standards-profile:v2",
+  "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 2
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rules": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 128,
+            "pattern": "^rule_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "enforcement": {
+            "type": "string",
+            "enum": [
+              "REQUIRED",
+              "RECOMMENDED"
+            ]
+          },
+          "paths": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "exceptions": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "text",
+          "enforcement",
+          "paths",
+          "exceptions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 11,
+            "maxLength": 128,
+            "pattern": "^reference_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1
+          },
+          "authority": {
+            "type": "string",
+            "const": "BASE"
+          }
+        },
+        "required": [
+          "id",
+          "path",
+          "purpose",
+          "authority"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "referenceBindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ruleId": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 128,
+            "pattern": "^rule_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "referenceId": {
+            "type": "string",
+            "minLength": 11,
+            "maxLength": 128,
+            "pattern": "^reference_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ruleId",
+          "referenceId",
+          "required"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "name",
+    "source",
+    "rules",
+    "references",
+    "referenceBindings"
+  ],
+  "additionalProperties": false
+}

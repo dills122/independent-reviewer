@@ -2271,12 +2271,20 @@
                 ]
               },
               "importedBy": {
-                "minItems": 1,
                 "type": "array",
                 "items": {
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 4096
+                }
+              },
+              "standardReferenceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 11,
+                  "maxLength": 128,
+                  "pattern": "^reference_[A-Za-z0-9][A-Za-z0-9_-]*$"
                 }
               }
             },
@@ -2618,12 +2626,20 @@
             "maxLength": 4096
           },
           "importedBy": {
-            "minItems": 1,
             "type": "array",
             "items": {
               "type": "string",
               "minLength": 1,
               "maxLength": 4096
+            }
+          },
+          "standardReferenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 11,
+              "maxLength": 128,
+              "pattern": "^reference_[A-Za-z0-9][A-Za-z0-9_-]*$"
             }
           },
           "content": {
@@ -2650,7 +2666,8 @@
               "EXCLUDED_PATH",
               "OMITTED_CONTENT",
               "UNSUPPORTED_CONTENT",
-              "EVIDENCE_BUDGET"
+              "EVIDENCE_BUDGET",
+              "OUT_OF_SCOPE"
             ]
           },
           "detail": {
@@ -2677,6 +2694,72 @@
     "mode": {
       "type": "string",
       "const": "STANDARDS"
+    },
+    "referenceEvidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "referenceId": {
+            "type": "string",
+            "minLength": 11,
+            "maxLength": 128,
+            "pattern": "^reference_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "roles": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "REVIEW_TARGET",
+                "SUPPORTING_REFERENCE"
+              ]
+            }
+          },
+          "captureStatus": {
+            "type": "string",
+            "enum": [
+              "CAPTURED",
+              "OUT_OF_SCOPE",
+              "UNAVAILABLE",
+              "OMITTED"
+            ]
+          },
+          "authoritySide": {
+            "type": "string",
+            "const": "BASE"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "boundRuleIds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 6,
+              "maxLength": 128,
+              "pattern": "^rule_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            }
+          }
+        },
+        "required": [
+          "referenceId",
+          "path",
+          "roles",
+          "captureStatus",
+          "authoritySide",
+          "required",
+          "boundRuleIds"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [
@@ -2690,7 +2773,8 @@
     "initialEvidence",
     "referencedSources",
     "coverageConstraints",
-    "mode"
+    "mode",
+    "referenceEvidence"
   ],
   "additionalProperties": false
 }

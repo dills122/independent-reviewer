@@ -28,7 +28,9 @@ export function createProgressOutput(write: (message: string) => void, quiet: bo
         const label =
           event.stage === "PRELIMINARY"
             ? "Reviewing code against standards"
-            : "Reconciling author explanation";
+            : event.stage === "FINDING_VERIFICATION"
+              ? "Challenging preliminary findings"
+              : "Reconciling author explanation";
         emit(`${label}…`);
         const start = Date.now();
         if (!quiet) {
@@ -45,6 +47,7 @@ export function createProgressOutput(write: (message: string) => void, quiet: bo
       if (["CALL_SUCCEEDED", "CALL_FAILED", "RUN_COMPLETED", "RUN_FAILED"].includes(event.type))
         close();
       if (event.type === "PRELIMINARY_PERSISTED") emit("Initial assessment saved.");
+      if (event.type === "FINDING_VERIFICATION_PERSISTED") emit("Finding verification saved.");
       if (event.type === "PROVIDER_RETRY_REQUESTED")
         emit(
           `Provider call failed. Retrying in ${Math.ceil((event.delayMs ?? 0) / 1000)}s; saved work retained.`,

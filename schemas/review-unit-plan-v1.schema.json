@@ -1,0 +1,224 @@
+{
+  "$id": "urn:independent-reviewer:schema:review-unit-plan:v1",
+  "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "planId": {
+      "type": "string",
+      "minLength": 6,
+      "maxLength": 128,
+      "pattern": "^plan_[A-Za-z0-9][A-Za-z0-9_-]*$"
+    },
+    "planDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "snapshotDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "briefDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "contextMapDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "plannerPolicyVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "units": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "unitId": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 128,
+            "pattern": "^unit_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "targetPaths": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            }
+          },
+          "primaryEvidenceIds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 10,
+              "maxLength": 128,
+              "pattern": "^evidence_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            }
+          },
+          "primaryRegionIds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "pattern": "^region_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            }
+          },
+          "supportingRegionIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "pattern": "^region_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            }
+          },
+          "relationIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 10,
+              "maxLength": 128,
+              "pattern": "^relation_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            }
+          },
+          "canonicalInputIds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 7,
+              "maxLength": 128,
+              "pattern": "^input_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            }
+          },
+          "estimatedInputBytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "required": [
+          "unitId",
+          "targetPaths",
+          "primaryEvidenceIds",
+          "primaryRegionIds",
+          "supportingRegionIds",
+          "relationIds",
+          "canonicalInputIds",
+          "estimatedInputBytes",
+          "limitations"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "exclusions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "evidenceId": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 128,
+            "pattern": "^evidence_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "evidenceId",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "planId",
+    "planDigest",
+    "snapshotDigest",
+    "briefDigest",
+    "contextMapDigest",
+    "plannerPolicyVersion",
+    "units",
+    "exclusions"
+  ],
+  "additionalProperties": false
+}

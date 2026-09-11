@@ -1,4 +1,5 @@
 import type { FinalReviewReportV1 } from "../contracts/index.js";
+import type { ReviewBrief } from "../contracts/neutral-review-brief.js";
 import type { ReviewReport } from "../contracts/standards-results.js";
 import type { selectedRules } from "../contracts/standards-review.js";
 
@@ -30,6 +31,7 @@ function lineItems(items: string[]): string {
 export function renderReviewMarkdown(
   report: ReviewReport,
   rules: ReturnType<typeof selectedRules> = [],
+  coverageConstraints: ReviewBrief["coverageConstraints"] = [],
 ): string {
   const findings =
     report.findings.length === 0
@@ -71,6 +73,18 @@ export function renderReviewMarkdown(
     (item) =>
       `${escapeMarkdown(item.canonicalInputId)}: ${item.status} — ${escapeMarkdown(item.explanation)}`,
   );
+  const scopeExclusions = coverageConstraints
+    .filter((constraint) => constraint.type === "OUT_OF_SCOPE")
+    .map(
+      (constraint) =>
+        `${constraint.paths.map(escapeMarkdown).join(", ")}: ${escapeMarkdown(constraint.detail)}`,
+    );
+  const blockingCoverageConstraints = coverageConstraints
+    .filter((constraint) => constraint.type !== "OUT_OF_SCOPE")
+    .map(
+      (constraint) =>
+        `${constraint.type}${constraint.paths.length ? ` (${constraint.paths.map(escapeMarkdown).join(", ")})` : ""}: ${escapeMarkdown(constraint.detail)}`,
+    );
 
   return [
     report.schemaVersion === 2 ? "# Standards review" : "# Independent review",
@@ -126,6 +140,14 @@ export function renderReviewMarkdown(
     "## Canonical-input coverage",
     "",
     lineItems(canonicalInputCoverage),
+    "",
+    "## Out-of-scope paths",
+    "",
+    lineItems(scopeExclusions),
+    "",
+    "## Blocking coverage constraints",
+    "",
+    lineItems(blockingCoverageConstraints),
     "",
     "## Blockers",
     "",

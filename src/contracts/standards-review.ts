@@ -8,6 +8,7 @@ import {
   ProjectGuidanceInputV1Schema,
   ReviewRequestV1Schema,
 } from "./review-request.js";
+import { SnapshotPathV1Schema } from "./snapshot-manifest.js";
 
 export const StandardsRuleV1Schema = z.strictObject({
   id: prefixedIdentifier("rule"),
@@ -29,6 +30,74 @@ export const StandardsProfileV1Schema = z
   });
 export type StandardsProfileV1 = z.infer<typeof StandardsProfileV1Schema>;
 
+export const StandardsReferenceV2Schema = z.strictObject({
+  id: prefixedIdentifier("reference"),
+  path: SnapshotPathV1Schema,
+  purpose: NonEmptyTextSchema,
+  /** Patched reference text cannot authorize itself. */
+  authority: z.literal("BASE"),
+});
+
+export const StandardsReferenceBindingV2Schema = z.strictObject({
+  ruleId: prefixedIdentifier("rule"),
+  referenceId: prefixedIdentifier("reference"),
+  required: z.boolean(),
+});
+
+export const StandardsProfileV2Schema = z
+  .strictObject({
+    schemaVersion: z.literal(2),
+    name: NonEmptyTextSchema,
+    source: NonEmptyTextSchema,
+    rules: z.array(StandardsRuleV1Schema).min(1),
+    references: z.array(StandardsReferenceV2Schema),
+    referenceBindings: z.array(StandardsReferenceBindingV2Schema),
+  })
+  .superRefine((profile, context) => {
+    const ruleIds = new Set(profile.rules.map((rule) => rule.id));
+    const referenceIds = new Set(profile.references.map((reference) => reference.id));
+    if (ruleIds.size !== profile.rules.length)
+      context.addIssue({ code: "custom", message: "Standard rule identifiers must be unique." });
+    if (referenceIds.size !== profile.references.length)
+      context.addIssue({
+        code: "custom",
+        message: "Standard reference identifiers must be unique.",
+      });
+    const bindings = new Set<string>();
+    profile.referenceBindings.forEach((binding, index) => {
+      if (!ruleIds.has(binding.ruleId))
+        context.addIssue({
+          code: "custom",
+          path: ["referenceBindings", index, "ruleId"],
+          message: "Binding must identify a rule in this profile.",
+        });
+      if (!referenceIds.has(binding.referenceId))
+        context.addIssue({
+          code: "custom",
+          path: ["referenceBindings", index, "referenceId"],
+          message: "Binding must identify a reference in this profile.",
+        });
+      const identity = `${binding.ruleId}\0${binding.referenceId}`;
+      if (bindings.has(identity))
+        context.addIssue({
+          code: "custom",
+          path: ["referenceBindings", index],
+          message: "Rule/reference bindings must be unique.",
+        });
+      bindings.add(identity);
+    });
+    profile.references.forEach((reference, index) => {
+      if (!profile.referenceBindings.some(({ referenceId }) => referenceId === reference.id))
+        context.addIssue({
+          code: "custom",
+          path: ["references", index, "id"],
+          message: "Every reference must be bound to at least one rule.",
+        });
+    });
+  });
+export const StandardsProfileSchema = z.union([StandardsProfileV1Schema, StandardsProfileV2Schema]);
+export type StandardsProfile = z.infer<typeof StandardsProfileSchema>;
+
 /** Standards are genuine project-guidance documents, bound by the existing input digest. */
 export const StandardsCanonicalInputsV2Schema = z
   .strictObject({
@@ -37,12 +106,13 @@ export const StandardsCanonicalInputsV2Schema = z
   .superRefine((inputs, context) => {
     const ids = new Set<string>();
     const ruleIds = new Set<string>();
+    const referenceIds = new Set<string>();
     for (const [index, input] of inputs.standards.entries()) {
       if (ids.has(input.id))
         context.addIssue({ code: "custom", message: "Standard input identifiers must be unique." });
       ids.add(input.id);
       try {
-        const profile = StandardsProfileV1Schema.parse(JSON.parse(input.content));
+        const profile = StandardsProfileSchema.parse(JSON.parse(input.content));
         for (const rule of profile.rules) {
           if (ruleIds.has(rule.id))
             throw new Error(
@@ -50,12 +120,20 @@ export const StandardsCanonicalInputsV2Schema = z
             );
           ruleIds.add(rule.id);
         }
+        if (profile.schemaVersion === 2)
+          for (const reference of profile.references) {
+            if (referenceIds.has(reference.id))
+              throw new Error(
+                `Conflicting standard reference ${reference.id}; select one definition explicitly.`,
+              );
+            referenceIds.add(reference.id);
+          }
       } catch {
         context.addIssue({
           code: "custom",
           path: ["standards", index, "content"],
           message:
-            "Standard content must be a valid profile with globally unique rule identifiers.",
+            "Standard content must be a valid profile with globally unique rule and reference identifiers.",
         });
       }
     }
@@ -88,11 +166,35 @@ export function canonicalInputList(inputs: ReviewCanonicalInputs): CanonicalInpu
 }
 export function selectedRules(inputs: z.infer<typeof StandardsCanonicalInputsV2Schema>) {
   return inputs.standards.flatMap((input) => {
-    const profile = StandardsProfileV1Schema.parse(JSON.parse(input.content));
+    const profile = StandardsProfileSchema.parse(JSON.parse(input.content));
     return profile.rules.map((rule) => ({
       ...rule,
       source: profile.source,
       canonicalInputId: input.id,
+    }));
+  });
+}
+
+export function selectedReferences(inputs: z.infer<typeof StandardsCanonicalInputsV2Schema>) {
+  return inputs.standards.flatMap((input) => {
+    const profile = StandardsProfileSchema.parse(JSON.parse(input.content));
+    if (profile.schemaVersion === 1) return [];
+    const rules = new Map(profile.rules.map((rule) => [rule.id, rule]));
+    const bindingsByReference = new Map<
+      string,
+      Array<{ ruleId: string; required: boolean; paths: string[] }>
+    >();
+    for (const binding of profile.referenceBindings) {
+      const rule = rules.get(binding.ruleId);
+      if (!rule) throw new Error(`Validated standards binding lost rule ${binding.ruleId}.`);
+      const bindings = bindingsByReference.get(binding.referenceId) ?? [];
+      bindings.push({ ruleId: binding.ruleId, required: binding.required, paths: rule.paths });
+      bindingsByReference.set(binding.referenceId, bindings);
+    }
+    return profile.references.map((reference) => ({
+      ...reference,
+      canonicalInputId: input.id,
+      bindings: bindingsByReference.get(reference.id) ?? [],
     }));
   });
 }
@@ -106,6 +208,10 @@ export function contractJsonSchema(schema: z.ZodType, name: string) {
 export const STANDARDS_PROFILE_V1_JSON_SCHEMA = contractJsonSchema(
   StandardsProfileV1Schema,
   "standards-profile:v1",
+);
+export const STANDARDS_PROFILE_V2_JSON_SCHEMA = contractJsonSchema(
+  StandardsProfileV2Schema,
+  "standards-profile:v2",
 );
 export const STANDARDS_REVIEW_REQUEST_V2_JSON_SCHEMA = contractJsonSchema(
   StandardsReviewRequestV2Schema,

@@ -55,7 +55,7 @@ export interface ProviderResponseMetadataV1 {
   readonly usage: ReviewProviderResponseV1["usage"];
 }
 
-export type ReviewStageV1 = "PRELIMINARY" | "FINAL";
+export type ReviewStageV1 = "PRELIMINARY" | "FINDING_VERIFICATION" | "FINAL";
 
 export interface ReviewMessageV1 {
   role: "system" | "user" | "assistant";

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
@@ -12,7 +12,7 @@ import {
   type ReviewProviderResponseV1,
   type ReviewProviderV1,
 } from "../src/index.js";
-import { asFinalCandidateV2 } from "./helpers/final-candidate.js";
+import { asFinalCandidateV3 } from "./helpers/final-candidate.js";
 
 const execFileAsync = promisify(execFile);
 const mockDigest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
@@ -170,8 +170,8 @@ it("composes capture and the two-stage provider flow through the review command"
 
     const calls: ReviewProviderRequestV1[] = [];
     const response = (value: unknown): ReviewProviderResponseV1 => ({
-      value: asFinalCandidateV2(value),
-      rawContent: JSON.stringify(asFinalCandidateV2(value)),
+      value: asFinalCandidateV3(value),
+      rawContent: JSON.stringify(asFinalCandidateV3(value)),
       responseId: "mock-response",
       model: "mock/reviewer",
       provider: "mock",
@@ -435,8 +435,8 @@ it("resumes a definite failed final stage without preparing or buying another pr
     );
 
     const makeResponse = (value: unknown): ReviewProviderResponseV1 => ({
-      value: asFinalCandidateV2(value),
-      rawContent: JSON.stringify(asFinalCandidateV2(value)),
+      value: asFinalCandidateV3(value),
+      rawContent: JSON.stringify(asFinalCandidateV3(value)),
       responseId: "mock-response",
       model: "mock/reviewer",
       provider: "mock",
@@ -633,6 +633,104 @@ it("never captures a prior packet, and warns when packets are not ignored", asyn
     );
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
+it("keeps changed source beside a custom packet output in review scope", async () => {
+  const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-cli-output-scope-"));
+  const requestPath = `${repositoryPath}-request.json`;
+  const outsideParentPath = await mkdtemp(
+    join(tmpdir(), "independent-reviewer-cli-output-parent-"),
+  );
+  const inaccessibleSiblingPath = join(outsideParentPath, "unrelated-private");
+  const outsidePacketPath = join(outsideParentPath, "packet");
+  try {
+    await mkdir(inaccessibleSiblingPath, { mode: 0o000 });
+    await git(repositoryPath, "init", "--initial-branch=main");
+    await git(repositoryPath, "config", "user.name", "CLI Output Scope Test");
+    await git(repositoryPath, "config", "user.email", "cli-output-scope@example.invalid");
+    await git(repositoryPath, "config", "commit.gpgsign", "false");
+    await writeFile(join(repositoryPath, "app.ts"), "before\n");
+    await mkdir(join(repositoryPath, "docs"));
+    await writeFile(join(repositoryPath, "docs", "spec.ts"), "before\n");
+    await git(repositoryPath, "add", ".");
+    await git(repositoryPath, "commit", "-m", "initial");
+    await git(repositoryPath, "switch", "-c", "feature/output-scope");
+    await writeFile(join(repositoryPath, "app.ts"), "after\n");
+    await writeFile(join(repositoryPath, "docs", "spec.ts"), "after\n");
+
+    await writeFile(
+      requestPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        flowId: "flow_cli_output_scope",
+        reviewInstance: { number: 1, maximum: 3 },
+        repository: { path: repositoryPath, base: "main" },
+        canonicalInputs: {
+          requirements: [
+            {
+              id: "input_requirement",
+              kind: "REQUIREMENTS",
+              title: "Requirement",
+              content: "Review every changed source file.",
+              provenance: { type: "INLINE", label: "CLI output scope test" },
+            },
+          ],
+          implementationPlan: {
+            id: "input_plan",
+            kind: "IMPLEMENTATION_PLAN",
+            title: "Plan",
+            content: "Change application code and its specification.",
+            provenance: { type: "INLINE", label: "CLI output scope test" },
+          },
+        },
+        reviewConfigRef: "config_test",
+      }),
+    );
+
+    const errors: string[] = [];
+    assert.equal(
+      await runCliV1(["prepare", "--request", requestPath, "--output", outsidePacketPath], {
+        stdout: () => undefined,
+        stderr: (message) => errors.push(message),
+      }),
+      0,
+      errors.join("\n"),
+    );
+    const outsideManifest = JSON.parse(
+      await readFile(join(outsidePacketPath, "snapshot-manifest.json"), "utf8"),
+    ) as { paths: { path: string }[] };
+    assert.deepEqual(
+      outsideManifest.paths.map((entry) => entry.path),
+      ["app.ts", "docs/spec.ts"],
+    );
+
+    const packetPath = join(repositoryPath, "docs", "review-packet");
+    assert.equal(
+      await runCliV1(["prepare", "--request", requestPath, "--output", packetPath], {
+        stdout: () => undefined,
+        stderr: (message) => errors.push(message),
+      }),
+      0,
+      errors.join("\n"),
+    );
+
+    const manifest = JSON.parse(
+      await readFile(join(packetPath, "snapshot-manifest.json"), "utf8"),
+    ) as { paths: { path: string }[]; exclusions: { path: string }[] };
+    assert.deepEqual(
+      manifest.paths.map((entry) => entry.path),
+      ["app.ts", "docs/spec.ts"],
+    );
+    assert.equal(
+      manifest.exclusions.some((entry) => entry.path === "docs/spec.ts"),
+      false,
+    );
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+    await rm(requestPath, { force: true });
+    await chmod(inaccessibleSiblingPath, 0o700).catch(() => undefined);
+    await rm(outsideParentPath, { recursive: true, force: true });
   }
 });
 

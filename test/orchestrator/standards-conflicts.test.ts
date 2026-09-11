@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { ReviewBrief } from "../../src/contracts/neutral-review-brief.js";
 import type { ReviewReport } from "../../src/contracts/standards-results.js";
-import { assertStandardsRuleCoverage } from "../../src/orchestrator/standards-policy.js";
+import {
+  assertStandardsChangedPathScope,
+  assertStandardsRuleCoverage,
+} from "../../src/orchestrator/standards-policy.js";
 
 // Isolate the cross-artifact guard; full schema and CLI composition are tested in standards-flow.
 const brief = {
@@ -102,5 +105,75 @@ test("missing evidence cannot become a standards violation or a passing assessme
   assert.throws(
     () => assertStandardsRuleCoverage({ ...uncertain, limitations: [] }, brief),
     /limitations/,
+  );
+});
+
+test("standards coverage distinguishes applicable code from out-of-scope paths", () => {
+  const scopedBrief = {
+    ...brief,
+    snapshotManifest: {
+      paths: [{ path: "src/example.ts" }, { path: "docs/notes.md" }],
+    },
+  } as ReviewBrief;
+  const scopedReport = {
+    ...report,
+    changedPathCoverage: [
+      { path: "src/example.ts", status: "INSPECTED", explanation: "Reviewed." },
+      {
+        path: "docs/notes.md",
+        status: "OUT_OF_SCOPE",
+        explanation: "No selected standard applies.",
+      },
+    ],
+  } as ReviewReport;
+
+  assert.doesNotThrow(() => assertStandardsChangedPathScope(scopedReport, scopedBrief));
+  assert.throws(
+    () =>
+      assertStandardsChangedPathScope(
+        {
+          ...scopedReport,
+          changedPathCoverage: scopedReport.changedPathCoverage.map((entry) => ({
+            ...entry,
+            status: entry.path === "docs/notes.md" ? "INSPECTED" : entry.status,
+          })),
+        } as ReviewReport,
+        scopedBrief,
+      ),
+    /OUT_OF_SCOPE/,
+  );
+  assert.throws(
+    () =>
+      assertStandardsChangedPathScope(
+        {
+          ...scopedReport,
+          changedPathCoverage: scopedReport.changedPathCoverage.map((entry) => ({
+            ...entry,
+            status: entry.path === "src/example.ts" ? "OUT_OF_SCOPE" : entry.status,
+          })),
+        } as ReviewReport,
+        scopedBrief,
+      ),
+    /applies/,
+  );
+});
+
+test("does not let a requirements reviewer declare captured evidence out of scope", () => {
+  assert.throws(
+    () =>
+      assertStandardsChangedPathScope(
+        {
+          schemaVersion: 1,
+          changedPathCoverage: [
+            {
+              path: "src/example.ts",
+              status: "OUT_OF_SCOPE",
+              explanation: "Reviewer chose not to inspect it.",
+            },
+          ],
+        } as ReviewReport,
+        { schemaVersion: 1 } as ReviewBrief,
+      ),
+    /cannot mark a captured path OUT_OF_SCOPE/,
   );
 });

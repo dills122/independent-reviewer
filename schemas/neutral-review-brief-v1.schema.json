@@ -2426,12 +2426,20 @@
                 ]
               },
               "importedBy": {
-                "minItems": 1,
                 "type": "array",
                 "items": {
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 4096
+                }
+              },
+              "standardReferenceIds": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 11,
+                  "maxLength": 128,
+                  "pattern": "^reference_[A-Za-z0-9][A-Za-z0-9_-]*$"
                 }
               }
             },
@@ -2773,12 +2781,20 @@
             "maxLength": 4096
           },
           "importedBy": {
-            "minItems": 1,
             "type": "array",
             "items": {
               "type": "string",
               "minLength": 1,
               "maxLength": 4096
+            }
+          },
+          "standardReferenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 11,
+              "maxLength": 128,
+              "pattern": "^reference_[A-Za-z0-9][A-Za-z0-9_-]*$"
             }
           },
           "content": {
@@ -2805,7 +2821,8 @@
               "EXCLUDED_PATH",
               "OMITTED_CONTENT",
               "UNSUPPORTED_CONTENT",
-              "EVIDENCE_BUDGET"
+              "EVIDENCE_BUDGET",
+              "OUT_OF_SCOPE"
             ]
           },
           "detail": {

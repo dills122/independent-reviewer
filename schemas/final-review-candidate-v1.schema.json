@@ -508,7 +508,8 @@
             "type": "string",
             "enum": [
               "INSPECTED",
-              "UNASSESSED"
+              "UNASSESSED",
+              "OUT_OF_SCOPE"
             ]
           },
           "explanation": {

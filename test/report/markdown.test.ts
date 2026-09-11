@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { FinalReviewReportV1Schema, renderFinalReviewMarkdownV1 } from "../../src/index.js";
+import {
+  FinalReviewReportV1Schema,
+  renderFinalReviewMarkdownV1,
+  renderReviewMarkdown,
+} from "../../src/index.js";
 
 const digest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
 
@@ -137,5 +141,51 @@ describe("final review Markdown", () => {
     assert.doesNotMatch(markdown, /\n- spoofed bullet/);
     assert.doesNotMatch(markdown, /\n1\. spoofed number/);
     assert.match(markdown, /Verdict: Not ready/);
+  });
+
+  it("shows out-of-scope paths separately from blocking coverage constraints", () => {
+    const report = FinalReviewReportV1Schema.parse({
+      schemaVersion: 1,
+      stage: "FINAL",
+      snapshotDigest: digest,
+      briefDigest: digest,
+      summary: "Reviewed selected source scope.",
+      findings: [],
+      preliminaryFindingDispositions: [],
+      preliminaryConcernDispositions: [],
+      authorClaims: [],
+      authorVerificationClaims: [],
+      changedPathCoverage: [
+        { path: "src/example.ts", status: "INSPECTED", explanation: "Inspected." },
+      ],
+      canonicalInputCoverage: [
+        { canonicalInputId: "input_plan", status: "ASSESSED", explanation: "Assessed." },
+      ],
+      limitations: [],
+      verdict: "READY",
+      nextActions: { blockers: [], fastFollows: [] },
+    });
+
+    const markdown = renderReviewMarkdown(
+      report,
+      [],
+      [
+        {
+          type: "OUT_OF_SCOPE",
+          detail: "Classified DOCUMENTATION; not review evidence.",
+          paths: ["docs/notes.md"],
+        },
+        {
+          type: "OMITTED_CONTENT",
+          detail: "Required source did not fit the evidence budget.",
+          paths: ["src/large.ts"],
+        },
+      ],
+    );
+
+    assert.match(markdown, /Out-of-scope paths/);
+    assert.match(markdown, /docs\/notes\\\.md/);
+    assert.match(markdown, /Blocking coverage constraints/);
+    assert.match(markdown, /src\/large\\\.ts/);
   });
 });
