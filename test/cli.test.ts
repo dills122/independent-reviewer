@@ -12,7 +12,7 @@ import {
   type ReviewProviderResponseV1,
   type ReviewProviderV1,
 } from "../src/index.js";
-import { asFinalCandidateV2 } from "./helpers/final-candidate.js";
+import { asFinalCandidateV3 } from "./helpers/final-candidate.js";
 
 const execFileAsync = promisify(execFile);
 const mockDigest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
@@ -170,8 +170,8 @@ it("composes capture and the two-stage provider flow through the review command"
 
     const calls: ReviewProviderRequestV1[] = [];
     const response = (value: unknown): ReviewProviderResponseV1 => ({
-      value: asFinalCandidateV2(value),
-      rawContent: JSON.stringify(asFinalCandidateV2(value)),
+      value: asFinalCandidateV3(value),
+      rawContent: JSON.stringify(asFinalCandidateV3(value)),
       responseId: "mock-response",
       model: "mock/reviewer",
       provider: "mock",
@@ -435,8 +435,8 @@ it("resumes a definite failed final stage without preparing or buying another pr
     );
 
     const makeResponse = (value: unknown): ReviewProviderResponseV1 => ({
-      value: asFinalCandidateV2(value),
-      rawContent: JSON.stringify(asFinalCandidateV2(value)),
+      value: asFinalCandidateV3(value),
+      rawContent: JSON.stringify(asFinalCandidateV3(value)),
       responseId: "mock-response",
       model: "mock/reviewer",
       provider: "mock",

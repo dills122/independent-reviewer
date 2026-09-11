@@ -366,3 +366,18 @@ export const FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA = {
   $comment: STRUCTURAL_JSON_SCHEMA_COMMENT_V1,
   ...z.toJSONSchema(FinalReviewCandidateV2Schema, { target: "draft-2020-12", io: "output" }),
 };
+
+/** Final provider output contains judgments only; runner assembles frozen-scope coverage. */
+export const FinalReviewCandidateV3Schema = FinalReviewCandidateV2Schema.omit({
+  changedPathCoverage: true,
+  canonicalInputCoverage: true,
+}).extend({
+  schemaVersion: z.literal(3),
+});
+
+export type FinalReviewCandidateV3 = z.infer<typeof FinalReviewCandidateV3Schema>;
+export const FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA = {
+  $id: "urn:independent-reviewer:schema:final-review-candidate:v3",
+  $comment: STRUCTURAL_JSON_SCHEMA_COMMENT_V1,
+  ...z.toJSONSchema(FinalReviewCandidateV3Schema, { target: "draft-2020-12", io: "output" }),
+};

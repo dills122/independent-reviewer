@@ -12,6 +12,7 @@ import { REVIEW_REQUEST_V1_JSON_SCHEMA } from "../src/contracts/review-request.j
 import {
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA,
+  FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
   FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
 } from "../src/contracts/review-results.js";
@@ -19,6 +20,7 @@ import { REVIEW_RUN_CONFIG_V3_JSON_SCHEMA } from "../src/contracts/review-run-co
 import { SNAPSHOT_MANIFEST_V1_JSON_SCHEMA } from "../src/contracts/snapshot-manifest.js";
 import {
   STANDARDS_CANDIDATE_V2_JSON_SCHEMA,
+  STANDARDS_CANDIDATE_V3_JSON_SCHEMA,
   STANDARDS_PRELIMINARY_V2_JSON_SCHEMA,
   STANDARDS_REPORT_V2_JSON_SCHEMA,
 } from "../src/contracts/standards-results.js";
@@ -37,6 +39,7 @@ const schemaArtifacts = [
   ["standards-preliminary-v2.schema.json", STANDARDS_PRELIMINARY_V2_JSON_SCHEMA],
   ["standards-report-v2.schema.json", STANDARDS_REPORT_V2_JSON_SCHEMA],
   ["standards-candidate-v2.schema.json", STANDARDS_CANDIDATE_V2_JSON_SCHEMA],
+  ["standards-candidate-v3.schema.json", STANDARDS_CANDIDATE_V3_JSON_SCHEMA],
   [
     "standards-review-brief-v2.schema.json",
     contractJsonSchema(StandardsReviewBriefV2Schema, "standards-review-brief:v2"),
@@ -46,6 +49,7 @@ const schemaArtifacts = [
     contractJsonSchema(StandardsInspectionReportV2Schema, "standards-inspection-report:v2"),
   ],
   ["final-review-candidate-v2.schema.json", FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA],
+  ["final-review-candidate-v3.schema.json", FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA],
   ["final-review-candidate-v1.schema.json", FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA],
   ["final-review-report-v1.schema.json", FINAL_REVIEW_REPORT_V1_JSON_SCHEMA],
   ["neutral-review-brief-v1.schema.json", NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA],

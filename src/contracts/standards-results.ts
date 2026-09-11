@@ -3,6 +3,7 @@ import { NonEmptyTextSchema, prefixedIdentifier } from "./primitives.js";
 import {
   FinalReviewCandidateV1Schema,
   FinalReviewCandidateV2Schema,
+  FinalReviewCandidateV3Schema,
   FinalReviewReportV1Schema,
   PreliminaryAssessmentV1Schema,
   ReviewFindingV1Schema,
@@ -85,6 +86,13 @@ export const StandardsCandidateV2Schema = z.strictObject({
     }),
   ),
 });
+export const StandardsCandidateV3Schema = z.strictObject({
+  ...FinalReviewCandidateV3Schema.shape,
+  schemaVersion: z.literal(3),
+  ruleAssessments,
+  mode: z.literal("STANDARDS"),
+  findings: StandardsCandidateV2Schema.shape.findings,
+});
 export const StandardsExpandedCandidateV2Schema = z.strictObject({
   ...FinalReviewCandidateV1Schema.shape,
   schemaVersion: z.literal(2),
@@ -109,4 +117,8 @@ export const STANDARDS_REPORT_V2_JSON_SCHEMA = contractJsonSchema(
 export const STANDARDS_CANDIDATE_V2_JSON_SCHEMA = contractJsonSchema(
   StandardsCandidateV2Schema,
   "standards-candidate:v2",
+);
+export const STANDARDS_CANDIDATE_V3_JSON_SCHEMA = contractJsonSchema(
+  StandardsCandidateV3Schema,
+  "standards-candidate:v3",
 );

@@ -190,13 +190,6 @@ for (const scenario of [
                       : "Applied selected rule.",
                 })),
               }),
-          canonicalInputCoverage: [
-            {
-              canonicalInputId: brief.canonicalInputs.standards[0].id,
-              status: "ASSESSED",
-              explanation: "Applied naming rule.",
-            },
-          ],
         };
         let value: unknown;
         if (request.stage === "PRELIMINARY") {
@@ -207,6 +200,13 @@ for (const scenario of [
             ...common,
             stage: "PRELIMINARY",
             inspectedPaths: ["code.ts"],
+            canonicalInputCoverage: [
+              {
+                canonicalInputId: brief.canonicalInputs.standards[0].id,
+                status: "ASSESSED",
+                explanation: "Applied naming rule.",
+              },
+            ],
             findings: noFindings ? [] : [{ id: "finding_name", ...finding }],
             evidenceGaps: [],
             limitations: [],
@@ -220,6 +220,7 @@ for (const scenario of [
           assert.equal(saved.findings.length, noFindings ? 0 : 1);
           value = {
             ...common,
+            schemaVersion: 3,
             stage: "FINAL",
             mode: "STANDARDS",
             findings: removed
@@ -243,9 +244,6 @@ for (const scenario of [
             preliminaryConcernDispositions: [],
             authorClaims: [],
             authorVerificationClaims: [],
-            changedPathCoverage: [
-              { path: "code.ts", status: "INSPECTED", explanation: "Reviewed frozen code." },
-            ],
             limitations:
               scenario === "semantic-conflict"
                 ? ["rule_names conflicts with rule_short; clarify which naming rule governs."]

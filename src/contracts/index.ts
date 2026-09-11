@@ -67,6 +67,7 @@ export {
 export type {
   FinalReviewCandidateV1,
   FinalReviewCandidateV2,
+  FinalReviewCandidateV3,
   FinalReviewReportV1,
   PreliminaryAssessmentV1,
   ReviewEvidenceV1,
@@ -75,9 +76,11 @@ export type {
 export {
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA,
+  FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
   FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
   FinalReviewCandidateV1Schema,
   FinalReviewCandidateV2Schema,
+  FinalReviewCandidateV3Schema,
   FinalReviewReportV1Schema,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
   PreliminaryAssessmentV1Schema,

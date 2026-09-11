@@ -5,6 +5,7 @@ import { describe, it } from "node:test";
 
 import {
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
+  FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
   FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
   FinalReviewReportV1Schema,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
@@ -268,6 +269,13 @@ describe("review result contracts", () => {
     );
   });
 
+  it("keeps runner-owned coverage out of the final provider contract", () => {
+    const properties = FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA.properties as Record<string, unknown>;
+    assert.equal("changedPathCoverage" in properties, false);
+    assert.equal("canonicalInputCoverage" in properties, false);
+    assert.equal((properties.schemaVersion as { const?: number }).const, 3);
+  });
+
   it("matches the committed provider-output schemas", async () => {
     const preliminarySchema = JSON.parse(
       await readFile(resolve("schemas", "preliminary-assessment-v1.schema.json"), "utf8"),
@@ -283,6 +291,12 @@ describe("review result contracts", () => {
         await readFile(resolve("schemas", "final-review-candidate-v1.schema.json"), "utf8"),
       ),
       FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
+    );
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(resolve("schemas", "final-review-candidate-v3.schema.json"), "utf8"),
+      ),
+      FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
     );
   });
 });

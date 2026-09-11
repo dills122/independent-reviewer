@@ -1,0 +1,439 @@
+{
+  "$id": "urn:independent-reviewer:schema:standards-candidate:v3",
+  "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 3
+    },
+    "stage": {
+      "type": "string",
+      "const": "FINAL"
+    },
+    "snapshotDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "briefDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "impact": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "anchor": {
+                      "type": "string",
+                      "const": "LINE_RANGE"
+                    },
+                    "side": {
+                      "type": "string",
+                      "enum": [
+                        "BASE",
+                        "HEAD"
+                      ]
+                    },
+                    "startLine": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "endLine": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 9007199254740991
+                    },
+                    "detail": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "anchor",
+                    "side",
+                    "startLine",
+                    "endLine",
+                    "detail"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    },
+                    "anchor": {
+                      "type": "string",
+                      "const": "SYMBOL"
+                    },
+                    "side": {
+                      "type": "string",
+                      "enum": [
+                        "BASE",
+                        "HEAD"
+                      ]
+                    },
+                    "symbol": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "detail": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "anchor",
+                    "side",
+                    "symbol",
+                    "detail"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "correction": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ruleIds": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 6,
+              "maxLength": 128,
+              "pattern": "^rule_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            }
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "REQUIRED",
+              "RECOMMENDED"
+            ]
+          },
+          "problem": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sourceFindingIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 9,
+              "maxLength": 128,
+              "pattern": "^finding_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            },
+            "description": "Preliminary finding IDs represented by this finding; empty only for a newly discovered finding."
+          },
+          "reconciliationRationale": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "title",
+          "impact",
+          "evidence",
+          "correction",
+          "ruleIds",
+          "severity",
+          "problem",
+          "sourceFindingIds",
+          "reconciliationRationale"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "preliminaryConcernDispositions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "EVIDENCE_GAP",
+              "LIMITATION"
+            ]
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "RESOLVED",
+              "REMAINS"
+            ]
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1
+          },
+          "concernIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "kind",
+          "disposition",
+          "rationale",
+          "concernIndex"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "authorClaims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claim": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "CONFIRMED",
+              "CONTRADICTED",
+              "UNVERIFIED"
+            ]
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "claim",
+          "status",
+          "explanation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "authorVerificationClaims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claimIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "CONTRADICTED",
+              "UNVERIFIED"
+            ]
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "claimIndex",
+          "status",
+          "explanation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "READY",
+        "READY_WITH_FOLLOW_UPS",
+        "NOT_READY",
+        "UNABLE_TO_VERIFY"
+      ]
+    },
+    "nextActions": {
+      "type": "object",
+      "properties": {
+        "blockers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "fastFollows": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "required": [
+        "blockers",
+        "fastFollows"
+      ],
+      "additionalProperties": false
+    },
+    "withdrawnPreliminaryFindings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "preliminaryFindingId": {
+            "type": "string",
+            "minLength": 9,
+            "maxLength": 128,
+            "pattern": "^finding_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "preliminaryFindingId",
+          "rationale"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Preliminary findings dropped entirely, with reasons. Every preliminary ID must be a source of one final finding or explicitly withdrawn."
+    },
+    "ruleAssessments": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ruleId": {
+            "type": "string",
+            "minLength": 6,
+            "maxLength": 128,
+            "pattern": "^rule_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ASSESSED",
+              "CONFLICT",
+              "UNASSESSED"
+            ]
+          },
+          "conflictingRuleIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 6,
+              "maxLength": 128,
+              "pattern": "^rule_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            }
+          },
+          "explanation": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "ruleId",
+          "status",
+          "conflictingRuleIds",
+          "explanation"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "mode": {
+      "type": "string",
+      "const": "STANDARDS"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "stage",
+    "snapshotDigest",
+    "briefDigest",
+    "summary",
+    "findings",
+    "preliminaryConcernDispositions",
+    "authorClaims",
+    "authorVerificationClaims",
+    "limitations",
+    "verdict",
+    "nextActions",
+    "withdrawnPreliminaryFindings",
+    "ruleAssessments",
+    "mode"
+  ],
+  "additionalProperties": false
+}

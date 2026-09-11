@@ -191,6 +191,7 @@ function constrainEvidencePaths(root: JsonSchemaNodeV1, paths: string[]): void {
  */
 function constrainLedgers(root: JsonSchemaNodeV1, options: ConstrainResponseSchemaOptionsV1): void {
   const properties = requireProperties(root, "(root)");
+  const stage = optionalNode(properties.stage)?.const;
 
   const constrainLedger = (
     propertyName: string,
@@ -218,7 +219,12 @@ function constrainLedgers(root: JsonSchemaNodeV1, options: ConstrainResponseSche
     itemIdentifier.enum = allowedValues;
   };
 
-  constrainLedger("canonicalInputCoverage", "canonicalInputId", options.canonicalInputIds, true);
+  constrainLedger(
+    "canonicalInputCoverage",
+    "canonicalInputId",
+    options.canonicalInputIds,
+    stage === "PRELIMINARY",
+  );
   constrainLedger("changedPathCoverage", "path", options.changedPaths, false);
   constrainLedger(
     "authorVerificationClaims",

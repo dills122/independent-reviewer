@@ -1,4 +1,4 @@
-import { asFinalCandidateV2 } from "../helpers/final-candidate.js";
+import { asFinalCandidateV3 } from "../helpers/final-candidate.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -62,6 +62,7 @@ async function arrangePacket(
   projectGuidanceContent?: string,
   authorVerificationSummary = "Reported by author.",
   includeOutOfScopePath = false,
+  includeAdditionalSource = false,
 ): Promise<{ repositoryPath: string; packetPath: string }> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-flow-"));
   await git(repositoryPath, "init", "--initial-branch=main");
@@ -78,6 +79,9 @@ async function arrangePacket(
   }
   if (includeOutOfScopePath) {
     await writeFile(join(repositoryPath, "notes.md"), "Documentation only.\n");
+  }
+  if (includeAdditionalSource) {
+    await writeFile(join(repositoryPath, "second.ts"), "additional change\n");
   }
 
   const request = {
@@ -167,7 +171,7 @@ const config: ReviewRunConfigV3 = {
 };
 
 function response(value: unknown, totalTokens = 100): ReviewProviderResponseV1 {
-  value = asFinalCandidateV2(value);
+  value = asFinalCandidateV3(value);
   return {
     value,
     rawContent: JSON.stringify(value),
@@ -264,6 +268,84 @@ function collectArrayLimits(schema: unknown, propertyName: string): number[] {
 }
 
 describe("two-stage review orchestrator", () => {
+  it("assembles exact final coverage from frozen scope without asking the model to repeat ledgers", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket(
+      false,
+      "AUTHOR_SECRET",
+      undefined,
+      undefined,
+      true,
+      true,
+    );
+    const calls: ReviewProviderRequestV1[] = [];
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls.push(providerRequest);
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        if (providerRequest.stage === "PRELIMINARY") {
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "Only the source file was inspected.",
+            inspectedPaths: ["reviewed.ts"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        const properties = valueAtPath(providerRequest.responseSchema.schema, [
+          "properties",
+        ]) as Record<string, unknown>;
+        assert.equal("changedPathCoverage" in properties, false);
+        assert.equal("canonicalInputCoverage" in properties, false);
+        return response({
+          schemaVersion: 3,
+          stage: "FINAL",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "No defect was found in the inspected source.",
+          findings: [],
+          withdrawnPreliminaryFindings: [],
+          preliminaryConcernDispositions: [],
+          authorClaims: [],
+          authorVerificationClaims: [
+            {
+              claimIndex: 0,
+              status: "UNVERIFIED",
+              explanation: "The reviewer did not run the author-reported command.",
+            },
+          ],
+          limitations: [],
+          verdict: "READY",
+          nextActions: { blockers: [], fastFollows: [] },
+        });
+      },
+    };
+
+    try {
+      const result = await runTwoStageReviewV1(packetPath, config, provider);
+
+      assert.equal(calls.length, 2);
+      assert.equal(result.report.verdict, "UNABLE_TO_VERIFY");
+      assert.deepEqual(
+        result.report.changedPathCoverage.map(({ path, status }) => ({ path, status })),
+        [
+          { path: "reviewed.ts", status: "INSPECTED" },
+          { path: "second.ts", status: "UNASSESSED" },
+        ],
+      );
+      assert.deepEqual(result.report.canonicalInputCoverage, canonicalInputCoverage());
+      assert.match(result.report.limitations.join("\n"), /second\.ts/);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("persists the blind assessment before revealing the author packet", async () => {
     const { repositoryPath, packetPath } = await arrangePacket();
     const calls: ReviewProviderRequestV1[] = [];
@@ -395,16 +477,21 @@ describe("two-stage review orchestrator", () => {
         for (const variant of evidenceVariants) {
           assert.deepEqual(valueAtPath(variant, ["properties", "path", "enum"]), ["reviewed.ts"]);
         }
-        const canonicalCoverage = valueAtPath(call.responseSchema.schema, [
-          "properties",
-          "canonicalInputCoverage",
-        ]) as Record<string, unknown>;
-        assert.equal(canonicalCoverage.minItems, 2);
-        assert.equal(canonicalCoverage.maxItems, 2);
-        assert.deepEqual(
-          valueAtPath(canonicalCoverage, ["items", "properties", "canonicalInputId", "enum"]),
-          ["input_plan", "input_requirement"],
-        );
+        const properties = valueAtPath(call.responseSchema.schema, ["properties"]) as Record<
+          string,
+          unknown
+        >;
+        if (call.stage === "PRELIMINARY") {
+          const canonicalCoverage = properties.canonicalInputCoverage as Record<string, unknown>;
+          assert.equal(canonicalCoverage.minItems, 2);
+          assert.equal(canonicalCoverage.maxItems, 2);
+          assert.deepEqual(
+            valueAtPath(canonicalCoverage, ["items", "properties", "canonicalInputId", "enum"]),
+            ["input_plan", "input_requirement"],
+          );
+        } else {
+          assert.equal("canonicalInputCoverage" in properties, false);
+        }
         assert.equal(
           valueAtPath(call.responseSchema.schema, ["properties", "summary", "maxLength"]),
           400,
@@ -425,16 +512,7 @@ describe("two-stage review orchestrator", () => {
         assert.ok(evidenceLimits.length > 0);
         assert.deepEqual(new Set(evidenceLimits), new Set([8]));
         if (call.stage === "FINAL") {
-          const changedPathCoverage = valueAtPath(call.responseSchema.schema, [
-            "properties",
-            "changedPathCoverage",
-          ]) as Record<string, unknown>;
-          assert.equal(changedPathCoverage.minItems, 1);
-          assert.equal(changedPathCoverage.maxItems, 1);
-          assert.deepEqual(
-            valueAtPath(changedPathCoverage, ["items", "properties", "path", "enum"]),
-            ["reviewed.ts"],
-          );
+          assert.equal("changedPathCoverage" in properties, false);
         }
       }
     } finally {
@@ -1473,7 +1551,7 @@ describe("two-stage review orchestrator", () => {
     }
   });
 
-  it("rejects Ready unless final coverage accounts for every changed path", async () => {
+  it("rejects model-authored final coverage fields", async () => {
     const { repositoryPath, packetPath } = await arrangePacket();
     const provider: ReviewProviderV1 = {
       auditRequest: mockAuditRequest,
@@ -1495,14 +1573,21 @@ describe("two-stage review orchestrator", () => {
           });
         }
         return response({
-          schemaVersion: 1,
+          schemaVersion: 3,
           stage: "FINAL",
           snapshotDigest: brief.snapshotManifest.snapshotDigest,
           briefDigest: brief.briefDigest,
           summary: "The reviewer omitted the real path from its coverage ledger.",
           findings: [],
-          preliminaryFindingDispositions: [],
-          ...finalCoverage(),
+          withdrawnPreliminaryFindings: [],
+          preliminaryConcernDispositions: [],
+          authorVerificationClaims: [
+            {
+              claimIndex: 0,
+              status: "UNVERIFIED",
+              explanation: "The reviewer did not run the author-reported command.",
+            },
+          ],
           changedPathCoverage: [
             {
               path: "invented.txt",
@@ -1521,7 +1606,7 @@ describe("two-stage review orchestrator", () => {
     try {
       await assert.rejects(
         () => runTwoStageReviewV1(packetPath, config, provider),
-        /changed-path coverage/i,
+        /changedPathCoverage|unrecognized key/i,
       );
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });

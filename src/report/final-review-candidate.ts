@@ -2,6 +2,7 @@ import {
   type AuthorPacketV1,
   FinalReviewCandidateV1Schema,
   FinalReviewCandidateV2Schema,
+  FinalReviewCandidateV3Schema,
   type FinalReviewReportV1,
   FinalReviewReportV1Schema,
   type PreliminaryAssessmentV1,
@@ -9,10 +10,49 @@ import {
 import {
   type ReviewPreliminary,
   type ReviewReport,
-  StandardsCandidateV2Schema,
+  StandardsCandidateV3Schema,
   StandardsExpandedCandidateV2Schema,
   StandardsReportV2Schema,
 } from "../contracts/standards-results.js";
+
+export type RunnerOwnedFinalCoverageV1 = Pick<
+  FinalReviewReportV1,
+  "changedPathCoverage" | "canonicalInputCoverage"
+>;
+
+const RUNNER_COVERAGE_LIMITATION_PREFIX =
+  "Runner coverage is incomplete because the blind assessment did not record inspection of: ";
+
+function applyRunnerCoverage(
+  candidate: Record<string, unknown> & {
+    limitations: string[];
+    verdict: string;
+  },
+  coverage: RunnerOwnedFinalCoverageV1,
+): Record<string, unknown> {
+  const unassessed = coverage.changedPathCoverage
+    .filter((entry) => entry.status === "UNASSESSED")
+    .map((entry) => entry.path);
+  const unassessedInputs = coverage.canonicalInputCoverage
+    .filter((entry) => entry.status === "UNASSESSED")
+    .map((entry) => entry.canonicalInputId);
+  if (unassessed.length === 0 && unassessedInputs.length === 0) {
+    return { ...candidate, ...coverage };
+  }
+  const missing = [...unassessed, ...unassessedInputs];
+  const limitation = `${RUNNER_COVERAGE_LIMITATION_PREFIX}${missing.join(", ")}.`;
+  return {
+    ...candidate,
+    ...coverage,
+    limitations: candidate.limitations.includes(limitation)
+      ? candidate.limitations
+      : [...candidate.limitations, limitation],
+    verdict:
+      candidate.verdict === "READY" || candidate.verdict === "READY_WITH_FOLLOW_UPS"
+        ? "UNABLE_TO_VERIFY"
+        : candidate.verdict,
+  };
+}
 
 function assertCompleteIndices(indices: number[], count: number, label: string): void {
   if (
@@ -123,10 +163,11 @@ export function materializeFinalCandidate(
   value: unknown,
   preliminary: ReviewPreliminary,
   claims: AuthorPacketV1["claimedVerification"],
+  coverage: RunnerOwnedFinalCoverageV1,
 ): ReviewReport {
   const standards = preliminary.schemaVersion === 2;
   const { findings, withdrawnPreliminaryFindings, ...candidate } = (
-    standards ? StandardsCandidateV2Schema : FinalReviewCandidateV2Schema
+    standards ? StandardsCandidateV3Schema : FinalReviewCandidateV3Schema
   ).parse(value);
   const expected = new Set(preliminary.findings.map((finding) => finding.id));
   const actual = [
@@ -150,26 +191,29 @@ export function materializeFinalCandidate(
     }),
   );
   return materializeExpandedCandidate(
-    {
-      ...candidate,
-      schemaVersion: standards ? 2 : 1,
-      findings: finalFindings,
-      preliminaryFindingDispositions: [
-        ...findings.flatMap((finding, index) =>
-          finding.sourceFindingIds.map((id) => ({
-            preliminaryFindingId: id,
-            disposition: finding.sourceFindingIds.length > 1 ? "MERGED" : "REVISED",
-            finalFindingId: finalFindings[index]?.id,
-            rationale: finding.reconciliationRationale,
+    applyRunnerCoverage(
+      {
+        ...candidate,
+        schemaVersion: standards ? 2 : 1,
+        findings: finalFindings,
+        preliminaryFindingDispositions: [
+          ...findings.flatMap((finding, index) =>
+            finding.sourceFindingIds.map((id) => ({
+              preliminaryFindingId: id,
+              disposition: finding.sourceFindingIds.length > 1 ? "MERGED" : "REVISED",
+              finalFindingId: finalFindings[index]?.id,
+              rationale: finding.reconciliationRationale,
+            })),
+          ),
+          ...withdrawnPreliminaryFindings.map((finding) => ({
+            ...finding,
+            disposition: "WITHDRAWN",
+            finalFindingId: null,
           })),
-        ),
-        ...withdrawnPreliminaryFindings.map((finding) => ({
-          ...finding,
-          disposition: "WITHDRAWN",
-          finalFindingId: null,
-        })),
-      ],
-    },
+        ],
+      },
+      coverage,
+    ),
     preliminary,
     claims,
     standards,
@@ -188,5 +232,16 @@ export function materializeFinalReviewCandidateV2(
   preliminary: PreliminaryAssessmentV1,
   claims: AuthorPacketV1["claimedVerification"],
 ): FinalReviewReportV1 {
-  return FinalReviewReportV1Schema.parse(materializeFinalCandidate(value, preliminary, claims));
+  const {
+    changedPathCoverage,
+    canonicalInputCoverage,
+    schemaVersion: _schemaVersion,
+    ...candidate
+  } = FinalReviewCandidateV2Schema.parse(value);
+  return FinalReviewReportV1Schema.parse(
+    materializeFinalCandidate({ ...candidate, schemaVersion: 3 }, preliminary, claims, {
+      changedPathCoverage,
+      canonicalInputCoverage,
+    }),
+  );
 }

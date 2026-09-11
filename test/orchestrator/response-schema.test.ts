@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
+  FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
 } from "../../src/index.js";
 import {
@@ -141,6 +142,12 @@ describe("constrainResponseSchemaV1", () => {
     for (const values of pinnedEvidencePaths) {
       assert.deepEqual(values, options.evidencePaths);
     }
+  });
+
+  it("does not require runner-owned ledgers in the final candidate schema", () => {
+    const { schema } = constrainResponseSchemaV1(FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA, options);
+    assert.equal(rootProperty(schema, "changedPathCoverage"), undefined);
+    assert.equal(rootProperty(schema, "canonicalInputCoverage"), undefined);
   });
 
   it("applies named array limits instead of a blanket cap", () => {

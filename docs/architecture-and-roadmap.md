@@ -233,7 +233,11 @@ blocking missing coverage, and fails rather than clipping an oversized initial
 evidence set. It persists the raw and validated preliminary result before author delivery,
 makes one reconciliation call and permits at most one separately recorded
 same-model repair when a complete final candidate fails local validation,
-assembles `final-review-candidate-v2` references into the unchanged final report
+assembles `final-review-candidate-v3` judgments into the unchanged final report,
+projects exact final path and canonical-input coverage from the frozen manifest and persisted
+blind assessment instead of asking the model to repeat those ledgers,
+and downgrades a ready candidate to Unable to verify when that runner-owned coverage remains
+unassessed,
 using exact original author-claim and preliminary-concern text, validates
 identities and evidence paths,
 requires exact changed-path/canonical-input coverage and preliminary-concern
