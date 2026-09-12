@@ -2,7 +2,11 @@
 
 Tracking: https://github.com/dills122/independent-reviewer/issues/71
 
-Status: research-backed proposal, not implemented. Owner: project maintainer.
+Status: superseded for normal-user onboarding by
+[ADR-013](../decisions/013-separate-simple-settings-from-resolved-review-policy.md)
+and the
+[friendly operations plan](../plans/2026-09-11-friendly-reviewer-operations-plan.md).
+Retained as research for the advanced resolved-policy surface. Owner: project maintainer.
 Inspected baseline: `e6b3872`, 2026-09-09. Scope: plan and GitHub issue only;
 no runtime changes, dependencies, provider calls, or changes to existing limits.
 Decision question: how can users tune review behavior without editing TypeScript
@@ -79,9 +83,12 @@ uncertainty, secret exclusion, and conservative cost accounting. No
 
 Some limits are derived rather than independent knobs: final concern capacity
 must cover allowed preliminary gaps plus limitations; schemas used after call
-one must fit their reservations. Increasing retries/repairs/output limits must
-reserve all newly possible calls before transmission. Turning off repair means
-an invalid report fails visibly; it must not be accepted unvalidated.
+one must fit their reservations. Increasing retry or output limits changes
+initial preflight reservation. Increasing repair limits changes the separately
+displayed on-demand exposure; each repair is admitted again from its actual
+messages and remaining token/cost capacity immediately before transmission.
+Turning off repair means an invalid report fails visibly; it must not be accepted
+unvalidated.
 
 ## Proposed user experience
 

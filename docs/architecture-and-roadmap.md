@@ -2,6 +2,17 @@
 
 Status: first local release implemented and exercised with controlled live smoke fixtures.
 
+Next milestone: friendly reviewer operations using simple local settings,
+repository Markdown steering, steering-budget admission, and first-class author
+explanations. Design is accepted in
+[ADR-013](decisions/013-separate-simple-settings-from-resolved-review-policy.md)
+and [ADR-014](decisions/014-discover-repository-markdown-steering.md); execution
+is tracked in the
+[friendly operations plan](plans/2026-09-11-friendly-reviewer-operations-plan.md).
+Normative discovery, secret, ordering, budget, and author-absence decisions are
+grounded in the
+[steering contract research](research/2026-09-11-steering-and-author-absence-contract.md).
+
 The staged lifecycle, evidence surface, verification boundary, and efficiency
 requirements are refined in the
 [review protocol technical specification](review-protocol-spec.md). The
@@ -19,6 +30,51 @@ Explicit standards evidence selection is recorded in
 [ADR-011](decisions/011-separate-reference-selection-from-file-classification.md).
 Fresh blind finding verification is recorded in
 [ADR-012](decisions/012-adversarially-verify-preliminary-findings.md).
+
+## Planned operator experience
+
+Current standards mode remains implemented as validated profile JSON. The next
+milestone adds a normal-user layer without weakening or silently changing that
+contract. A user selects a supported model and maximum review cost, reuses
+applicable repository Markdown guidance, and supplies an author explanation.
+The runner resolves those inputs into strict versioned runtime artifacts.
+
+Repository guidance is discovered from common coding-agent locations in the
+frozen BASE tree. `.independent-reviewer/rules.md`, when present, is highest-
+priority review guidance. Markdown remains untrusted, opaque model context: it
+cannot change execution policy and is not parsed into mandatory semantic rules.
+Only deterministic scope metadata, source provenance, format diagnostics, and
+budget accounting belong to the runner.
+
+Snapshot entries project into canonical guidance targets before discovery:
+renames carry BASE source and HEAD destination scope, copies carry only changed
+destination scope, and other change types use their sole review-relevant path.
+One JCS/SHA-256 graph identity is cross-bound through packet metadata, neutral
+brief, run ledger, provider-request digest, runner-owned report, and final-stage
+resume. An internally valid replacement graph is not an acceptable resume input.
+
+Applicable steering receives explicit byte and conservative-token limits before
+provider access. Inspection shows included and skipped sources, precedence, and
+repeated-call cost impact. Author explanation remains required by default and is
+still withheld until reconciliation; an explicit opt-out warns before spending
+and becomes a digest-bound `DECLINED` state visible only after blind and
+verification stages. Applicable guidance and imports pass snapshot secret policy
+before any artifact or provider request.
+
+Milestone gate: from a clean checkout, a developer can choose a supported model
+and maximum cost, inspect BASE-owned steering and its budget impact, provide an
+author explanation, complete a provider-free dry-run, and start the same review
+without authoring protocol JSON. Oversized steering makes no provider call;
+legacy structured automation remains compatible; TypeScript, Python, Go, Java,
+documentation-only, and mixed-language fixtures pass the same policy.
+
+Commodity mechanics use qualified, exact-pinned libraries behind bounded
+product adapters: Commander and Inquirer for CLI interaction; remark, `yaml`,
+and `jsonc-parser` for document grammars; `picomatch`, `braces`, and `ignore` for
+matching grammars; existing Zod and Node.js primitives for contracts, hashing,
+and paths. Product code remains responsible for snapshot trust, family semantics,
+resource caps, secret admission, and artifact identity. Hand-written replacement
+of listed library responsibilities requires an explicit ADR with evidence.
 
 
 ## Standards review mode (v2)
