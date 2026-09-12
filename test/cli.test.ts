@@ -335,7 +335,13 @@ it("requires the OpenRouter key without accepting it as a command-line option", 
 
   assert.equal(
     await runCliV1(
-      ["review", "--request", "request.json", "--config", "config.json"],
+      [
+        "review",
+        "--request",
+        "request.json",
+        "--config",
+        "examples/review-config.gpt-oss-120b.json",
+      ],
       {
         stdout: (message) => output.push(message),
         stderr: (message) => errors.push(message),
@@ -880,6 +886,70 @@ it("reports argument mistakes precisely instead of claiming a value is missing",
 
   assert.equal(await runCliV1(["nonsense"], io), 1);
   assert.match(errors.at(-1) ?? "", /Unknown command nonsense/);
+});
+
+it("rejects duplicate properties in request and config JSON before provider access", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "independent-reviewer-cli-strict-json-"));
+  try {
+    const validRequest = await readFile("test/fixtures/review-request.valid.json", "utf8");
+    const validConfig = await readFile("examples/review-config.gpt-oss-120b.json", "utf8");
+    const duplicateRequestPath = join(directory, "duplicate-request.json");
+    const duplicateConfigPath = join(directory, "duplicate-config.json");
+    const validRequestPath = join(directory, "request.json");
+    const validConfigPath = join(directory, "config.json");
+    await writeFile(
+      duplicateRequestPath,
+      validRequest.replace('"schemaVersion": 1,', '"schemaVersion": 1,\n  "schemaVersion": 1,'),
+    );
+    await writeFile(
+      duplicateConfigPath,
+      validConfig.replace('"schemaVersion": 3,', '"schemaVersion": 3,\n  "schemaVersion": 3,'),
+    );
+    await writeFile(validRequestPath, validRequest);
+    await writeFile(validConfigPath, validConfig);
+
+    let credentialReads = 0;
+    let providerCreations = 0;
+    const errors: string[] = [];
+    const dependencies = {
+      readOpenRouterApiKey: () => {
+        credentialReads += 1;
+        return "unused";
+      },
+      createProvider: () => {
+        providerCreations += 1;
+        throw new Error("provider must not be created for invalid JSON");
+      },
+    };
+    const io = { stdout: () => undefined, stderr: (message: string) => errors.push(message) };
+
+    assert.equal(
+      await runCliV1(
+        ["review", "--request", validRequestPath, "--config", duplicateConfigPath],
+        io,
+        dependencies,
+      ),
+      1,
+    );
+    assert.match(errors.at(-1) ?? "", /JSON_DUPLICATE_PROPERTY.*review configuration/);
+    assert.equal(credentialReads, 0);
+    assert.equal(providerCreations, 0);
+
+    errors.length = 0;
+    assert.equal(
+      await runCliV1(
+        ["review", "--request", duplicateRequestPath, "--config", validConfigPath],
+        io,
+        dependencies,
+      ),
+      1,
+    );
+    assert.match(errors.at(-1) ?? "", /JSON_DUPLICATE_PROPERTY.*review request/);
+    assert.equal(credentialReads, 1);
+    assert.equal(providerCreations, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 it("emits a versioned inspection report that never carries author-packet content", async () => {

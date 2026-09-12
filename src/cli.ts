@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtemp, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -17,6 +17,7 @@ import {
 import {
   assembleStandardsRequest,
   loadLocalSettings,
+  MAX_LOCAL_JSON_BYTES_V1,
   saveLocalSettings,
 } from "./cli/standards-input.js";
 import {
@@ -28,8 +29,10 @@ import {
 } from "./contracts/index.js";
 import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
 import { jsonDocument } from "./contracts/json-document.js";
+import { readStrictJsonFileV1, readStrictJsonLinesFileV1 } from "./contracts/strict-json.js";
 import {
   canonicalInputList,
+  MAX_EXTERNAL_JSON_BYTES_V1,
   type ReviewRequest,
   ReviewRequestSchema,
 } from "./contracts/standards-review.js";
@@ -58,6 +61,8 @@ export interface CliIoV1 {
 
 /** Kept in step with package.json by the version test. */
 const CLI_VERSION_V1 = "0.0.0";
+const MAX_CLI_RUN_RECORD_BYTES_V1 = 64 * 1024 * 1024;
+const MAX_CLI_RUN_RECORD_LINE_BYTES_V1 = 8 * 1024 * 1024;
 
 const processIo: CliIoV1 = {
   stdout: (message) => process.stdout.write(`${message}\n`),
@@ -418,7 +423,12 @@ async function resolveReviewConfigV1(
     throw new Error("Use either --config or simple model/cost settings, not both.");
   }
   if (typeof configPath === "string") {
-    return ReviewRunConfigV3Schema.parse(JSON.parse(await readFile(resolve(configPath), "utf8")));
+    return ReviewRunConfigV3Schema.parse(
+      await readStrictJsonFileV1(resolve(configPath), {
+        maxBytes: MAX_LOCAL_JSON_BYTES_V1,
+        source: "review configuration",
+      }),
+    );
   }
   return (await resolveSimpleSettingsForOptionsV1(options)).reviewRunConfig;
 }
@@ -474,18 +484,6 @@ async function resolveLiveReviewContextV1(
   return { config, provider: dependencies.createProvider(apiKey, config) };
 }
 
-async function resolveAdvancedLiveReviewContextV1(
-  options: Map<string, string | true>,
-  dependencies: CliDependenciesV1,
-): Promise<{ config: ReviewRunConfigV3; provider: ReviewProviderV1 }> {
-  const apiKey = dependencies.readOpenRouterApiKey();
-  if (!apiKey || apiKey.trim().length === 0) {
-    throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
-  }
-  const config = await resolveReviewConfigV1(options);
-  return { config, provider: dependencies.createProvider(apiKey, config) };
-}
-
 /** The repository's own preference for letting its committed rules steer a review. */
 async function repositoryDiscoversSteeringV1(repositoryPath: string): Promise<boolean> {
   const local = await readLocalSimpleReviewSettingsV1(repositoryPath);
@@ -507,7 +505,12 @@ async function preparePacket(
   if (assembled) request = assembled.request;
   else {
     if (!requestPath) throw new Error("Review request path is required.");
-    request = ReviewRequestSchema.parse(JSON.parse(await readFile(requestPath, "utf8")));
+    request = ReviewRequestSchema.parse(
+      await readStrictJsonFileV1(requestPath, {
+        maxBytes: MAX_EXTERNAL_JSON_BYTES_V1,
+        source: "review request",
+      }),
+    );
   }
   if (policy.expectedConfigId && request.reviewConfigRef !== policy.expectedConfigId) {
     throw new Error(
@@ -731,16 +734,17 @@ async function review(
       await rm(temporary, { recursive: true, force: true });
     }
   }
-  const hasSimpleFlags = options.has("--model") || options.has("--max-cost");
-  const usesAdvancedConfig = typeof options.get("--config") === "string" && !hasSimpleFlags;
-  const live: { config: ReviewRunConfigV3; provider: ReviewProviderV1 } = usesAdvancedConfig
-    ? await resolveAdvancedLiveReviewContextV1(options, dependencies)
-    : await resolveLiveReviewContextV1(await resolveReviewConfigV1(options), dependencies);
-  const { config, provider } = live;
+  const config = await resolveReviewConfigV1(options);
+  const apiKey = dependencies.readOpenRouterApiKey();
+  if (!apiKey || apiKey.trim().length === 0) {
+    throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
+  }
   const prepared = await preparePacket(options, {
     expectedConfigId: config.configId,
     suppliedConfig: config,
   });
+  // Construct provider only after every caller-controlled JSON document has passed strict parsing.
+  const provider = dependencies.createProvider(apiKey, config);
   await warnUnignoredPacketLocation(prepared.repositoryRoot, prepared.packetPath, io);
   io.stdout(`Prepared snapshot packet: ${prepared.packetPath}`);
   if (prepared.claim) {
@@ -759,10 +763,13 @@ async function review(
     );
     io.stdout(`Report: ${result.markdownPath}`);
     if (prepared.standards) {
-      const events = (await readFile(result.runRecordPath, "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const events = (
+        await readStrictJsonLinesFileV1(result.runRecordPath, {
+          maxTotalBytes: MAX_CLI_RUN_RECORD_BYTES_V1,
+          maxLineBytes: MAX_CLI_RUN_RECORD_LINE_BYTES_V1,
+          source: "review run record",
+        })
+      ).map((event) => event as Record<string, unknown>);
       io.stdout(formatRunCost(events));
     }
     return reviewOutcomeExitCodeV1(result.report.verdict);
@@ -776,10 +783,16 @@ async function review(
       else {
         let events: Record<string, unknown>[] = [];
         try {
-          events = (await readFile(join(prepared.packetPath, "review", "run-record.jsonl"), "utf8"))
-            .trim()
-            .split("\n")
-            .map((line) => JSON.parse(line));
+          events = (
+            await readStrictJsonLinesFileV1(
+              join(prepared.packetPath, "review", "run-record.jsonl"),
+              {
+                maxTotalBytes: MAX_CLI_RUN_RECORD_BYTES_V1,
+                maxLineBytes: MAX_CLI_RUN_RECORD_LINE_BYTES_V1,
+                source: "review run record",
+              },
+            )
+          ).map((event) => event as Record<string, unknown>);
         } catch {
           /* Input/preflight may have failed before a ledger exists. */
         }

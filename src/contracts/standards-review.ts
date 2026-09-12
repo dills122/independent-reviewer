@@ -9,6 +9,9 @@ import {
   ReviewRequestV1Schema,
 } from "./review-request.js";
 import { SnapshotPathV1Schema } from "./snapshot-manifest.js";
+import { parseStrictJsonV1, StrictJsonErrorV1 } from "./strict-json.js";
+
+export const MAX_EXTERNAL_JSON_BYTES_V1 = 8 * 1024 * 1024;
 
 export const StandardsRuleV1Schema = z.strictObject({
   id: prefixedIdentifier("rule"),
@@ -105,36 +108,93 @@ export const StandardsCanonicalInputsV2Schema = z
   })
   .superRefine((inputs, context) => {
     const ids = new Set<string>();
-    const ruleIds = new Set<string>();
-    const referenceIds = new Set<string>();
+    const parsedProfiles: Array<{
+      index: number;
+      inputId: string;
+      profile: StandardsProfile;
+    }> = [];
     for (const [index, input] of inputs.standards.entries()) {
       if (ids.has(input.id))
         context.addIssue({ code: "custom", message: "Standard input identifiers must be unique." });
       ids.add(input.id);
+
+      let decoded: unknown;
       try {
-        const profile = StandardsProfileSchema.parse(JSON.parse(input.content));
-        for (const rule of profile.rules) {
-          if (ruleIds.has(rule.id))
-            throw new Error(
-              `Conflicting standard rule ${rule.id}; select one definition explicitly.`,
-            );
-          ruleIds.add(rule.id);
-        }
-        if (profile.schemaVersion === 2)
-          for (const reference of profile.references) {
-            if (referenceIds.has(reference.id))
-              throw new Error(
-                `Conflicting standard reference ${reference.id}; select one definition explicitly.`,
-              );
-            referenceIds.add(reference.id);
-          }
-      } catch {
+        decoded = parseStrictJsonV1(input.content, {
+          maxBytes: MAX_EXTERNAL_JSON_BYTES_V1,
+          source: `standards profile input ${index}`,
+        });
+      } catch (error) {
+        if (!(error instanceof StrictJsonErrorV1)) throw error;
         context.addIssue({
           code: "custom",
           path: ["standards", index, "content"],
-          message:
-            "Standard content must be a valid profile with globally unique rule and reference identifiers.",
+          message: `Standard content is invalid JSON: ${error.message}.`,
         });
+        continue;
+      }
+
+      const schemaVersion =
+        typeof decoded === "object" && decoded !== null && "schemaVersion" in decoded
+          ? decoded.schemaVersion
+          : undefined;
+      const parsed =
+        schemaVersion === 1
+          ? StandardsProfileV1Schema.safeParse(decoded)
+          : schemaVersion === 2
+            ? StandardsProfileV2Schema.safeParse(decoded)
+            : StandardsProfileSchema.safeParse(decoded);
+      if (!parsed.success) {
+        for (const issue of parsed.error.issues) {
+          context.addIssue({
+            code: "custom",
+            path: ["standards", index, "content", ...issue.path],
+            message: `Standard profile is invalid: ${issue.message}`,
+          });
+        }
+        continue;
+      }
+      parsedProfiles.push({ index, inputId: input.id, profile: parsed.data });
+    }
+
+    const ruleDefinitions = new Map<string, { inputId: string; index: number }>();
+    const referenceDefinitions = new Map<string, { inputId: string; index: number }>();
+    for (const entry of parsedProfiles) {
+      const conflicts: Array<{
+        kind: "rule" | "reference";
+        id: string;
+        first: {
+          inputId: string;
+          index: number;
+        };
+      }> = [];
+      for (const rule of entry.profile.rules) {
+        const first = ruleDefinitions.get(rule.id);
+        if (first) conflicts.push({ kind: "rule", id: rule.id, first });
+      }
+      if (entry.profile.schemaVersion === 2) {
+        for (const reference of entry.profile.references) {
+          const first = referenceDefinitions.get(reference.id);
+          if (first) conflicts.push({ kind: "reference", id: reference.id, first });
+        }
+      }
+      if (conflicts.length > 0) {
+        for (const conflict of conflicts) {
+          context.addIssue({
+            code: "custom",
+            path: ["standards", entry.index, "content"],
+            message: `Standard ${conflict.kind} ${conflict.id} is already defined by input ${conflict.first.inputId} at index ${conflict.first.index}; select one definition explicitly.`,
+          });
+        }
+        continue;
+      }
+      for (const rule of entry.profile.rules) {
+        ruleDefinitions.set(rule.id, { inputId: entry.inputId, index: entry.index });
+      }
+      if (entry.profile.schemaVersion === 2) {
+        for (const reference of entry.profile.references) {
+          referenceDefinitions.set(reference.id, { inputId: entry.inputId, index: entry.index });
+        }
       }
     }
   });
@@ -166,6 +226,7 @@ export function canonicalInputList(inputs: ReviewCanonicalInputs): CanonicalInpu
 }
 export function selectedRules(inputs: z.infer<typeof StandardsCanonicalInputsV2Schema>) {
   return inputs.standards.flatMap((input) => {
+    // Request validation already strictly parsed and validated this digest-bound content.
     const profile = StandardsProfileSchema.parse(JSON.parse(input.content));
     return profile.rules.map((rule) => ({
       ...rule,
@@ -177,6 +238,7 @@ export function selectedRules(inputs: z.infer<typeof StandardsCanonicalInputsV2S
 
 export function selectedReferences(inputs: z.infer<typeof StandardsCanonicalInputsV2Schema>) {
   return inputs.standards.flatMap((input) => {
+    // Request validation already strictly parsed and validated this digest-bound content.
     const profile = StandardsProfileSchema.parse(JSON.parse(input.content));
     if (profile.schemaVersion === 1) return [];
     const rules = new Map(profile.rules.map((rule) => [rule.id, rule]));
