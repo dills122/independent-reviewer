@@ -568,6 +568,48 @@ describe("captureGitSnapshotV1", () => {
     }
   });
 
+  it("uses the caller evidence budget for referenced source capture", async () => {
+    const repositoryPath = await createRepository();
+    const largeComment = `// ${"x".repeat(70_000)}\n`;
+    try {
+      await writeFile(
+        join(repositoryPath, "reference-a.ts"),
+        `${largeComment}export const a = 1;\n`,
+      );
+      await writeFile(
+        join(repositoryPath, "reference-b.ts"),
+        `${largeComment}export const b = 2;\n`,
+      );
+      await git(repositoryPath, "add", "reference-a.ts", "reference-b.ts");
+      await git(repositoryPath, "commit", "-m", "add large references");
+      await git(repositoryPath, "switch", "-c", "feature/reference-budget");
+      await writeFile(
+        join(repositoryPath, "modified.ts"),
+        [
+          'import { a } from "./reference-a.js";',
+          'import { b } from "./reference-b.js";',
+          "export const value = a + b;",
+          "",
+        ].join("\n"),
+      );
+
+      const defaultCapture = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const configuredCapture = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"), {
+        maxReferencedSourceBytes: 160_000,
+      });
+
+      assert.equal(defaultCapture.manifest.referencedSources.length, 1);
+      assert.match(defaultCapture.manifest.omissions[0]?.detail ?? "", /budget is exhausted/i);
+      assert.deepEqual(
+        configuredCapture.manifest.referencedSources.map(({ path }) => path),
+        ["reference-a.ts", "reference-b.ts"],
+      );
+      assert.equal(configuredCapture.manifest.omissions.length, 0);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("excludes caller-supplied path patterns", async () => {
     const repositoryPath = await createRepository();
     try {

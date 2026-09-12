@@ -489,6 +489,9 @@ async function preparePacket(
       : [];
   const captured = await captureGitSnapshotV1(request, {
     ...(typeof base === "string" ? { base } : {}),
+    ...(policy.suppliedConfig
+      ? { maxReferencedSourceBytes: policy.suppliedConfig.budgets.maxInitialEvidenceBytes }
+      : {}),
     excludedFileSystemPaths: [
       ...(requestPath ? [requestPath] : []),
       ...(assembled?.excludedPaths ?? []),

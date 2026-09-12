@@ -59,6 +59,8 @@ export interface CaptureGitSnapshotOptionsV1 {
   pathRoleOverrides?: ReadonlyMap<string, PathRoleV1>;
   maxAttempts?: number;
   maxFileBytes?: number;
+  /** Total unchanged supporting-source bytes retained in the frozen packet. */
+  maxReferencedSourceBytes?: number;
 }
 
 export interface CapturedGitSnapshotV1 {
@@ -344,6 +346,7 @@ interface CaptureReferencedSourcesOptionsV1 {
   baseRevision: string;
   captureWorkingTree: boolean;
   maxFileBytes: number;
+  maxReferencedSourceBytes: number;
   paths: SnapshotManifestIdentityInputV1["paths"];
   blobs: Map<string, Uint8Array>;
   omissions: SnapshotManifestIdentityInputV1["omissions"];
@@ -509,12 +512,12 @@ async function captureReferencedSources(
         });
       continue;
     }
-    if (capturedBytes + side.content.byteLength > MAX_REFERENCED_SOURCE_BYTES_V1) {
+    if (capturedBytes + side.content.byteLength > options.maxReferencedSourceBytes) {
       if (requiredExplicitPaths.has(path) || importedReferencePaths.has(path))
         options.omissions.push({
           scope: path,
           reason: requiredExplicitPaths.has(path) ? "CAPTURE_FAILED" : "OTHER",
-          detail: `${requiredExplicitPaths.has(path) ? "Required BASE reference" : "Referenced source"} omitted; the ${MAX_REFERENCED_SOURCE_BYTES_V1}-byte context budget is exhausted.`,
+          detail: `${requiredExplicitPaths.has(path) ? "Required BASE reference" : "Referenced source"} omitted; the ${options.maxReferencedSourceBytes}-byte context budget is exhausted.`,
         });
       continue;
     }
@@ -722,6 +725,7 @@ async function collectState(
   captureWorkingTree: boolean,
   includeUntracked: boolean,
   maxFileBytes: number,
+  maxReferencedSourceBytes: number,
   excludedPaths: ReadonlySet<string>,
   excludedPatterns: readonly RegExp[],
   roleOverrides: ReadonlyMap<string, PathRoleV1>,
@@ -972,6 +976,7 @@ async function collectState(
     baseRevision: baseCommit,
     captureWorkingTree,
     maxFileBytes,
+    maxReferencedSourceBytes,
     paths,
     blobs,
     omissions,
@@ -1112,11 +1117,16 @@ export async function captureGitSnapshotV1(
   );
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+  const maxReferencedSourceBytes =
+    options.maxReferencedSourceBytes ?? MAX_REFERENCED_SOURCE_BYTES_V1;
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 3) {
     throw new RangeError("maxAttempts must be an integer from 1 to 3");
   }
   if (!Number.isInteger(maxFileBytes) || maxFileBytes < 1) {
     throw new RangeError("maxFileBytes must be a positive integer");
+  }
+  if (!Number.isSafeInteger(maxReferencedSourceBytes) || maxReferencedSourceBytes < 0) {
+    throw new RangeError("maxReferencedSourceBytes must be a non-negative safe integer");
   }
   const excludedPaths = new Set(
     (
@@ -1158,6 +1168,7 @@ export async function captureGitSnapshotV1(
       captureWorkingTree,
       request.repository.workingTree.includeUntracked,
       maxFileBytes,
+      maxReferencedSourceBytes,
       excludedPaths,
       excludedPatterns,
       roleOverrides,
@@ -1170,6 +1181,7 @@ export async function captureGitSnapshotV1(
       captureWorkingTree,
       request.repository.workingTree.includeUntracked,
       maxFileBytes,
+      maxReferencedSourceBytes,
       excludedPaths,
       excludedPatterns,
       roleOverrides,
