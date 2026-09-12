@@ -1,7 +1,7 @@
 # Friendly reviewer operations implementation plan
 
-Status: accepted by maintainer; implementation in progress. Slice 1 is complete
-and verified. Owner: project maintainer.
+Status: accepted by maintainer; implementation in progress. Slices 1 and 2 are
+complete and verified; Slices 3–6 remain pending. Owner: project maintainer.
 Decision records: [ADR-013](../decisions/013-separate-simple-settings-from-resolved-review-policy.md)
 and [ADR-014](../decisions/014-discover-repository-markdown-steering.md).
 Research basis:
@@ -177,33 +177,33 @@ before guidance can enter any live provider request.
 
 **Acceptance criteria:**
 
-- [ ] Whole Markdown content reaches blind stage with path, digest, priority,
+- [x] Whole Markdown content reaches blind stage with path, digest, priority,
       and source-position identity only after preflight admission; author stage
       timing remains unchanged.
-- [ ] Packet metadata, brief identity, `RUN_STARTED`, provider input digest, and
+- [x] Packet metadata, brief identity, `RUN_STARTED`, provider input digest, and
       runner-owned report bind `guidanceGraphDigest`; resume reconstructs and
       compares exact graph, source blob, rendered prompt, and protocol versions.
-- [ ] Head changes to the file are review targets but cannot govern their own
+- [x] Head changes to the file are review targets but cannot govern their own
       review.
-- [ ] No heading or prose is converted into enforcement, exception, or runner
+- [x] No heading or prose is converted into enforcement, exception, or runner
       policy.
-- [ ] Applicable reviewer-rules content uses existing path/content secret
+- [x] Applicable reviewer-rules content uses existing path/content secret
       policy before artifact creation; detection fails preflight with metadata-
       only diagnostics and zero secret bytes persisted or transmitted.
-- [ ] Default 32/64 KiB content and 10/20 percent wire-ratio gates use ADR-014
+- [x] Default 32/64 KiB content and 10/20 percent wire-ratio gates use ADR-014
       integer formulas. Richer lint and automatic discovery remain Slices 3–4.
 
 **Verification:**
 
-- [ ] Contract and schema tests cover missing, added, changed, deleted, empty,
+- [x] Contract and schema tests cover missing, added, changed, deleted, empty,
       exactly-at/around budget boundaries, and a secret-bearing reviewer-rules
       file. Reviewer-specific rules have no import syntax.
-- [ ] Graph/blob substitution, missing graph, stale metadata, and cross-version
+- [x] Graph/blob substitution, missing graph, stale metadata, and cross-version
       resume fail locally with zero subsequent provider calls.
-- [ ] Packet and mock-provider assertions prove detected secret bytes occur in
+- [x] Packet and mock-provider assertions prove detected secret bytes occur in
       neither persisted artifacts nor any request body.
-- [ ] Mock-provider E2E proves precedence labeling and author withholding.
-- [ ] Structured standards-profile fixtures and resumes remain compatible.
+- [x] Mock-provider E2E proves precedence labeling and author withholding.
+- [x] Structured standards-profile fixtures and resumes remain compatible.
 
 **Dependencies:** Slice 1 for simple invocation; contract work may begin after
 the Slice 1 resolver shape freezes.
@@ -466,11 +466,11 @@ commits.
 
 ### After Slices 1–2: contract checkpoint
 
-- [ ] Simple settings resolve without weakening current policy.
-- [ ] One opaque Markdown source completes through mock-provider review.
-- [ ] Graph, packet, brief, call, report, and resume identities reject exact
+- [x] Simple settings resolve without weakening current policy.
+- [x] One opaque Markdown source completes through mock-provider review.
+- [x] Graph, packet, brief, call, report, and resume identities reject exact
       replacement/tamper corpus before automatic discovery begins.
-- [ ] Maintainer reviews new contract names and compatibility boundary.
+- [x] Maintainer reviews new contract names and compatibility boundary.
 
 ### After Slices 3–4: trust and budget checkpoint
 

@@ -81,9 +81,10 @@ credentials. `--model` and `--max-cost` can override saved values for one
 `review`, `resume-final`, or `config show` command. Do not combine these flags
 with `--config`.
 
-Automatic Markdown steering discovery and interactive author input are planned
-but not implemented yet. During this transition, pass `--standards` and
-`--author` to each standards-mode review:
+The simple flow automatically captures BASE-owned
+`.independent-reviewer/rules.md` when present. Broader common-harness discovery
+and interactive author input remain planned. During this transition, pass
+`--standards` and `--author` to each standards-mode review:
 
 ```sh
 node dist/src/cli.js review \
@@ -93,6 +94,21 @@ node dist/src/cli.js review \
   --author /absolute/path/to/author-overview.md \
   --dry-run
 ```
+
+### Reviewer-specific Markdown guidance
+
+Projects can add optional `.independent-reviewer/rules.md` to the target
+repository. Content from frozen BASE is carried as opaque, untrusted guidance
+with highest review priority; headings and prose never become runner policy or
+machine-enforced rules. A changed HEAD version remains review evidence but
+cannot govern its own review.
+
+Applicable content passes path/content secret checks before artifact creation or
+provider access. Admission warns at 32 KiB and stops at 64 KiB, and also applies
+10% warning and 20% stop thresholds against each provider request's wire bytes.
+Keep this file focused on reviewer-specific priorities and hard-stop concerns;
+use ordinary repository steering for broader development guidance once common-
+harness discovery lands.
 
 ## 4. Prepare standards-mode inputs
 
@@ -282,8 +298,10 @@ without reclassifying all documentation as source.
 
 Reviewable changes are sent as native-Git unified hunks with three context lines.
 Files of at most 40 lines, or changes affecting at least 60% of both sides, use
-whole-file diff evidence. Supporting context is bounded and dropped before target
-diffs; every resulting gap remains visible.
+whole-file diff evidence. Larger changed files also receive digest-bound,
+12-line BASE/HEAD source windows around changed lines. Overlapping windows merge
+deterministically; supporting context is bounded and dropped before target diffs,
+and every resulting gap remains visible.
 
 Direct unchanged import capture currently recognizes JavaScript and TypeScript
 module syntax. Other languages still receive changed-file review and universal
