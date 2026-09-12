@@ -37,7 +37,16 @@ require("When CCE tools are unavailable" in agents_text, "AGENTS.md must define 
 
 resolution_text = (ROOT / ".codex/steering/javascript-typescript-resolution.md").read_text()
 require("repository root" in resolution_text, "JavaScript/TypeScript steering must define its project scope")
-for command in ("npm run format:check", "npm run lint", "npm run typecheck", "npm test", "npm run build", "npm audit"):
+for command in (
+    "npm run format:check",
+    "npm run lint",
+    "npm run typecheck",
+    "npm test",
+    "npm run test:coverage",
+    "npm run test:e2e:dry-run",
+    "npm run build",
+    "npm run audit:dependencies",
+):
     require(f"`{command}`" in resolution_text,
             f"JavaScript/TypeScript steering is missing command mapping: {command}")
 

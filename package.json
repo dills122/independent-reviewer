@@ -42,13 +42,16 @@
   },
   "packageManager": "npm@11.17.0",
   "scripts": {
+    "audit:dependencies": "npm audit --audit-level=high",
     "build": "tsc --project tsconfig.json",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm test",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "lint": "biome lint .",
+    "lint": "biome lint --error-on-warnings .",
     "schemas:write": "npm run build && node dist/scripts/write-json-schemas.js",
     "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
+    "test:coverage": "npm run build && node --test --experimental-test-coverage --test-coverage-include='dist/src/**/*.js' --test-coverage-lines=90 --test-coverage-branches=80 --test-coverage-functions=90 \"dist/test/**/*.test.js\"",
+    "test:e2e:dry-run": "npm run build && node --test dist/test/cli.test.js dist/test/standards-flow.test.js",
     "typecheck": "tsc --noEmit --project tsconfig.json"
   },
   "dependencies": {

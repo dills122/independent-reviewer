@@ -11,10 +11,10 @@ steering and `AGENTS.md` remain authoritative when guidance conflicts.
 - Lint: `npm run lint`
 - Type check: `npm run typecheck`
 - Test: `npm test`
+- Coverage gate: `npm run test:coverage`
+- Provider-free dry-run E2E: `npm run test:e2e:dry-run`
 - Build: `npm run build`
-- Dependency audit: `npm audit` when dependency or release work requires a
-  current registry-backed audit; weekly Dependabot checks provide the committed
-  continuous dependency gate.
+- Dependency audit: `npm run audit:dependencies`
 
 `npm run check` composes the normal offline application gate. Run repository
 context checks separately as required by `AGENTS.md`.
