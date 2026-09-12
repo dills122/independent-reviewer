@@ -488,7 +488,29 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
         body: wireBody,
         signal: AbortSignal.timeout(request.timeoutMs),
       });
-      rawBody = await readBoundedResponseText(response, MAX_PROVIDER_RESPONSE_BYTES);
+      try {
+        rawBody = await readBoundedResponseText(response, MAX_PROVIDER_RESPONSE_BYTES);
+      } catch (error) {
+        if (
+          error instanceof ProviderCallError &&
+          error.code === "INVALID_RESPONSE" &&
+          !response.ok
+        ) {
+          throw new ProviderCallError(
+            "PROVIDER_ERROR",
+            `OpenRouter request failed (HTTP ${response.status}); response body could not be admitted.`,
+            {
+              diagnostic: providerErrorDiagnostic(
+                {},
+                { code: response.status },
+                response,
+                this.#apiKey,
+              ),
+            },
+          );
+        }
+        throw error;
+      }
     } catch (error) {
       if (error instanceof ProviderCallError) {
         throw error;

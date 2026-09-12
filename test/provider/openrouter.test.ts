@@ -515,6 +515,34 @@ describe("OpenRouterProviderV1", () => {
     );
   });
 
+  it("preserves HTTP 429 retry diagnostics when its response body is invalid UTF-8", async () => {
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+      Promise.resolve(
+        new Response(new Uint8Array([0xff]), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "7" },
+        }),
+      ),
+    );
+
+    await assert.rejects(
+      () => provider.complete(request),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.code, "PROVIDER_ERROR");
+        assert.match(error.message, /HTTP 429/);
+        assert.doesNotMatch(error.message, /UTF-8|encoded|decoder|0xff/i);
+        assert.equal(error.cause, undefined);
+        assert.equal(error.responseBody, null);
+        assert.equal(error.responseMetadata, null);
+        assert.equal(error.diagnostic?.httpStatus, 429);
+        assert.equal(error.diagnostic?.providerErrorCode, "429");
+        assert.equal(error.diagnostic?.retryAfter, "7");
+        return true;
+      },
+    );
+  });
+
   it("keeps a safe HTTP diagnostic when a rejected error envelope fails strict admission", async () => {
     const apiKey = "synthetic-credential";
     const provider = new OpenRouterProviderV1(apiKey, providerRouting, async () =>
