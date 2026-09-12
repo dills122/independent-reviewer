@@ -101,7 +101,7 @@ const GuidanceEdgeV1Schema = z.strictObject({
   applicableTargetId: prefixedIdentifier("guidance_target"),
 });
 
-const GuidanceDiagnosticV1Schema = z.strictObject({
+export const GuidanceDiagnosticV1Schema = z.strictObject({
   diagnosticId: prefixedIdentifier("guidance_diagnostic"),
   code: z.enum([
     "UNSELECTED_MANUAL_MODE",
@@ -458,6 +458,17 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
 export const GuidanceGraphV1Schema = GuidanceGraphBaseV1Schema.superRefine(validateGraph);
 export type GuidanceGraphV1 = z.infer<typeof GuidanceGraphV1Schema>;
 export type GuidanceTargetV1 = z.infer<typeof GuidanceTargetV1Schema>;
+export type GuidanceDiagnosticV1 = z.infer<typeof GuidanceDiagnosticV1Schema>;
+
+/** Creates one content-free, digest-identified guidance diagnostic. */
+export function createGuidanceDiagnosticV1(
+  value: Omit<GuidanceDiagnosticV1, "diagnosticId">,
+): GuidanceDiagnosticV1 {
+  return GuidanceDiagnosticV1Schema.parse({
+    ...value,
+    diagnosticId: identifier("guidance_diagnostic", { schemaVersion: 1, ...value }),
+  });
+}
 
 /** Projects manifest entries into exact paths/sides used for guidance applicability. */
 export function projectGuidanceTargetsV1(manifest: SnapshotManifestV1): GuidanceTargetV1[] {
@@ -504,6 +515,7 @@ export function finalizeGuidanceGraphV1(value: Omit<GuidanceGraphV1, "graphId">)
 export function buildReviewerRulesGuidanceGraphV1(
   manifest: SnapshotManifestV1,
   contentDigest?: DigestV1,
+  diagnostics: GuidanceDiagnosticV1[] = [],
 ): GuidanceGraphV1 {
   const targets = projectGuidanceTargetsV1(manifest);
   const nodes = contentDigest
@@ -545,7 +557,7 @@ export function buildReviewerRulesGuidanceGraphV1(
     nodes,
     occurrences: [],
     edges: [],
-    diagnostics: [],
+    diagnostics: [...diagnostics].sort(diagnosticOrder),
   });
 }
 

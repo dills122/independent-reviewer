@@ -36,6 +36,7 @@ const STEERING_FILENAMES_V1 = new Set([
 ]);
 
 const STEERING_PATH_PATTERNS_V1 = [
+  /(^|\/)\.independent-reviewer\/rules\.md$/i,
   /(^|\/)\.claude\//i,
   /(^|\/)\.cursor\/rules\//i,
   /(^|\/)\.github\/copilot-instructions\.md$/i,

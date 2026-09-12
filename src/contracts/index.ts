@@ -33,14 +33,20 @@ export {
   sha256BytesHex,
 } from "./json-document.js";
 export { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
-export type { GuidanceGraphV1, GuidanceTargetV1 } from "./guidance-graph.js";
+export type {
+  GuidanceDiagnosticV1,
+  GuidanceGraphV1,
+  GuidanceTargetV1,
+} from "./guidance-graph.js";
 export {
   assertGuidanceGraphMatchesSnapshotV1,
   buildReviewerRulesGuidanceGraphV1,
+  createGuidanceDiagnosticV1,
   finalizeGuidanceGraphV1,
   GUIDANCE_GRAPH_V1_JSON_SCHEMA,
   guidanceGraphDigestV1,
   GuidanceGraphV1Schema,
+  GuidanceDiagnosticV1Schema,
   GuidanceTargetV1Schema,
   projectGuidanceTargetsV1,
   verifyGuidanceGraphIdentityV1,

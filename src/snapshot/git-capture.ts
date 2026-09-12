@@ -157,7 +157,7 @@ const SECRET_CONTENT_MARKERS_V1: ReadonlyArray<{ label: string; pattern: RegExp 
 /** Public dummy credentials that should not make test or documentation evidence disappear. */
 const KNOWN_PUBLIC_CREDENTIAL_EXAMPLES_V1 = ["AKIAIOSFODNN7EXAMPLE"] as const;
 
-function isSecretPath(path: string): boolean {
+export function isSecretPathV1(path: string): boolean {
   const segments = path.toLowerCase().split("/");
   if (segments.slice(0, -1).some((segment) => SECRET_DIRECTORIES_V1.has(segment))) {
     return true;
@@ -173,7 +173,7 @@ function isSecretPath(path: string): boolean {
 }
 
 /** Names the first credential marker found in captured content, if any. */
-function secretContentMarker(bytes: Uint8Array): string | undefined {
+export function secretContentMarkerV1(bytes: Uint8Array): string | undefined {
   if (bytes.includes(0)) {
     return undefined;
   }
@@ -454,7 +454,7 @@ async function captureReferencedSources(
   for (const path of referencePaths) {
     const importedBy = importersByPath.get(path) ?? [];
     const standardReferenceIds = standardReferenceIdsByPath.get(path) ?? [];
-    if (isSecretPath(path)) {
+    if (isSecretPathV1(path)) {
       if (requiredExplicitPaths.has(path) || importedReferencePaths.has(path))
         options.omissions.push({
           scope: path,
@@ -499,7 +499,7 @@ async function captureReferencedSources(
         });
       continue;
     }
-    const secretMarker = secretContentMarker(side.bytes);
+    const secretMarker = secretContentMarkerV1(side.bytes);
     if (secretMarker) {
       if (requiredExplicitPaths.has(path) || importedReferencePaths.has(path))
         options.omissions.push({
@@ -773,7 +773,7 @@ async function collectState(
       });
       continue;
     }
-    const secretPath = relevantPaths.find(isSecretPath);
+    const secretPath = relevantPaths.find(isSecretPathV1);
     if (secretPath) {
       exclusions.push({
         path: secretPath,
@@ -829,7 +829,7 @@ async function collectState(
     // a credential pasted into ordinary source never reaches a blob the packet would transmit.
     const secretMarker = [before, after]
       .filter((side): side is CapturedSide => typeof side === "object" && side !== null)
-      .map((side) => secretContentMarker(side.bytes))
+      .map((side) => secretContentMarkerV1(side.bytes))
       .find((marker) => marker !== undefined);
     if (secretMarker) {
       exclusions.push({
