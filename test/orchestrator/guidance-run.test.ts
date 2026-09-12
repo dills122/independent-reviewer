@@ -12,6 +12,7 @@ import {
   type ReviewProviderV1,
   type ReviewRunConfigV3,
   runTwoStageReview,
+  sha256Utf8,
   writeSnapshotPacketV1,
 } from "../../src/index.js";
 
@@ -198,6 +199,15 @@ test("guidance-capable run binds prompt identity and withholds author context", 
     assert.equal(
       events.find((event) => event.type === "CALL_STARTED")?.promptVersion,
       "standards-review-v15",
+    );
+    const reportMetadata = JSON.parse(await readFile(result.reportMetadataPath, "utf8"));
+    assert.deepEqual(reportMetadata.guidanceGraphDigest, started.guidanceGraphDigest);
+    assert.equal(reportMetadata.promptVersion, "standards-review-v15");
+    assert.equal(reportMetadata.preliminarySchema, "standards_preliminary_v2");
+    assert.equal(reportMetadata.finalSchema, "standards_candidate_v3");
+    assert.deepEqual(
+      reportMetadata.reportDigest,
+      sha256Utf8(await readFile(result.finalPath, "utf8")),
     );
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });

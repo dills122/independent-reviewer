@@ -20,6 +20,7 @@ import {
   permittedModelsV1,
   type ReviewContextMapV1,
   type ReviewFindingV1,
+  ReviewReportMetadataV1Schema,
   ReviewRunConfigV3Schema,
   type ReviewUnitPlanV1,
   ReviewUnitPlanV1Schema,
@@ -84,6 +85,7 @@ export interface TwoStageReviewResultV1 {
   findingVerificationPath: string;
   finalPath: string;
   markdownPath: string;
+  reportMetadataPath: string;
   runRecordPath: string;
 }
 
@@ -119,6 +121,14 @@ function systemPolicyForBrief(brief: ReviewBrief): string {
 function promptVersionForBrief(brief: ReviewBrief): string {
   if (brief.schemaVersion === 3) return STANDARDS_GUIDANCE_POLICY_VERSION_V1;
   return brief.schemaVersion === 2 ? STANDARDS_POLICY_VERSION : REVIEW_PROMPT_VERSION_V1;
+}
+
+function preliminarySchemaNameForBrief(brief: ReviewBrief): string {
+  return isStandardsBrief(brief) ? "standards_preliminary_v2" : "preliminary_assessment_v1";
+}
+
+function finalSchemaNameForBrief(brief: ReviewBrief): string {
+  return isStandardsBrief(brief) ? "standards_candidate_v3" : "final_review_candidate_v3";
 }
 
 function focusedReviewContext(plan: ReviewUnitPlanV1, contextMap: ReviewContextMapV1): unknown {
@@ -1970,6 +1980,7 @@ export async function runTwoStageReview(
   const findingVerificationPath = join(reviewDirectory, "finding-verification.json");
   const finalPath = join(reviewDirectory, "final.json");
   const markdownPath = join(reviewDirectory, "report.md");
+  const reportMetadataPath = join(reviewDirectory, "report-metadata.json");
   const runRecordPath = join(reviewDirectory, "run-record.jsonl");
   await writeFile(briefPath, jsonDocument(brief), { flag: "wx", mode: 0o600 });
   await writeFile(planPath, jsonDocument(plan), { flag: "wx", mode: 0o600 });
@@ -1986,10 +1997,8 @@ export async function runTwoStageReview(
     configDigest: sha256Utf8(JSON.stringify(config)),
     requestedModels: permittedModelsV1(config),
     promptVersion: promptVersionForBrief(brief),
-    preliminarySchema: isStandardsBrief(brief)
-      ? "standards_preliminary_v2"
-      : "preliminary_assessment_v1",
-    finalSchema: isStandardsBrief(brief) ? "standards_candidate_v3" : "final_review_candidate_v3",
+    preliminarySchema: preliminarySchemaNameForBrief(brief),
+    finalSchema: finalSchemaNameForBrief(brief),
     findingVerificationSchema: "finding_verification_candidate_v1",
     findingVerificationPromptVersion: FINDING_VERIFICATION_POLICY_VERSION_V1,
   });
@@ -2127,7 +2136,9 @@ export async function runTwoStageReview(
       costLedger,
       retryState,
     );
-    await writeExclusive(finalPath, jsonDocument(report));
+    const reportDocument = jsonDocument(report);
+    await writeExclusive(finalPath, reportDocument);
+    await writeReportMetadataV1(reportMetadataPath, reportDocument, brief);
     await writeExclusive(
       markdownPath,
       renderReviewMarkdown(
@@ -2148,6 +2159,7 @@ export async function runTwoStageReview(
       findingVerificationPath,
       finalPath,
       markdownPath,
+      reportMetadataPath,
       runRecordPath,
     };
   } catch (error) {
@@ -2216,6 +2228,29 @@ async function writeExclusive(path: string, contents: string): Promise<void> {
   }
 }
 
+async function writeReportMetadataV1(
+  path: string,
+  reportDocument: string,
+  brief: ReviewBrief,
+): Promise<void> {
+  await writeExclusive(
+    path,
+    jsonDocument(
+      ReviewReportMetadataV1Schema.parse({
+        schemaVersion: 1,
+        snapshotDigest: brief.snapshotManifest.snapshotDigest,
+        briefDigest: brief.briefDigest,
+        guidanceGraphDigest:
+          brief.schemaVersion === 3 ? brief.guidanceGraph.guidanceGraphDigest : null,
+        reportDigest: sha256Utf8(reportDocument),
+        promptVersion: promptVersionForBrief(brief),
+        preliminarySchema: preliminarySchemaNameForBrief(brief),
+        finalSchema: finalSchemaNameForBrief(brief),
+      }),
+    ),
+  );
+}
+
 /**
  * Explicitly retries only a final call that received a definite provider 429.
  * The persisted blind assessment and exact run configuration are reused.
@@ -2254,6 +2289,7 @@ export async function resumeFinalReview(
   const finalResumeClaimPath = join(reviewDirectory, "final-resume-claim.json");
   const finalPath = join(reviewDirectory, "final.json");
   const markdownPath = join(reviewDirectory, "report.md");
+  const reportMetadataPath = join(reviewDirectory, "report-metadata.json");
   const runRecordPath = join(reviewDirectory, "run-record.jsonl");
 
   const events = await readRunEventsV1(runRecordPath);
@@ -2498,6 +2534,7 @@ export async function resumeFinalReview(
     assertFileAbsent(finalProviderPath),
     assertFileAbsent(finalPath),
     assertFileAbsent(markdownPath),
+    assertFileAbsent(reportMetadataPath),
   ]);
 
   const blindEvidence = blindReviewEvidence(brief, plan, packet.contextMap);
@@ -2768,7 +2805,9 @@ export async function resumeFinalReview(
       packet.authorPacket.claimedVerification,
       costLedger,
     );
-    await writeExclusive(finalPath, jsonDocument(report));
+    const reportDocument = jsonDocument(report);
+    await writeExclusive(finalPath, reportDocument);
+    await writeReportMetadataV1(reportMetadataPath, reportDocument, brief);
     await writeExclusive(
       markdownPath,
       renderReviewMarkdown(
@@ -2788,6 +2827,7 @@ export async function resumeFinalReview(
       findingVerificationPath,
       finalPath,
       markdownPath,
+      reportMetadataPath,
       runRecordPath,
     };
   } catch (error) {

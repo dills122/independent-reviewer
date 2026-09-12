@@ -24,6 +24,7 @@ import {
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
 } from "../src/contracts/review-results.js";
 import { REVIEW_RUN_CONFIG_V3_JSON_SCHEMA } from "../src/contracts/review-run-config.js";
+import { REVIEW_REPORT_METADATA_V1_JSON_SCHEMA } from "../src/contracts/review-report-metadata.js";
 import {
   RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
   SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
@@ -77,6 +78,7 @@ const schemaArtifacts = [
   ["preliminary-assessment-v1.schema.json", PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA],
   ["review-request-v1.schema.json", REVIEW_REQUEST_V1_JSON_SCHEMA],
   ["review-run-config-v3.schema.json", REVIEW_RUN_CONFIG_V3_JSON_SCHEMA],
+  ["review-report-metadata-v1.schema.json", REVIEW_REPORT_METADATA_V1_JSON_SCHEMA],
   ["simple-review-settings-v1.schema.json", SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA],
   [
     "resolved-simple-review-settings-v1.schema.json",

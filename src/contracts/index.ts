@@ -121,6 +121,11 @@ export type {
   ReviewEvidenceV1,
   ReviewFindingV1,
 } from "./review-results.js";
+export type { ReviewReportMetadataV1 } from "./review-report-metadata.js";
+export {
+  REVIEW_REPORT_METADATA_V1_JSON_SCHEMA,
+  ReviewReportMetadataV1Schema,
+} from "./review-report-metadata.js";
 export {
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA,
