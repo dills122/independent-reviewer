@@ -82,9 +82,12 @@ credentials. `--model` and `--max-cost` can override saved values for one
 with `--config`.
 
 The simple flow automatically captures BASE-owned
-`.independent-reviewer/rules.md` when present. Broader common-harness discovery
-and interactive author input remain planned. During this transition, pass
-`--standards` and `--author` to each standards-mode review:
+`.independent-reviewer/rules.md` when present. It also discovers Codex
+`AGENTS.md`/`AGENTS.override.md` from repository root through each changed
+file's parent, with one file selected per directory and override precedence.
+Claude, Gemini, Kiro, Copilot, and Cursor discovery plus interactive author input
+remain planned. During this transition, pass `--standards` and `--author` to
+each standards-mode review:
 
 ```sh
 node dist/src/cli.js review \

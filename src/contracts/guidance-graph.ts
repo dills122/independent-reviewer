@@ -143,7 +143,7 @@ function expectedTargetId(
 
 function sourceIdentityInput(
   baseCommit: string,
-  source: z.infer<typeof GuidanceSourceNodeV1Schema>,
+  source: Pick<z.infer<typeof GuidanceSourceNodeV1Schema>, "resolvedPath" | "contentDigest">,
 ): unknown {
   return {
     schemaVersion: 1,
@@ -297,6 +297,8 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
   });
   const nodeIds = new Set(graph.nodes.map(({ sourceId }) => sourceId));
   const occurrenceIds = new Set(graph.occurrences.map(({ occurrenceId }) => occurrenceId));
+  const sourceIdentityByPath = new Map<string, string>();
+  const recognitionSlots = new Map<string, string>();
 
   graph.nodes.forEach((node, index) => {
     if (
@@ -307,6 +309,15 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         path: ["nodes", index, "sourceId"],
         message: "must match source identity",
       });
+    const sourceIdentity = canonicalizeJson(node.contentDigest);
+    const priorSourceIdentity = sourceIdentityByPath.get(node.resolvedPath);
+    if (priorSourceIdentity !== undefined && priorSourceIdentity !== sourceIdentity)
+      context.addIssue({
+        code: "custom",
+        path: ["nodes", index, "resolvedPath"],
+        message: "one BASE path must have one content identity",
+      });
+    sourceIdentityByPath.set(node.resolvedPath, sourceIdentity);
     if (!alreadyCanonical(node.directRecognitions, recognitionOrder))
       context.addIssue({
         code: "custom",
@@ -326,6 +337,24 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
           path: ["nodes", index, "directRecognitions", recognitionIndex, "applicableTargetId"],
           message: "must identify a graph target",
         });
+      const slot = canonicalizeJson({
+        familyId: recognition.familyId,
+        applicableTargetId: recognition.applicableTargetId,
+        discoveredPath: recognition.discoveredPath,
+      });
+      const owner = canonicalizeJson({
+        sourceId: node.sourceId,
+        sourceKind: recognition.sourceKind,
+        nativeOrder: recognition.nativeOrder,
+      });
+      const priorOwner = recognitionSlots.get(slot);
+      if (priorOwner !== undefined && priorOwner !== owner)
+        context.addIssue({
+          code: "custom",
+          path: ["nodes", index, "directRecognitions", recognitionIndex],
+          message: "recognition slot has multiple owners",
+        });
+      recognitionSlots.set(slot, owner);
     });
     const derivedTier = node.directRecognitions.some(
       ({ sourceKind }) => sourceKind === "REVIEWER_RULES",
@@ -459,6 +488,13 @@ export const GuidanceGraphV1Schema = GuidanceGraphBaseV1Schema.superRefine(valid
 export type GuidanceGraphV1 = z.infer<typeof GuidanceGraphV1Schema>;
 export type GuidanceTargetV1 = z.infer<typeof GuidanceTargetV1Schema>;
 export type GuidanceDiagnosticV1 = z.infer<typeof GuidanceDiagnosticV1Schema>;
+export type DirectGuidanceRecognitionV1 = z.infer<typeof DirectRecognitionV1Schema>;
+
+export interface DirectGuidanceSourceInputV1 {
+  resolvedPath: string;
+  contentDigest: DigestV1;
+  directRecognitions: DirectGuidanceRecognitionV1[];
+}
 
 /** Creates one content-free, digest-identified guidance diagnostic. */
 export function createGuidanceDiagnosticV1(
@@ -511,44 +547,93 @@ export function finalizeGuidanceGraphV1(value: Omit<GuidanceGraphV1, "graphId">)
   });
 }
 
-/** Builds the no-import graph for the explicit BASE reviewer-rules source. */
-export function buildReviewerRulesGuidanceGraphV1(
+/** Merges direct adapter output into canonical source nodes without adapter-order authority. */
+export function buildDirectGuidanceGraphV1(
   manifest: SnapshotManifestV1,
-  contentDigest?: DigestV1,
+  inputSources: readonly DirectGuidanceSourceInputV1[],
   diagnostics: GuidanceDiagnosticV1[] = [],
 ): GuidanceGraphV1 {
   const targets = projectGuidanceTargetsV1(manifest);
-  const nodes = contentDigest
-    ? [
-        (() => {
-          const directRecognitions = targets
-            .map((target) => ({
-              familyId: "INDEPENDENT_REVIEWER" as const,
-              sourceKind: "REVIEWER_RULES" as const,
-              nativeOrder: 0,
-              applicableTargetId: target.targetId,
-              discoveredPath: ".independent-reviewer/rules.md",
-            }))
-            .sort(recognitionOrder);
-          const source = {
-            resolvedPath: ".independent-reviewer/rules.md",
-            contentDigest,
-            semanticTier: "REVIEWER_SPECIFIC" as const,
-            applicableTargetIds: targets.map(({ targetId }) => targetId).sort(compareUtf16),
-            directRecognitions,
-          };
-          return {
-            sourceId: identifier("guidance_source", {
-              schemaVersion: 1,
-              baseCommit: manifest.source.baseCommit,
-              resolvedPath: source.resolvedPath,
-              contentDigest,
-            }),
-            ...source,
-          };
-        })(),
-      ]
-    : [];
+  const targetIds = new Set(targets.map(({ targetId }) => targetId));
+  const sourcesByIdentity = new Map<
+    string,
+    Omit<
+      z.infer<typeof GuidanceSourceNodeV1Schema>,
+      "sourceId" | "semanticTier" | "applicableTargetIds"
+    >
+  >();
+  const identityByResolvedPath = new Map<string, string>();
+  const recognitionSlots = new Map<string, string>();
+
+  for (const input of inputSources) {
+    const parsedPath = SnapshotPathV1Schema.parse(input.resolvedPath);
+    const contentDigest = DigestV1Schema.parse(input.contentDigest);
+    if (input.directRecognitions.length === 0)
+      throw new Error("Direct guidance source must contain at least one recognition.");
+    const sourceIdentity = canonicalizeJson({ parsedPath, contentDigest });
+    const priorIdentity = identityByResolvedPath.get(parsedPath);
+    if (priorIdentity !== undefined && priorIdentity !== sourceIdentity)
+      throw new Error(`Guidance source ${parsedPath} has conflicting BASE content identity.`);
+    identityByResolvedPath.set(parsedPath, sourceIdentity);
+    const existing = sourcesByIdentity.get(sourceIdentity) ?? {
+      resolvedPath: parsedPath,
+      contentDigest,
+      directRecognitions: [],
+    };
+    const recognitions = new Map(
+      existing.directRecognitions.map((recognition) => [
+        canonicalizeJson(recognition),
+        recognition,
+      ]),
+    );
+    for (const candidate of input.directRecognitions) {
+      const recognition = DirectRecognitionV1Schema.parse(candidate);
+      if (!targetIds.has(recognition.applicableTargetId))
+        throw new Error(
+          `Guidance recognition identifies unknown target ${recognition.applicableTargetId}.`,
+        );
+      const slot = canonicalizeJson({
+        familyId: recognition.familyId,
+        applicableTargetId: recognition.applicableTargetId,
+        discoveredPath: recognition.discoveredPath,
+      });
+      const owner = canonicalizeJson({
+        sourceIdentity,
+        sourceKind: recognition.sourceKind,
+        nativeOrder: recognition.nativeOrder,
+      });
+      const priorOwner = recognitionSlots.get(slot);
+      if (priorOwner !== undefined && priorOwner !== owner)
+        throw new Error("GUIDANCE_RECOGNITION_CONFLICT: one recognition slot has multiple owners.");
+      recognitionSlots.set(slot, owner);
+      recognitions.set(canonicalizeJson(recognition), recognition);
+    }
+    existing.directRecognitions = [...recognitions.values()].sort(recognitionOrder);
+    sourcesByIdentity.set(sourceIdentity, existing);
+  }
+
+  const nodes = [...sourcesByIdentity.values()]
+    .map((source) => {
+      const applicableTargetIds = [
+        ...new Set(source.directRecognitions.map(({ applicableTargetId }) => applicableTargetId)),
+      ].sort(compareUtf16);
+      const semanticTier = source.directRecognitions.some(
+        ({ sourceKind }) => sourceKind === "REVIEWER_RULES",
+      )
+        ? ("REVIEWER_SPECIFIC" as const)
+        : ("REPOSITORY_PEER" as const);
+      return {
+        sourceId: identifier(
+          "guidance_source",
+          sourceIdentityInput(manifest.source.baseCommit, source),
+        ),
+        ...source,
+        semanticTier,
+        applicableTargetIds,
+      };
+    })
+    .sort((left, right) => compareUtf16(left.sourceId, right.sourceId));
+
   return finalizeGuidanceGraphV1({
     schemaVersion: 1,
     snapshotDigest: manifest.snapshotDigest,
@@ -559,6 +644,34 @@ export function buildReviewerRulesGuidanceGraphV1(
     edges: [],
     diagnostics: [...diagnostics].sort(diagnosticOrder),
   });
+}
+
+/** Builds the no-import graph for the explicit BASE reviewer-rules source. */
+export function buildReviewerRulesGuidanceGraphV1(
+  manifest: SnapshotManifestV1,
+  contentDigest?: DigestV1,
+  diagnostics: GuidanceDiagnosticV1[] = [],
+): GuidanceGraphV1 {
+  const targets = projectGuidanceTargetsV1(manifest);
+  return buildDirectGuidanceGraphV1(
+    manifest,
+    contentDigest
+      ? [
+          {
+            resolvedPath: ".independent-reviewer/rules.md",
+            contentDigest,
+            directRecognitions: targets.map((target) => ({
+              familyId: "INDEPENDENT_REVIEWER",
+              sourceKind: "REVIEWER_RULES",
+              nativeOrder: 0,
+              applicableTargetId: target.targetId,
+              discoveredPath: ".independent-reviewer/rules.md",
+            })),
+          },
+        ]
+      : [],
+    diagnostics,
+  );
 }
 
 export function guidanceGraphDigestV1(graph: GuidanceGraphV1): DigestV1 {

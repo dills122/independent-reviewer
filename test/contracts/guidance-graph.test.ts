@@ -5,7 +5,9 @@ import { describe, it } from "node:test";
 
 import {
   assertGuidanceGraphMatchesSnapshotV1,
+  buildDirectGuidanceGraphV1,
   buildReviewerRulesGuidanceGraphV1,
+  finalizeGuidanceGraphV1,
   finalizeSnapshotManifestV1,
   GUIDANCE_GRAPH_V1_JSON_SCHEMA,
   GuidanceGraphV1Schema,
@@ -85,6 +87,111 @@ describe("GuidanceGraphV1", () => {
     assert.equal(graph.occurrences.length, 0);
     assert.equal(graph.edges.length, 0);
     assert.equal(verifyGuidanceGraphIdentityV1(graph), true);
+  });
+
+  it("merges direct multi-family recognition independent of adapter order", async () => {
+    const manifest = await manifestFixture();
+    const target = projectGuidanceTargetsV1(manifest)[0];
+    assert.ok(target);
+    const contentDigest = sha256Utf8("# Shared guidance\n");
+    const sources = [
+      {
+        resolvedPath: "AGENTS.md",
+        contentDigest,
+        directRecognitions: [
+          {
+            familyId: "CODEX" as const,
+            sourceKind: "CODEX_AGENTS" as const,
+            nativeOrder: 0,
+            applicableTargetId: target.targetId,
+            discoveredPath: "AGENTS.md",
+          },
+        ],
+      },
+      {
+        resolvedPath: "AGENTS.md",
+        contentDigest,
+        directRecognitions: [
+          {
+            familyId: "COPILOT" as const,
+            sourceKind: "COPILOT_AGENTS" as const,
+            nativeOrder: 1,
+            applicableTargetId: target.targetId,
+            discoveredPath: "AGENTS.md",
+          },
+        ],
+      },
+    ];
+
+    const forward = buildDirectGuidanceGraphV1(manifest, sources);
+    const reversed = buildDirectGuidanceGraphV1(manifest, [...sources].reverse());
+
+    assert.deepEqual(forward, reversed);
+    assert.equal(forward.nodes.length, 1);
+    assert.equal(forward.nodes[0]?.directRecognitions.length, 2);
+    assert.deepEqual(forward.nodes[0]?.applicableTargetIds, [target.targetId]);
+    assert.equal(forward.nodes[0]?.semanticTier, "REPOSITORY_PEER");
+  });
+
+  it("rejects conflicting recognition slots instead of using adapter arrival order", async () => {
+    const manifest = await manifestFixture();
+    const target = projectGuidanceTargetsV1(manifest)[0];
+    assert.ok(target);
+    const recognition = {
+      familyId: "CODEX" as const,
+      sourceKind: "CODEX_AGENTS" as const,
+      nativeOrder: 0,
+      applicableTargetId: target.targetId,
+      discoveredPath: "AGENTS.md",
+    };
+
+    assert.throws(
+      () =>
+        buildDirectGuidanceGraphV1(manifest, [
+          {
+            resolvedPath: "AGENTS.md",
+            contentDigest: sha256Utf8("first"),
+            directRecognitions: [recognition],
+          },
+          {
+            resolvedPath: "other/AGENTS.md",
+            contentDigest: sha256Utf8("second"),
+            directRecognitions: [recognition],
+          },
+        ]),
+      /GUIDANCE_RECOGNITION_CONFLICT/,
+    );
+
+    const first = buildDirectGuidanceGraphV1(manifest, [
+      {
+        resolvedPath: "AGENTS.md",
+        contentDigest: sha256Utf8("first"),
+        directRecognitions: [recognition],
+      },
+    ]);
+    const second = buildDirectGuidanceGraphV1(manifest, [
+      {
+        resolvedPath: "other/AGENTS.md",
+        contentDigest: sha256Utf8("second"),
+        directRecognitions: [recognition],
+      },
+    ]);
+    assert.throws(
+      () =>
+        finalizeGuidanceGraphV1({
+          schemaVersion: 1,
+          snapshotDigest: manifest.snapshotDigest,
+          baseCommit: manifest.source.baseCommit,
+          targets: first.targets,
+          nodes: [first.nodes[0], second.nodes[0]]
+            .filter((node): node is NonNullable<typeof node> => node !== undefined)
+            .sort((left, right) => left.sourceId.localeCompare(right.sourceId)),
+          occurrences: [],
+          edges: [],
+          diagnostics: [],
+        }),
+      /recognition slot has multiple owners/,
+    );
   });
 
   it("rejects graph, source, target, ordering, and derived-field tampering", async () => {

@@ -223,6 +223,13 @@ applicability metadata. Implement already-frozen source-node/import-edge and
 resource-cap contracts before adapter groups split. Adopt qualified Markdown,
 YAML, JSON, glob, brace, and Gitignore libraries behind small family adapters.
 
+**Progress:** In progress. Canonical direct-source assembly and Codex ancestor
+discovery are implemented: BASE `AGENTS.override.md` wins over `AGENTS.md` per
+directory, selected files apply root-to-target-parent, and multi-source output
+flows through the existing packet, prompt, admission, and resume chain. Remaining
+Claude, Gemini, Kiro, Copilot, Cursor, conditional-matcher, ignore, and import
+adapters remain pending.
+
 **Acceptance criteria:**
 
 - [ ] Root, nested, override, always-on, and path-matched sources select the

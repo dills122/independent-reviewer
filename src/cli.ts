@@ -33,7 +33,7 @@ import {
   type ReviewRequest,
   ReviewRequestSchema,
 } from "./contracts/standards-review.js";
-import { captureReviewerRulesGuidanceV1 } from "./guidance/reviewer-rules.js";
+import { captureRepositoryGuidanceV1 } from "./guidance/repository-guidance.js";
 import { withReviewProgress } from "./orchestrator/progress.js";
 import {
   preflightReview,
@@ -519,7 +519,7 @@ async function preparePacket(
   // never captures it: a graph in a v1 packet would fail brief construction instead.
   const guidance =
     request.schemaVersion === 2 && (await repositoryDiscoversSteeringV1(repositoryRoot))
-      ? await captureReviewerRulesGuidanceV1(repositoryRoot, captured.manifest)
+      ? await captureRepositoryGuidanceV1(repositoryRoot, captured.manifest)
       : undefined;
   await writeSnapshotPacketV1(packetPath, captured, request, guidance ? { guidance } : {});
   return {

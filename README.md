@@ -86,6 +86,8 @@ node --env-file=.env dist/src/cli.js review \
 If present in the frozen BASE tree,
 `<target-repository>/.independent-reviewer/rules.md` is captured automatically
 as opaque, highest-priority review guidance after secret and budget admission.
+BASE Codex `AGENTS.md`/`AGENTS.override.md` files are also selected from root to
+each changed file's parent, with overrides winning within their directory.
 
 Use the actual base ref for your changes. Live reports default to
 `<target-repository>/.review-runs/<snapshot-id>/review/report.md`.
