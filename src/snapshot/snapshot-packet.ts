@@ -29,6 +29,7 @@ import {
 } from "../contracts/index.js";
 import type { CapturedReviewerRulesGuidanceV1 } from "../guidance/reviewer-rules.js";
 import { assertGuidanceImportOccurrencesV1 } from "../guidance/import-verification.js";
+import { readStrictJsonFileV1 } from "../contracts/strict-json.js";
 import {
   canonicalInputList,
   type ReviewAuthor,
@@ -48,6 +49,14 @@ const PACKET_METADATA_FILE = "packet-metadata.json";
 const CONTEXT_MAP_FILE = "review-context-map.json";
 const GUIDANCE_GRAPH_FILE = "guidance-graph.json";
 const BLOBS_DIRECTORY = "blobs";
+const MAX_PACKET_JSON_BYTES_V1 = 64 * 1024 * 1024;
+
+function readPacketJsonV1(packetPath: string, fileName: string): Promise<unknown> {
+  return readStrictJsonFileV1(join(packetPath, fileName), {
+    maxBytes: MAX_PACKET_JSON_BYTES_V1,
+    source: `snapshot packet ${fileName}`,
+  });
+}
 
 export interface InspectedSnapshotPacketV1 {
   manifest: SnapshotManifestV1;
@@ -483,9 +492,7 @@ export async function writeSnapshotPacketV1(
 
 async function readOptionalAuthorPacket(packetPath: string): Promise<ReviewAuthor | undefined> {
   try {
-    return ReviewAuthorSchema.parse(
-      JSON.parse(await readFile(join(packetPath, AUTHOR_PACKET_FILE), "utf8")),
-    );
+    return ReviewAuthorSchema.parse(await readPacketJsonV1(packetPath, AUTHOR_PACKET_FILE));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return undefined;
@@ -497,16 +504,16 @@ async function readOptionalAuthorPacket(packetPath: string): Promise<ReviewAutho
 /** Validates packet metadata, identities, and every manifest-referenced blob. */
 export async function inspectSnapshotPacket(packetPath: string): Promise<InspectedSnapshotPacket> {
   const manifest = SnapshotManifestV1Schema.parse(
-    JSON.parse(await readFile(join(packetPath, MANIFEST_FILE), "utf8")),
+    await readPacketJsonV1(packetPath, MANIFEST_FILE),
   );
   if (!verifySnapshotManifestIdentityV1(manifest)) {
     throw new Error("Snapshot manifest digest verification failed.");
   }
   const canonicalInputs = ReviewCanonicalInputsSchema.parse(
-    JSON.parse(await readFile(join(packetPath, CANONICAL_INPUTS_FILE), "utf8")),
+    await readPacketJsonV1(packetPath, CANONICAL_INPUTS_FILE),
   );
   const packetMetadata = PacketMetadataSchema.parse(
-    JSON.parse(await readFile(join(packetPath, PACKET_METADATA_FILE), "utf8")),
+    await readPacketJsonV1(packetPath, PACKET_METADATA_FILE),
   );
   if (
     (packetMetadata.schemaVersion === 3 || packetMetadata.schemaVersion === 4) &&
@@ -516,9 +523,7 @@ export async function inspectSnapshotPacket(packetPath: string): Promise<Inspect
   }
   const contextMap =
     packetMetadata.schemaVersion === 3 || packetMetadata.schemaVersion === 4
-      ? ReviewContextMapV1Schema.parse(
-          JSON.parse(await readFile(join(packetPath, CONTEXT_MAP_FILE), "utf8")),
-        )
+      ? ReviewContextMapV1Schema.parse(await readPacketJsonV1(packetPath, CONTEXT_MAP_FILE))
       : buildFallbackReviewContextMapV1(manifest);
   if (!verifyReviewContextMapIdentityV1(contextMap)) {
     throw new Error("Review context map digest verification failed.");
@@ -532,9 +537,7 @@ export async function inspectSnapshotPacket(packetPath: string): Promise<Inspect
   assertContextMapMatchesManifest(contextMap, manifest);
   const guidanceGraph =
     packetMetadata.schemaVersion === 4
-      ? GuidanceGraphV1Schema.parse(
-          JSON.parse(await readFile(join(packetPath, GUIDANCE_GRAPH_FILE), "utf8")),
-        )
+      ? GuidanceGraphV1Schema.parse(await readPacketJsonV1(packetPath, GUIDANCE_GRAPH_FILE))
       : undefined;
   if (packetMetadata.schemaVersion === 4 && guidanceGraph) {
     assertGuidanceGraphMatchesSnapshotV1(guidanceGraph, manifest);
