@@ -371,6 +371,38 @@ describe("captureGitSnapshotV1", () => {
       await rm(repositoryPath, { recursive: true, force: true });
     }
   });
+
+  it("completes capture when a tracked file becomes unreadable, recording both degradations", async () => {
+    if (process.getuid?.() === 0) {
+      return;
+    }
+    const repositoryPath = await createRepository();
+    const unreadablePath = join(repositoryPath, "modified.ts");
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/unreadable-tracked");
+      await writeFile(unreadablePath, "after\n");
+      // Regression for #57: `git diff --quiet` compares working-tree content, so an unreadable
+      // *tracked* file made it exit 128 and capture threw a raw Git diagnostic. The untracked case
+      // above never hit this, because the dirty probe does not hash untracked files.
+      await chmod(unreadablePath, 0o000);
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const byScope = new Map(
+        captured.manifest.omissions.map((entry) => [entry.scope, entry] as const),
+      );
+
+      assert.equal(byScope.get("modified.ts")?.reason, "UNREADABLE");
+      assert.match(byScope.get("modified.ts")?.detail ?? "", /EACCES/);
+      const probe = byScope.get("repository:working-tree-state");
+      assert.equal(probe?.reason, "UNREADABLE");
+      assert.match(probe?.detail ?? "", /without being verified/);
+      // A tree Git cannot fully read is not reported as verifiably clean.
+      assert.equal(captured.manifest.workingTree.hasUnstagedChanges, true);
+    } finally {
+      await chmod(unreadablePath, 0o644).catch(() => undefined);
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
   it("excludes credential-shaped filenames and credential directories", async () => {
     const repositoryPath = await createRepository();
     try {
