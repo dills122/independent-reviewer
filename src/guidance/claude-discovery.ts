@@ -1,8 +1,9 @@
 import {
-  buildDirectGuidanceGraphV1,
+  buildGuidanceGraphV1,
   createGuidanceDiagnosticV1,
   type DirectGuidanceSourceInputV1,
   type GuidanceGraphV1,
+  type GuidanceImportInputV1,
   projectGuidanceTargetsV1,
   type SnapshotManifestV1,
 } from "../contracts/index.js";
@@ -12,8 +13,10 @@ import {
   GuidanceCaptureError,
   listBaseGuidanceBlobMetadataV1,
   readBaseMarkdownGuidanceSourceV1,
+  resolveBaseGuidanceBlobV1,
 } from "./base-markdown-source.js";
 import { compileGuidancePatternsV1 } from "./conditional-patterns.js";
+import { resolveClaudeImportPathV1, scanClaudeImportOccurrencesV1 } from "./claude-imports.js";
 import { guidanceAncestorDirectoriesV1, guidancePathInDirectoryV1 } from "./discovery-paths.js";
 import { parseGuidanceFrontmatterV1 } from "./frontmatter.js";
 
@@ -22,6 +25,9 @@ const MAX_GUIDANCE_TARGETS_V1 = 8_192;
 const MAX_DIRECT_CANDIDATES_V1 = 4_096;
 const MAX_GUIDANCE_NODES_V1 = 256;
 const MAX_DIRECT_RECOGNITIONS_V1 = 65_536;
+const MAX_GUIDANCE_IMPORT_DEPTH_V1 = 4;
+const MAX_GUIDANCE_OCCURRENCES_V1 = 2_048;
+const MAX_GUIDANCE_EDGES_V1 = 512;
 const DOT_CLAUDE_PATH_V1 = ".claude/CLAUDE.md";
 const CLAUDE_RULES_ROOT_V1 = ".claude/rules";
 
@@ -36,6 +42,18 @@ function discoveryLimit(message: string): never {
     "CLAUDE.md",
     `Guidance discovery limit exceeded: ${message}`,
   );
+}
+
+function importFailure(
+  code:
+    | "GUIDANCE_IMPORT_CYCLE"
+    | "GUIDANCE_IMPORT_DEPTH_LIMIT"
+    | "GUIDANCE_IMPORT_EDGE_LIMIT"
+    | "GUIDANCE_IMPORT_EMPTY"
+    | "GUIDANCE_IMPORT_UNRESOLVED",
+  path: string,
+): never {
+  throw new GuidanceCaptureError(code, path, `${path} has an invalid Claude @path import graph.`);
 }
 
 /** Discovers directly selected Claude guidance from frozen BASE. */
@@ -148,10 +166,131 @@ export async function captureClaudeGuidanceV1(
   if (directSources.size > MAX_GUIDANCE_NODES_V1)
     discoveryLimit(`more than ${MAX_GUIDANCE_NODES_V1} applicable source nodes were selected.`);
 
+  const importTargets = new Map<
+    string,
+    { input: Omit<GuidanceImportInputV1, "applicableTargetIds">; targetIds: Set<string> }
+  >();
+  const graphSources = new Map<string, DirectGuidanceSourceInputV1>(directSources);
+  const importScans = new Map<string, ReturnType<typeof scanClaudeImportOccurrencesV1>>();
+  let importEdgeCount = 0;
+  const loadImportedSource = async (path: string) => {
+    const resolved = await resolveBaseGuidanceBlobV1(
+      repositoryPath,
+      manifest.source.baseCommit,
+      path,
+    );
+    if (!resolved) importFailure("GUIDANCE_IMPORT_UNRESOLVED", path);
+    const existing = sources.get(resolved.resolvedPath);
+    if (existing) return { resolvedPath: resolved.resolvedPath, source: existing };
+    const source = await readBaseMarkdownGuidanceSourceV1(
+      repositoryPath,
+      resolved.resolvedPath,
+      resolved.metadata,
+    );
+    if (source.content.trim().length === 0)
+      importFailure("GUIDANCE_IMPORT_EMPTY", resolved.resolvedPath);
+    sources.set(resolved.resolvedPath, source);
+    return { resolvedPath: resolved.resolvedPath, source };
+  };
+  const traverseImports = async (
+    importerPath: string,
+    applicableTargetId: string,
+    depth: number,
+    ancestry: ReadonlySet<string>,
+  ): Promise<void> => {
+    const importer = sources.get(importerPath);
+    if (!importer) throw new Error(`Claude import source ${importerPath} was not loaded.`);
+    let occurrences = importScans.get(importerPath);
+    if (!occurrences) {
+      occurrences = scanClaudeImportOccurrencesV1(importerPath, importer.content);
+      importScans.set(importerPath, occurrences);
+    }
+    if (occurrences.length > 0 && depth >= MAX_GUIDANCE_IMPORT_DEPTH_V1)
+      importFailure("GUIDANCE_IMPORT_DEPTH_LIMIT", importerPath);
+    for (const occurrence of occurrences) {
+      const requestedPath = resolveClaudeImportPathV1(importerPath, occurrence.requestedSpecifier);
+      const { resolvedPath: importedPath, source: imported } =
+        await loadImportedSource(requestedPath);
+      if (ancestry.has(importedPath)) importFailure("GUIDANCE_IMPORT_CYCLE", importedPath);
+      const key = JSON.stringify([
+        importerPath,
+        importer.contentDigest.value,
+        occurrence.requestedSpecifier,
+        occurrence.startUtf16,
+        occurrence.endUtf16,
+        importedPath,
+        imported.contentDigest.value,
+      ]);
+      const accumulated = importTargets.get(key) ?? {
+        input: {
+          familyId: "CLAUDE" as const,
+          syntaxKind: "CLAUDE_AT_PATH" as const,
+          importerPath,
+          importerContentDigest: importer.contentDigest,
+          importedPath,
+          importedContentDigest: imported.contentDigest,
+          requestedSpecifier: occurrence.requestedSpecifier,
+          startUtf16: occurrence.startUtf16,
+          endUtf16: occurrence.endUtf16,
+        },
+        targetIds: new Set<string>(),
+      };
+      if (!accumulated.targetIds.has(applicableTargetId)) {
+        accumulated.targetIds.add(applicableTargetId);
+        importEdgeCount += 1;
+      }
+      importTargets.set(key, accumulated);
+      if (importTargets.size > MAX_GUIDANCE_OCCURRENCES_V1)
+        discoveryLimit(
+          `more than ${MAX_GUIDANCE_OCCURRENCES_V1} import occurrences were produced.`,
+        );
+      if (importEdgeCount > MAX_GUIDANCE_EDGES_V1)
+        importFailure("GUIDANCE_IMPORT_EDGE_LIMIT", importerPath);
+      const existingGraphSource = graphSources.get(importedPath);
+      if (
+        existingGraphSource &&
+        existingGraphSource.contentDigest.value !== imported.contentDigest.value
+      ) {
+        throw new Error(`Guidance source ${importedPath} has conflicting BASE content identity.`);
+      }
+      graphSources.set(
+        importedPath,
+        existingGraphSource ?? {
+          resolvedPath: importedPath,
+          contentDigest: imported.contentDigest,
+          directRecognitions: [],
+        },
+      );
+      if (graphSources.size > MAX_GUIDANCE_NODES_V1)
+        discoveryLimit(`more than ${MAX_GUIDANCE_NODES_V1} applicable source nodes were selected.`);
+      await traverseImports(
+        importedPath,
+        applicableTargetId,
+        depth + 1,
+        new Set([...ancestry, importedPath]),
+      );
+    }
+  };
+
+  for (const [path, source] of directSources) {
+    const targetIds = source.directRecognitions
+      .filter(({ familyId, sourceKind }) => familyId === "CLAUDE" && sourceKind !== "CLAUDE_RULE")
+      .map(({ applicableTargetId }) => applicableTargetId);
+    for (const applicableTargetId of targetIds) {
+      await traverseImports(path, applicableTargetId, 0, new Set([path]));
+    }
+  }
+  const imports: GuidanceImportInputV1[] = [...importTargets.values()].map(
+    ({ input, targetIds }) => ({
+      ...input,
+      applicableTargetIds: [...targetIds].sort(),
+    }),
+  );
+
   return {
-    graph: buildDirectGuidanceGraphV1(manifest, [...directSources.values()], diagnostics),
+    graph: buildGuidanceGraphV1(manifest, [...graphSources.values()], imports, diagnostics),
     blobs: new Map(
-      [...directSources.keys()].map((path) => {
+      [...graphSources.keys()].map((path) => {
         const source = sources.get(path);
         if (!source) throw new Error(`Applicable guidance source ${path} was not loaded.`);
         return [source.contentDigest.value, Uint8Array.from(source.bytes)];

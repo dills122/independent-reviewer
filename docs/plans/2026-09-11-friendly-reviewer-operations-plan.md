@@ -228,8 +228,15 @@ discovery are implemented: BASE `AGENTS.override.md` wins over `AGENTS.md` per
 directory, selected files apply root-to-target-parent, and multi-source output
 flows through the existing packet, prompt, admission, and resume chain. Claude
 direct files and scoped rules now use strict library-backed YAML frontmatter,
-bounded brace expansion, and patched glob matching. Claude imports plus Gemini,
-Kiro, Copilot, Cursor, and ignore adapters remain pending.
+bounded brace expansion, and patched glob matching. Relative BASE-only Claude
+`@path` imports now preserve occurrence/edge provenance, recurse through four
+hops, follow bounded repository-internal symlinks, and fail closed on invalid or
+over-limit graphs. `mdast-util-from-markdown` is already supplied by
+`remark-parse`; `agent-install/agents-md` was evaluated but reads and edits live
+working-tree files and parses headings rather than supplying frozen Git
+discovery/applicability semantics, so it remains a possible setup-UX dependency,
+not a runtime capture dependency. Gemini, Kiro, Copilot, Cursor, and ignore
+adapters remain pending.
 
 **Acceptance criteria:**
 

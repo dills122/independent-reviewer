@@ -1,7 +1,9 @@
+import { posix } from "node:path";
+
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
-import { sha256BytesDigestV1, type DigestV1 } from "../contracts/index.js";
+import { sha256BytesDigestV1, type DigestV1, SnapshotPathV1Schema } from "../contracts/index.js";
 import { isSecretPathV1, secretContentScanV1 } from "../snapshot/git-capture.js";
 import { runGit } from "../snapshot/git-command.js";
 
@@ -12,10 +14,19 @@ export type GuidanceCaptureErrorCode =
   | "GUIDANCE_INVALID_FRONTMATTER"
   | "GUIDANCE_INVALID_PATTERN"
   | "GUIDANCE_INVALID_UTF8"
+  | "GUIDANCE_IMPORT_OCCURRENCE_LIMIT"
+  | "GUIDANCE_IMPORT_CYCLE"
+  | "GUIDANCE_IMPORT_DEPTH_LIMIT"
+  | "GUIDANCE_IMPORT_EDGE_LIMIT"
+  | "GUIDANCE_IMPORT_EMPTY"
+  | "GUIDANCE_IMPORT_UNRESOLVED"
+  | "GUIDANCE_IMPORT_UNSUPPORTED"
   | "GUIDANCE_MARKDOWN_PARSE_FAILED"
   | "GUIDANCE_SECRET_CONTENT"
   | "GUIDANCE_SECRET_PATH"
   | "GUIDANCE_SOURCE_SIZE_LIMIT"
+  | "GUIDANCE_SYMLINK_LIMIT"
+  | "GUIDANCE_SYMLINK_UNSUPPORTED"
   | "GUIDANCE_UNSUPPORTED_KIND";
 
 /** Content-free failure metadata safe for preflight logs and terminal output. */
@@ -44,6 +55,13 @@ export interface BaseMarkdownGuidanceSourceV1 {
   content: string;
   contentDigest: DigestV1;
 }
+
+export interface ResolvedBaseGuidanceBlobV1 {
+  resolvedPath: string;
+  metadata: BaseGuidanceBlobMetadataV1;
+}
+
+const MAX_GUIDANCE_SYMLINKS_V1 = 16;
 
 function parseBaseBlobMetadataRecordV1(record: string): {
   path: string;
@@ -82,6 +100,108 @@ export async function baseGuidanceBlobMetadataV1(
     );
   }
   return parsed.metadata;
+}
+
+/** Resolves one repository-internal symlink chain using frozen BASE objects only. */
+export async function resolveBaseGuidanceBlobV1(
+  repositoryPath: string,
+  baseCommit: string,
+  path: string,
+): Promise<ResolvedBaseGuidanceBlobV1 | undefined> {
+  let currentPath = SnapshotPathV1Schema.parse(path);
+  const visited = new Set<string>();
+  let followed = 0;
+  while (true) {
+    if (visited.has(currentPath))
+      throw new GuidanceCaptureError(
+        "GUIDANCE_SYMLINK_UNSUPPORTED",
+        path,
+        `${path} has a cyclic BASE symlink chain.`,
+      );
+    visited.add(currentPath);
+    if (isSecretPathV1(currentPath))
+      throw new GuidanceCaptureError(
+        "GUIDANCE_SECRET_PATH",
+        currentPath,
+        `${currentPath} is rejected by the snapshot secret-path policy.`,
+      );
+    const metadata = await baseGuidanceBlobMetadataV1(repositoryPath, baseCommit, currentPath);
+    if (!metadata) {
+      if (followed === 0) return undefined;
+      throw new GuidanceCaptureError(
+        "GUIDANCE_SYMLINK_UNSUPPORTED",
+        path,
+        `${path} has an unresolved BASE symlink target.`,
+      );
+    }
+    if (metadata.mode !== "120000") return { resolvedPath: currentPath, metadata };
+    if (metadata.kind !== "blob")
+      throw new GuidanceCaptureError(
+        "GUIDANCE_SYMLINK_UNSUPPORTED",
+        path,
+        `${path} has an unsupported BASE symlink object.`,
+      );
+    followed += 1;
+    if (followed > MAX_GUIDANCE_SYMLINKS_V1)
+      throw new GuidanceCaptureError(
+        "GUIDANCE_SYMLINK_LIMIT",
+        path,
+        `${path} exceeds the ${MAX_GUIDANCE_SYMLINKS_V1}-link guidance symlink limit.`,
+      );
+    const sizeResult = await runGit(repositoryPath, ["cat-file", "-s", metadata.objectId]);
+    const targetByteLength = Number(sizeResult.stdout.toString("ascii").trim());
+    if (!Number.isSafeInteger(targetByteLength) || targetByteLength < 1 || targetByteLength > 4_096)
+      throw new GuidanceCaptureError(
+        "GUIDANCE_SYMLINK_UNSUPPORTED",
+        path,
+        `${path} has an invalid or over-limit BASE symlink target.`,
+      );
+    const targetBytes = (await runGit(repositoryPath, ["cat-file", "blob", metadata.objectId]))
+      .stdout;
+    if (targetBytes.length !== targetByteLength)
+      throw new GuidanceCaptureError(
+        "GUIDANCE_SYMLINK_UNSUPPORTED",
+        path,
+        `${path} changed while reading its frozen BASE symlink object.`,
+      );
+    let target: string;
+    try {
+      target = new TextDecoder("utf-8", { fatal: true }).decode(targetBytes);
+    } catch {
+      throw new GuidanceCaptureError(
+        "GUIDANCE_SYMLINK_UNSUPPORTED",
+        path,
+        `${path} has a non-UTF-8 BASE symlink target.`,
+      );
+    }
+    if (
+      target.length === 0 ||
+      target.length > 4_096 ||
+      posix.isAbsolute(target) ||
+      /[\r\n\0]/u.test(target)
+    )
+      throw new GuidanceCaptureError(
+        "GUIDANCE_SYMLINK_UNSUPPORTED",
+        path,
+        `${path} has an unsupported BASE symlink target.`,
+      );
+    const resolved = posix.normalize(posix.join(posix.dirname(currentPath), target));
+    if (resolved === ".." || resolved.startsWith("../"))
+      throw new GuidanceCaptureError(
+        "GUIDANCE_SYMLINK_UNSUPPORTED",
+        path,
+        `${path} has a BASE symlink target outside the repository.`,
+      );
+    try {
+      currentPath = SnapshotPathV1Schema.parse(resolved);
+    } catch {
+      throw new GuidanceCaptureError(
+        "GUIDANCE_SYMLINK_UNSUPPORTED",
+        path,
+        `${path} has an invalid BASE symlink target.`,
+      );
+    }
+  }
 }
 
 /** Lists frozen BASE entries under one literal repository path without reading content. */

@@ -28,6 +28,7 @@ import {
   verifySnapshotManifestIdentityV1,
 } from "../contracts/index.js";
 import type { CapturedReviewerRulesGuidanceV1 } from "../guidance/reviewer-rules.js";
+import { assertGuidanceImportOccurrencesV1 } from "../guidance/import-verification.js";
 import {
   canonicalInputList,
   type ReviewAuthor,
@@ -400,6 +401,11 @@ export async function writeSnapshotPacketV1(
         records.push({ digest: node.contentDigest.value, byteLength: bytes.length });
       }
     }
+    await assertGuidanceImportOccurrencesV1(options.guidance.graph, async (node) => {
+      const bytes = options.guidance?.blobs.get(node.contentDigest.value);
+      if (!bytes) throw new Error(`Guidance blob ${node.contentDigest.value} is missing.`);
+      return bytes;
+    });
   }
   for (const record of records) {
     const bytes = packetBlobs.get(record.digest);
@@ -547,6 +553,9 @@ export async function inspectSnapshotPacket(packetPath: string): Promise<Inspect
         throw new Error(`Guidance blob ${node.contentDigest.value} failed digest verification.`);
       }
     });
+    await assertGuidanceImportOccurrencesV1(guidanceGraph, (node) =>
+      readFile(join(packetPath, BLOBS_DIRECTORY, node.contentDigest.value)),
+    );
   }
   assertCanonicalInputsMatch(manifest, canonicalInputs);
   const records = contentRecords(manifest);

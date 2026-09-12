@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import {
   assertGuidanceGraphMatchesSnapshotV1,
   buildDirectGuidanceGraphV1,
+  buildGuidanceGraphV1,
   buildReviewerRulesGuidanceGraphV1,
   finalizeGuidanceGraphV1,
   finalizeSnapshotManifestV1,
@@ -191,6 +192,73 @@ describe("GuidanceGraphV1", () => {
           diagnostics: [],
         }),
       /recognition slot has multiple owners/,
+    );
+  });
+
+  it("builds canonical import-only nodes, occurrences, and propagated target edges", async () => {
+    const manifest = await manifestFixture();
+    const target = projectGuidanceTargetsV1(manifest)[0];
+    assert.ok(target);
+    const rootDigest = sha256Utf8("Read @docs/review.md\n");
+    const importedDigest = sha256Utf8("# Imported review rules\n");
+    const sources = [
+      {
+        resolvedPath: "CLAUDE.md",
+        contentDigest: rootDigest,
+        directRecognitions: [
+          {
+            familyId: "CLAUDE" as const,
+            sourceKind: "CLAUDE_MD" as const,
+            nativeOrder: 0,
+            applicableTargetId: target.targetId,
+            discoveredPath: "CLAUDE.md",
+          },
+        ],
+      },
+      {
+        resolvedPath: "docs/review.md",
+        contentDigest: importedDigest,
+        directRecognitions: [],
+      },
+    ];
+    const imports = [
+      {
+        familyId: "CLAUDE" as const,
+        syntaxKind: "CLAUDE_AT_PATH" as const,
+        importerPath: "CLAUDE.md",
+        importerContentDigest: rootDigest,
+        importedPath: "docs/review.md",
+        importedContentDigest: importedDigest,
+        requestedSpecifier: "docs/review.md",
+        startUtf16: 6,
+        endUtf16: 20,
+        applicableTargetIds: [target.targetId],
+      },
+    ];
+
+    const forward = buildGuidanceGraphV1(manifest, sources, imports);
+    const reversed = buildGuidanceGraphV1(manifest, [...sources].reverse(), [...imports].reverse());
+
+    assert.deepEqual(forward, reversed);
+    assert.equal(forward.nodes.length, 2);
+    assert.equal(forward.occurrences.length, 1);
+    assert.equal(forward.edges.length, 1);
+    const imported = forward.nodes.find(({ resolvedPath }) => resolvedPath === "docs/review.md");
+    assert.ok(imported);
+    assert.deepEqual(imported.directRecognitions, []);
+    assert.deepEqual(imported.applicableTargetIds, [target.targetId]);
+    assert.equal(verifyGuidanceGraphIdentityV1(forward), true);
+
+    const unrelatedTarget = projectGuidanceTargetsV1(manifest)[1];
+    const importInput = imports[0];
+    assert.ok(unrelatedTarget);
+    assert.ok(importInput);
+    assert.throws(
+      () =>
+        buildGuidanceGraphV1(manifest, sources, [
+          { ...importInput, applicableTargetIds: [unrelatedTarget.targetId] },
+        ]),
+      /derived import edge/,
     );
   });
 

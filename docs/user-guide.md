@@ -87,9 +87,13 @@ The simple flow automatically captures BASE-owned
 file's parent, with one file selected per directory and override precedence.
 It also selects Claude ancestor `CLAUDE.md`, root `.claude/CLAUDE.md`, and
 applicable `.claude/rules/**/*.md` files using bounded YAML `paths` frontmatter.
-Claude imports and Gemini, Kiro, Copilot, and Cursor discovery plus interactive
-author input remain planned. During this transition, pass `--standards` and
-`--author` to each standards-mode review:
+Applicable `CLAUDE.md` files expand relative, repository-internal `@path`
+imports from frozen BASE through at most four hops, including bounded internal
+symlink chains. Missing, cyclic, absolute, repository-escaping, secret, empty,
+or over-limit imports stop before provider access. Imports in `.claude/rules`
+are not expanded in v1. Gemini, Kiro, Copilot, and Cursor discovery plus
+interactive author input remain planned. During this transition, pass
+`--standards` and `--author` to each standards-mode review:
 
 ```sh
 node dist/src/cli.js review \
@@ -112,8 +116,7 @@ Applicable content passes path/content secret checks before artifact creation or
 provider access. Admission warns at 32 KiB and stops at 64 KiB, and also applies
 10% warning and 20% stop thresholds against each provider request's wire bytes.
 Keep this file focused on reviewer-specific priorities and hard-stop concerns;
-use ordinary repository steering for broader development guidance once common-
-harness discovery lands.
+use ordinary repository steering for broader development guidance.
 
 ## 4. Prepare standards-mode inputs
 

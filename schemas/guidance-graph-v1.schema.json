@@ -37,6 +37,7 @@
       "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
     },
     "targets": {
+      "maxItems": 8192,
       "type": "array",
       "items": {
         "type": "object",
@@ -96,6 +97,7 @@
       }
     },
     "nodes": {
+      "maxItems": 256,
       "type": "array",
       "items": {
         "type": "object",
@@ -137,6 +139,7 @@
             ]
           },
           "applicableTargetIds": {
+            "maxItems": 65536,
             "type": "array",
             "items": {
               "type": "string",
@@ -146,6 +149,7 @@
             }
           },
           "directRecognitions": {
+            "maxItems": 65536,
             "type": "array",
             "items": {
               "type": "object",
@@ -223,6 +227,7 @@
       }
     },
     "occurrences": {
+      "maxItems": 2048,
       "type": "array",
       "items": {
         "type": "object",
@@ -290,6 +295,7 @@
       }
     },
     "edges": {
+      "maxItems": 512,
       "type": "array",
       "items": {
         "type": "object",
@@ -329,6 +335,7 @@
       }
     },
     "diagnostics": {
+      "maxItems": 256,
       "type": "array",
       "items": {
         "type": "object",
