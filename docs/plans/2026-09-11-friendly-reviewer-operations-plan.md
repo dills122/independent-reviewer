@@ -226,9 +226,10 @@ YAML, JSON, glob, brace, and Gitignore libraries behind small family adapters.
 **Progress:** In progress. Canonical direct-source assembly and Codex ancestor
 discovery are implemented: BASE `AGENTS.override.md` wins over `AGENTS.md` per
 directory, selected files apply root-to-target-parent, and multi-source output
-flows through the existing packet, prompt, admission, and resume chain. Remaining
-Claude, Gemini, Kiro, Copilot, Cursor, conditional-matcher, ignore, and import
-adapters remain pending.
+flows through the existing packet, prompt, admission, and resume chain. Claude
+direct files and scoped rules now use strict library-backed YAML frontmatter,
+bounded brace expansion, and patched glob matching. Claude imports plus Gemini,
+Kiro, Copilot, Cursor, and ignore adapters remain pending.
 
 **Acceptance criteria:**
 

@@ -1,5 +1,3 @@
-import { posix } from "node:path";
-
 import {
   buildDirectGuidanceGraphV1,
   createGuidanceDiagnosticV1,
@@ -13,6 +11,7 @@ import {
   GuidanceCaptureError,
   readBaseMarkdownGuidanceSourceV1,
 } from "./base-markdown-source.js";
+import { guidanceAncestorDirectoriesV1, guidancePathInDirectoryV1 } from "./discovery-paths.js";
 
 const MAX_SNAPSHOT_ENTRIES_V1 = 4_096;
 const MAX_GUIDANCE_TARGETS_V1 = 8_192;
@@ -33,17 +32,6 @@ function discoveryLimit(message: string): never {
   );
 }
 
-function ancestorDirectories(path: string): string[] {
-  const parent = posix.dirname(path);
-  if (parent === ".") return [""];
-  const segments = parent.split("/");
-  return ["", ...segments.map((_, index) => segments.slice(0, index + 1).join("/"))];
-}
-
-function instructionPath(directory: string, filename: string): string {
-  return directory.length === 0 ? filename : posix.join(directory, filename);
-}
-
 /** Discovers Codex AGENTS instructions from frozen BASE for every canonical target. */
 export async function captureCodexGuidanceV1(
   repositoryPath: string,
@@ -58,10 +46,12 @@ export async function captureCodexGuidanceV1(
   const candidates = new Set<string>();
   const candidatesByTarget = new Map<string, Array<{ agents: string; override: string }>>();
   for (const target of targets) {
-    const targetCandidates = ancestorDirectories(target.applicabilityPath).map((directory) => ({
-      agents: instructionPath(directory, "AGENTS.md"),
-      override: instructionPath(directory, "AGENTS.override.md"),
-    }));
+    const targetCandidates = guidanceAncestorDirectoriesV1(target.applicabilityPath).map(
+      (directory) => ({
+        agents: guidancePathInDirectoryV1(directory, "AGENTS.md"),
+        override: guidancePathInDirectoryV1(directory, "AGENTS.override.md"),
+      }),
+    );
     for (const candidate of targetCandidates.flatMap(({ agents, override }) => [
       agents,
       override,

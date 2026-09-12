@@ -623,7 +623,11 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
       join(f.repo, "AGENTS.md"),
       "# Harness guidance\n\nKeep error paths explicit.\n",
     );
-    await exec("git", ["-C", f.repo, "add", "AGENTS.md"]);
+    await writeFile(
+      join(f.repo, "CLAUDE.md"),
+      "# Claude guidance\n\nPreserve retry state transitions.\n",
+    );
+    await exec("git", ["-C", f.repo, "add", "AGENTS.md", "CLAUDE.md"]);
     await exec("git", ["-C", f.repo, "commit", "-m", "add harness guidance"]);
     await writeFile(profilePath, request.canonicalInputs.standards[0].content);
     await writeFile(overviewPath, request.authorPacket.overview);
@@ -663,10 +667,11 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
     const inspected = await inspectSnapshotPacket(f.packet);
     assert.deepEqual(
       inspected.guidanceGraph?.nodes.map(({ resolvedPath }) => resolvedPath).sort(),
-      [".independent-reviewer/rules.md", "AGENTS.md"],
+      [".independent-reviewer/rules.md", "AGENTS.md", "CLAUDE.md"],
     );
     assert.match(JSON.stringify(requests[0]?.messages), /Never hide a fallback/);
     assert.match(JSON.stringify(requests[0]?.messages), /Keep error paths explicit/);
+    assert.match(JSON.stringify(requests[0]?.messages), /Preserve retry state transitions/);
     assert.doesNotMatch(JSON.stringify(requests[0]?.messages), /AUTHOR_PRIVATE/);
     assert.match(JSON.stringify(requests.at(-1)?.messages), /AUTHOR_PRIVATE/);
     const metadata = JSON.parse(

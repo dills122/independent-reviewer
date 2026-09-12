@@ -9,6 +9,8 @@ export const MAX_GUIDANCE_SOURCE_BYTES_V1 = 64 * 1024;
 
 export type GuidanceCaptureErrorCode =
   | "GUIDANCE_DISCOVERY_LIMIT_EXCEEDED"
+  | "GUIDANCE_INVALID_FRONTMATTER"
+  | "GUIDANCE_INVALID_PATTERN"
   | "GUIDANCE_INVALID_UTF8"
   | "GUIDANCE_MARKDOWN_PARSE_FAILED"
   | "GUIDANCE_SECRET_CONTENT"
@@ -43,6 +45,25 @@ export interface BaseMarkdownGuidanceSourceV1 {
   contentDigest: DigestV1;
 }
 
+function parseBaseBlobMetadataRecordV1(record: string): {
+  path: string;
+  metadata: BaseGuidanceBlobMetadataV1;
+} {
+  const match = /^(\d{6}) (\w+) ([0-9a-f]{40}|[0-9a-f]{64})\t(.+)$/.exec(record);
+  const mode = match?.[1];
+  const kind = match?.[2];
+  const objectId = match?.[3];
+  const path = match?.[4];
+  if (mode === undefined || kind === undefined || objectId === undefined || path === undefined) {
+    throw new GuidanceCaptureError(
+      "GUIDANCE_UNSUPPORTED_KIND",
+      "AGENTS.md",
+      "Guidance source has invalid BASE object metadata.",
+    );
+  }
+  return { path, metadata: { objectId, mode, kind } };
+}
+
 /** Resolves one exact BASE path without reading its content. */
 export async function baseGuidanceBlobMetadataV1(
   repositoryPath: string,
@@ -52,19 +73,35 @@ export async function baseGuidanceBlobMetadataV1(
   const listing = await runGit(repositoryPath, ["ls-tree", "-z", baseCommit, "--", path], [0]);
   if (listing.stdout.length === 0) return undefined;
   const record = listing.stdout.toString("utf8").replace(/\0$/, "");
-  const match = /^(\d{6}) (\w+) ([0-9a-f]{40}|[0-9a-f]{64})\t(.+)$/.exec(record);
-  const mode = match?.[1];
-  const kind = match?.[2];
-  const objectId = match?.[3];
-  const returnedPath = match?.[4];
-  if (mode === undefined || kind === undefined || objectId === undefined || returnedPath !== path) {
+  const parsed = parseBaseBlobMetadataRecordV1(record);
+  if (parsed.path !== path) {
     throw new GuidanceCaptureError(
       "GUIDANCE_UNSUPPORTED_KIND",
       path,
       `${path} has invalid BASE object metadata.`,
     );
   }
-  return { objectId, mode, kind };
+  return parsed.metadata;
+}
+
+/** Lists frozen BASE entries under one literal repository path without reading content. */
+export async function listBaseGuidanceBlobMetadataV1(
+  repositoryPath: string,
+  baseCommit: string,
+  path: string,
+): Promise<ReadonlyMap<string, BaseGuidanceBlobMetadataV1>> {
+  const listing = await runGit(
+    repositoryPath,
+    ["ls-tree", "-r", "-z", baseCommit, "--", path],
+    [0],
+  );
+  const metadata = new Map<string, BaseGuidanceBlobMetadataV1>();
+  for (const record of listing.stdout.toString("utf8").split("\0")) {
+    if (record.length === 0) continue;
+    const parsed = parseBaseBlobMetadataRecordV1(record);
+    metadata.set(parsed.path, parsed.metadata);
+  }
+  return metadata;
 }
 
 /** Reads, secret-checks, and parses one already-selected frozen BASE Markdown source. */

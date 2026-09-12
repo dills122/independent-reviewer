@@ -4,6 +4,7 @@ import {
   type GuidanceGraphV1,
   type SnapshotManifestV1,
 } from "../contracts/index.js";
+import { captureClaudeGuidanceV1 } from "./claude-discovery.js";
 import { captureCodexGuidanceV1 } from "./codex-discovery.js";
 import { captureReviewerRulesGuidanceV1 } from "./reviewer-rules.js";
 
@@ -19,6 +20,7 @@ export async function captureRepositoryGuidanceV1(
 ): Promise<CapturedRepositoryGuidanceV1> {
   const captures = [
     await captureCodexGuidanceV1(repositoryPath, manifest),
+    await captureClaudeGuidanceV1(repositoryPath, manifest),
     await captureReviewerRulesGuidanceV1(repositoryPath, manifest),
   ];
   const sources: DirectGuidanceSourceInputV1[] = captures.flatMap(({ graph }) =>

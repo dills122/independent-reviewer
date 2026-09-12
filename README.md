@@ -88,6 +88,9 @@ If present in the frozen BASE tree,
 as opaque, highest-priority review guidance after secret and budget admission.
 BASE Codex `AGENTS.md`/`AGENTS.override.md` files are also selected from root to
 each changed file's parent, with overrides winning within their directory.
+Claude `CLAUDE.md`, `.claude/CLAUDE.md`, and applicable
+`.claude/rules/**/*.md` files are selected from BASE using bounded YAML
+frontmatter and path matching. Claude `@path` imports remain planned.
 
 Use the actual base ref for your changes. Live reports default to
 `<target-repository>/.review-runs/<snapshot-id>/review/report.md`.

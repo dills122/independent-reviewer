@@ -85,9 +85,11 @@ The simple flow automatically captures BASE-owned
 `.independent-reviewer/rules.md` when present. It also discovers Codex
 `AGENTS.md`/`AGENTS.override.md` from repository root through each changed
 file's parent, with one file selected per directory and override precedence.
-Claude, Gemini, Kiro, Copilot, and Cursor discovery plus interactive author input
-remain planned. During this transition, pass `--standards` and `--author` to
-each standards-mode review:
+It also selects Claude ancestor `CLAUDE.md`, root `.claude/CLAUDE.md`, and
+applicable `.claude/rules/**/*.md` files using bounded YAML `paths` frontmatter.
+Claude imports and Gemini, Kiro, Copilot, and Cursor discovery plus interactive
+author input remain planned. During this transition, pass `--standards` and
+`--author` to each standards-mode review:
 
 ```sh
 node dist/src/cli.js review \
