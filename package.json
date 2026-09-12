@@ -31,7 +31,9 @@
     "./schemas/standards-report-v2": "./schemas/standards-report-v2.schema.json",
     "./schemas/standards-review-brief-v2": "./schemas/standards-review-brief-v2.schema.json",
     "./schemas/standards-review-request-v2": "./schemas/standards-review-request-v2.schema.json",
-    "./schemas/review-run-config-v3": "./schemas/review-run-config-v3.schema.json"
+    "./schemas/review-run-config-v3": "./schemas/review-run-config-v3.schema.json",
+    "./schemas/simple-review-settings-v1": "./schemas/simple-review-settings-v1.schema.json",
+    "./schemas/resolved-simple-review-settings-v1": "./schemas/resolved-simple-review-settings-v1.schema.json"
   },
   "files": [
     "dist/src",

@@ -116,9 +116,25 @@ export type {
 export {
   OpenRouterProviderRoutingV2Schema,
   permittedModelsV1,
+  ReviewModelSlugV1Schema,
   REVIEW_RUN_CONFIG_V3_JSON_SCHEMA,
   ReviewRunConfigV3Schema,
 } from "./review-run-config.js";
+export type {
+  ResolvedSimpleReviewSettingsV1,
+  ResolveSimpleReviewSettingsInputV1,
+  SimpleReviewSettingsV1,
+} from "./simple-review-settings.js";
+export {
+  RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+  resolveSimpleReviewSettingsV1,
+  ResolvedSimpleReviewSettingsV1Schema,
+  SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+  SimpleReviewSettingsOverridesV1Schema,
+  SimpleReviewSettingsV1Schema,
+  supportedReviewModelsV1,
+  SupportedReviewModelV1Schema,
+} from "./simple-review-settings.js";
 export type {
   ReviewUnitPlanIdentityInputV1,
   ReviewUnitPlanV1,

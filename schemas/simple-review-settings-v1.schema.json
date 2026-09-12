@@ -1,0 +1,36 @@
+{
+  "$id": "urn:independent-reviewer:schema:simple-review-settings:v1",
+  "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "maxCostUsd": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1000
+    },
+    "requireAuthorExplanation": {
+      "type": "boolean"
+    },
+    "discoverRepositorySteering": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "model",
+    "maxCostUsd",
+    "requireAuthorExplanation",
+    "discoverRepositorySteering"
+  ],
+  "additionalProperties": false
+}
