@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -264,4 +264,32 @@ describe("bounded strict JSON file readers", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+});
+
+async function sourceFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(
+    entries.map((entry) => {
+      const path = join(directory, entry.name);
+      return entry.isDirectory()
+        ? sourceFiles(path)
+        : Promise.resolve(path.endsWith(".ts") ? [path] : []);
+    }),
+  );
+  return nested.flat();
+}
+
+it("keeps native JSON.parse limited to reviewed same-process values", async () => {
+  const occurrences: string[] = [];
+  for (const path of await sourceFiles("src")) {
+    const contents = await readFile(path, "utf8");
+    for (const _match of contents.matchAll(/\bJSON\.parse\s*\(/gu)) occurrences.push(path);
+  }
+
+  assert.deepEqual(occurrences.sort(), [
+    "src/contracts/canonical-json.ts",
+    "src/contracts/standards-review.ts",
+    "src/contracts/standards-review.ts",
+    "src/contracts/strict-json.ts",
+  ]);
 });
