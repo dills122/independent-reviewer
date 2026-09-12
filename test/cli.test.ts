@@ -825,10 +825,36 @@ it("prints help and version on stdout without a packet or provider", async () =>
   const printed = output.join("\n");
   assert.match(
     printed,
-    /Usage: independent-reviewer <init\|prepare\|inspect\|review\|resume-final\|config>/,
+    /Usage: independent-reviewer <init\|prepare\|inspect\|review\|resume-final\|config show>/,
   );
   assert.match(printed, /--config <value>/);
   assert.match(printed, /OPENROUTER_API_KEY/);
+});
+
+it("reports the missing config subcommand without entering a paid review path", async () => {
+  const errors: string[] = [];
+  let credentialReads = 0;
+
+  assert.equal(
+    await runCliV1(
+      ["config"],
+      { stdout: () => undefined, stderr: (message) => errors.push(message) },
+      {
+        readOpenRouterApiKey: () => {
+          credentialReads += 1;
+          return "unused";
+        },
+        createProvider: () => {
+          throw new Error("config must not create a provider");
+        },
+      },
+    ),
+    1,
+  );
+
+  assert.equal(credentialReads, 0);
+  assert.match(errors.join("\n"), /config requires a subcommand: show/);
+  assert.match(errors.join("\n"), /Usage: independent-reviewer config show/);
 });
 
 it("reports argument mistakes precisely instead of claiming a value is missing", async () => {
