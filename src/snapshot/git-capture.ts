@@ -187,7 +187,7 @@ const SECRET_CONTENT_MARKERS_V1: ReadonlyArray<{ label: string; pattern: RegExp 
   {
     label: "Slack incoming webhook",
     pattern:
-      /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9]+\/B[A-Za-z0-9]+\/[A-Za-z0-9]{16,}/,
+      /(?:^|[^A-Za-z0-9+.-])https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9]+\/B[A-Za-z0-9]+\/[A-Za-z0-9]{16,}(?=$|[^A-Za-z0-9/_-])/,
   },
   { label: "SendGrid API key", pattern: /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/ },
   // Live keys only: Stripe test keys are routine in fixtures, and excluding those would delete
