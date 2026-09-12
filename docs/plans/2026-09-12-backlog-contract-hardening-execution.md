@@ -23,6 +23,6 @@ Verification: focused red/green tests per work item, then `npm run schemas:write
 `npm run check`, `npm run test:e2e:dry-run`, `npm run audit:dependencies`, and
 `python3 -B scripts/check-ai-context.py --ci` before delivery.
 
-Completion evidence: generated schemas had no drift; `npm run check` passed 462
+Completion evidence: generated schemas had no drift; post-rebase `npm run check` passed 465
 tests and coverage gates; provider-free E2E passed 29 tests; dependency audit
 reported zero vulnerabilities; repository-context CI check passed.
