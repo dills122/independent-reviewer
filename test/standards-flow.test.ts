@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -19,6 +19,11 @@ async function fixture() {
   await git("config", "user.name", "Test");
   await git("config", "user.email", "test@example.invalid");
   await git("config", "commit.gpgsign", "false");
+  await mkdir(join(repo, ".independent-reviewer"));
+  await writeFile(
+    join(repo, ".independent-reviewer", "rules.md"),
+    "# Reviewer rules\n\nNever hide a fallback.\n",
+  );
   await writeFile(join(repo, "code.ts"), "export const value = 1;\n");
   await writeFile(join(repo, ".gitignore"), ".review-runs/\n");
   await git("add", ".");
@@ -408,6 +413,7 @@ test("standards convenience dry-run needs no credentials or provider and leaves 
     );
     assert.equal(result, 0, errors.join("\n"));
     assert.match(output.join("\n"), /Reserved tokens/);
+    assert.doesNotMatch(output.join("\n"), /Reviewer guidance:/);
     assert.doesNotMatch(output.join("\n"), /AUTHOR_PRIVATE/);
     await assert.rejects(readFile(join(f.packet, "review", "final.json")));
   } finally {
@@ -439,9 +445,8 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
       errors.join("\n"),
     );
     const { localReviewDirectory } = await import("../src/cli/standards-input.js");
-    const localSettings = JSON.parse(
-      await readFile(join(await localReviewDirectory(f.repo), "simple-settings.json"), "utf8"),
-    );
+    const simpleSettingsPath = join(await localReviewDirectory(f.repo), "simple-settings.json");
+    const localSettings = JSON.parse(await readFile(simpleSettingsPath, "utf8"));
     assert.deepEqual(localSettings, {
       schemaVersion: 1,
       model: "openai/gpt-oss-120b",
@@ -499,7 +504,165 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
       errors.join("\n"),
     );
     assert.match(output.join("\n"), /Models: openai\/gpt-oss-120b/);
+    assert.match(output.join("\n"), /Reviewer guidance: \d+ content bytes \(ACCEPTED\)/);
     assert.match(output.join("\n"), /No provider calls/);
+
+    await writeFile(
+      simpleSettingsPath,
+      JSON.stringify({ ...localSettings, discoverRepositorySteering: false }),
+    );
+    output.length = 0;
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          profilePath,
+          "--author",
+          overviewPath,
+          "--dry-run",
+        ],
+        io,
+      ),
+      0,
+      errors.join("\n"),
+    );
+    assert.doesNotMatch(output.join("\n"), /Reviewer guidance:/);
+  } finally {
+    await rm(f.repo, { recursive: true, force: true });
+  }
+});
+
+test("simple settings capture BASE reviewer rules through a complete CLI review", async () => {
+  const f = await fixture();
+  const output: string[] = [];
+  const errors: string[] = [];
+  const requests: Parameters<ReviewProviderV1["complete"]>[0][] = [];
+  const io = {
+    stdout: (message: string) => output.push(message),
+    stderr: (message: string) => errors.push(message),
+  };
+  const provider: ReviewProviderV1 = {
+    auditRequest: () => ({
+      providerPolicyVersion: "test",
+      wireBodyDigest: digest,
+      wireBodyBytes: 1,
+      credentialFreeWireRequestDigest: digest,
+    }),
+    complete: async (request) => {
+      requests.push(request);
+      const brief = JSON.parse(request.messages[1]?.content ?? "{}");
+      const common = {
+        snapshotDigest: brief.snapshotManifest.snapshotDigest,
+        briefDigest: brief.briefDigest,
+        summary: "Guidance-aware CLI review completed.",
+        ruleAssessments: [
+          {
+            ruleId: "rule_names",
+            status: "ASSESSED",
+            conflictingRuleIds: [],
+            explanation: "Applied selected naming rule and reviewer guidance.",
+          },
+        ],
+      };
+      const value =
+        request.stage === "PRELIMINARY"
+          ? {
+              ...common,
+              schemaVersion: 2,
+              stage: "PRELIMINARY",
+              inspectedPaths: brief.initialEvidence.map((entry: { path: string }) => entry.path),
+              canonicalInputCoverage: [
+                {
+                  canonicalInputId: "input_standards",
+                  status: "ASSESSED",
+                  explanation: "Applied selected naming rule.",
+                },
+              ],
+              findings: [],
+              evidenceGaps: [],
+              limitations: [],
+              nextAction: "REQUEST_AUTHOR_PACKET",
+            }
+          : {
+              ...common,
+              schemaVersion: 3,
+              stage: "FINAL",
+              mode: "STANDARDS",
+              findings: [],
+              withdrawnPreliminaryFindings: [],
+              preliminaryConcernDispositions: [],
+              authorClaims: [],
+              authorVerificationClaims: [],
+              limitations: [],
+              verdict: "READY",
+              nextActions: { blockers: [], fastFollows: [] },
+            };
+      return {
+        value,
+        rawContent: JSON.stringify(value),
+        responseId: "test",
+        model: request.models[0] as string,
+        provider: "coreweave/fp4",
+        usage: { promptTokens: 100, completionTokens: 100, totalTokens: 200, cost: 0.00001 },
+      };
+    },
+  };
+
+  try {
+    const request = JSON.parse(await readFile(f.requestPath, "utf8"));
+    const profilePath = join(f.repo, "standards.json");
+    const overviewPath = join(f.repo, "author.md");
+    await writeFile(profilePath, request.canonicalInputs.standards[0].content);
+    await writeFile(overviewPath, request.authorPacket.overview);
+    assert.equal(
+      await runCliV1(
+        ["init", "--repo", f.repo, "--model", "openai/gpt-oss-120b", "--max-cost", "0.05"],
+        io,
+      ),
+      0,
+      errors.join("\n"),
+    );
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          profilePath,
+          "--author",
+          overviewPath,
+          "--output",
+          f.packet,
+        ],
+        io,
+        {
+          readOpenRouterApiKey: () => "test-key",
+          createProvider: () => provider,
+        },
+      ),
+      0,
+      errors.join("\n"),
+    );
+
+    const inspected = await inspectSnapshotPacket(f.packet);
+    assert.equal(inspected.guidanceGraph?.nodes[0]?.resolvedPath, ".independent-reviewer/rules.md");
+    assert.match(JSON.stringify(requests[0]?.messages), /Never hide a fallback/);
+    assert.doesNotMatch(JSON.stringify(requests[0]?.messages), /AUTHOR_PRIVATE/);
+    assert.match(JSON.stringify(requests.at(-1)?.messages), /AUTHOR_PRIVATE/);
+    const metadata = JSON.parse(
+      await readFile(join(f.packet, "review", "report-metadata.json"), "utf8"),
+    );
+    assert.deepEqual(metadata.guidanceGraphDigest, inspected.guidanceGraphDigest);
+    assert.equal(metadata.promptVersion, "standards-review-v15");
+    assert.match(output.join("\n"), /Standards satisfied/);
   } finally {
     await rm(f.repo, { recursive: true, force: true });
   }

@@ -29,6 +29,7 @@ import {
 import { jsonDocument } from "./contracts/json-document.js";
 import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
 import { canonicalInputList, ReviewRequestSchema } from "./contracts/standards-review.js";
+import { captureReviewerRulesGuidanceV1 } from "./guidance/reviewer-rules.js";
 import { withReviewProgress } from "./orchestrator/progress.js";
 import {
   preflightReview,
@@ -83,6 +84,17 @@ interface PreparedPacketV1 {
   packetPath: string;
   captured: Awaited<ReturnType<typeof captureGitSnapshotV1>>;
   repositoryRoot: string;
+}
+
+interface PacketPreparationPolicyV1 {
+  expectedConfigId?: string;
+  suppliedConfig?: ReviewRunConfigV3;
+  discoverRepositorySteering?: boolean;
+}
+
+interface ResolvedReviewPolicyV1 {
+  config: ReviewRunConfigV3;
+  discoverRepositorySteering: boolean;
 }
 
 interface CommandOptionSpecV1 {
@@ -356,18 +368,33 @@ async function showSimpleReviewConfigV1(
   io.stdout(jsonDocument(visible).trimEnd());
 }
 
-async function resolveReviewConfigV1(
+async function resolveReviewPolicyV1(
   options: Map<string, string | true>,
-): Promise<ReviewRunConfigV3> {
+): Promise<ResolvedReviewPolicyV1> {
   const configPath = options.get("--config");
   const usesSimpleFlags = options.has("--model") || options.has("--max-cost");
   if (typeof configPath === "string" && usesSimpleFlags) {
     throw new Error("Use either --config or simple model/cost settings, not both.");
   }
   if (typeof configPath === "string") {
-    return ReviewRunConfigV3Schema.parse(JSON.parse(await readFile(resolve(configPath), "utf8")));
+    return {
+      config: ReviewRunConfigV3Schema.parse(
+        JSON.parse(await readFile(resolve(configPath), "utf8")),
+      ),
+      discoverRepositorySteering: false,
+    };
   }
-  return (await resolveSimpleSettingsForOptionsV1(options)).reviewRunConfig;
+  const resolved = await resolveSimpleSettingsForOptionsV1(options);
+  return {
+    config: resolved.reviewRunConfig,
+    discoverRepositorySteering: resolved.settings.discoverRepositorySteering,
+  };
+}
+
+async function resolveReviewConfigV1(
+  options: Map<string, string | true>,
+): Promise<ReviewRunConfigV3> {
+  return (await resolveReviewPolicyV1(options)).config;
 }
 
 function requiredOption(options: Map<string, string | true>, name: string): string {
@@ -427,22 +454,21 @@ async function resolveAdvancedLiveReviewContextV1(
 
 async function preparePacket(
   options: Map<string, string | true>,
-  expectedConfigId?: string,
-  suppliedConfig?: ReviewRunConfigV3,
+  policy: PacketPreparationPolicyV1 = {},
 ): Promise<PreparedPacketV1> {
   const requestOption = options.get("--request");
   if (requestOption && ["--standards", "--author", "--new-flow"].some((key) => options.has(key)))
     throw new Error("Use either --request or standards/author inputs, not both.");
   const assembled = requestOption
     ? undefined
-    : await assembleStandardsRequest(options, suppliedConfig);
+    : await assembleStandardsRequest(options, policy.suppliedConfig);
   const requestPath = typeof requestOption === "string" ? resolve(requestOption) : undefined;
   const request = assembled
     ? assembled.request
     : ReviewRequestSchema.parse(JSON.parse(await readFile(requestPath!, "utf8")));
-  if (expectedConfigId && request.reviewConfigRef !== expectedConfigId) {
+  if (policy.expectedConfigId && request.reviewConfigRef !== policy.expectedConfigId) {
     throw new Error(
-      `Review request config reference ${request.reviewConfigRef} does not match ${expectedConfigId}.`,
+      `Review request config reference ${request.reviewConfigRef} does not match ${policy.expectedConfigId}.`,
     );
   }
   const base = options.get("--base");
@@ -479,7 +505,10 @@ async function preparePacket(
     typeof requestedOutput === "string"
       ? packetRoot
       : join(defaultPacketRoot, captured.manifest.snapshotId);
-  await writeSnapshotPacketV1(packetPath, captured, request);
+  const guidance = policy.discoverRepositorySteering
+    ? await captureReviewerRulesGuidanceV1(repositoryRoot, captured.manifest)
+    : undefined;
+  await writeSnapshotPacketV1(packetPath, captured, request, guidance ? { guidance } : {});
   return {
     packetPath,
     captured,
@@ -601,12 +630,17 @@ async function review(
     if (explicitSimpleSettings && !explicitAdvancedConfig) options.delete("--config");
   }
   if (options.has("--dry-run")) {
-    const config = await resolveReviewConfigV1(options);
+    const policy = await resolveReviewPolicyV1(options);
+    const { config } = policy;
     const temporary = await mkdtemp(join(tmpdir(), "independent-reviewer-preflight-"));
     try {
       const dryOptions = new Map(options);
       dryOptions.set("--output", join(temporary, "packet"));
-      const prepared = await preparePacket(dryOptions, config.configId, config);
+      const prepared = await preparePacket(dryOptions, {
+        expectedConfigId: config.configId,
+        suppliedConfig: config,
+        discoverRepositorySteering: policy.discoverRepositorySteering,
+      });
       const admission = await preflightReview(prepared.packetPath, config);
       io.stdout(
         `Dry-run: ${prepared.captured.manifest.paths.length} changed paths, ${prepared.captured.manifest.exclusions.length} exclusions. No provider calls.`,
@@ -626,17 +660,33 @@ async function review(
       io.stdout(
         `Reserved tokens: ${admission.reservedTokens}; reserved cost: $${admission.reservedCostUsd.toFixed(6)} (not a billed amount).`,
       );
+      if (admission.guidanceAdmission) {
+        io.stdout(
+          `Reviewer guidance: ${admission.guidanceAdmission.contentBytes} content bytes (${admission.guidanceAdmission.status}).`,
+        );
+      }
       return 0;
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
   }
   const hasSimpleFlags = options.has("--model") || options.has("--max-cost");
-  const { config, provider } =
-    typeof options.get("--config") === "string" && !hasSimpleFlags
-      ? await resolveAdvancedLiveReviewContextV1(options, dependencies)
-      : await resolveLiveReviewContextV1(await resolveReviewConfigV1(options), dependencies);
-  const prepared = await preparePacket(options, config.configId, config);
+  const usesAdvancedConfig = typeof options.get("--config") === "string" && !hasSimpleFlags;
+  let policy: ResolvedReviewPolicyV1;
+  let live: { config: ReviewRunConfigV3; provider: ReviewProviderV1 };
+  if (usesAdvancedConfig) {
+    live = await resolveAdvancedLiveReviewContextV1(options, dependencies);
+    policy = { config: live.config, discoverRepositorySteering: false };
+  } else {
+    policy = await resolveReviewPolicyV1(options);
+    live = await resolveLiveReviewContextV1(policy.config, dependencies);
+  }
+  const { config, provider } = live;
+  const prepared = await preparePacket(options, {
+    expectedConfigId: config.configId,
+    suppliedConfig: config,
+    discoverRepositorySteering: policy.discoverRepositorySteering,
+  });
   await warnUnignoredPacketLocation(prepared.repositoryRoot, prepared.packetPath, io);
   io.stdout(`Prepared snapshot packet: ${prepared.packetPath}`);
   if (prepared.claim) {
