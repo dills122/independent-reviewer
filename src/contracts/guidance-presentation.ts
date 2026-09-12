@@ -3,6 +3,9 @@ import { canonicalizeJson } from "./canonical-json.js";
 import { DirectRecognitionV1Schema, GuidanceFamilyV1Schema } from "./guidance-graph.js";
 import { DigestV1Schema, SnapshotPathV1Schema } from "./snapshot-manifest.js";
 import { NonEmptyTextSchema, prefixedIdentifier } from "./primitives.js";
+import { parseStrictJsonV1 } from "./strict-json.js";
+
+const MAX_GUIDANCE_PRESENTATION_BYTES_V1 = 64 * 1024 * 1024;
 
 const GuidancePresentationTargetV1Schema = z.strictObject({
   targetId: prefixedIdentifier("guidance_target"),
@@ -81,7 +84,12 @@ export const CanonicalGuidancePresentationV1Schema = z
   .min(1)
   .superRefine((value, context) => {
     try {
-      const parsed = GuidancePromptPresentationV1Schema.parse(JSON.parse(value));
+      const parsed = GuidancePromptPresentationV1Schema.parse(
+        parseStrictJsonV1(value, {
+          maxBytes: MAX_GUIDANCE_PRESENTATION_BYTES_V1,
+          source: "guidance presentation",
+        }),
+      );
       if (canonicalizeJson(parsed) !== value)
         context.addIssue({
           code: "custom",

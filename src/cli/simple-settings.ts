@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -6,7 +6,8 @@ import {
   SimpleReviewSettingsV1Schema,
 } from "../contracts/simple-review-settings.js";
 import { jsonDocument } from "../contracts/json-document.js";
-import { localReviewDirectory } from "./standards-input.js";
+import { readStrictJsonFileV1 } from "../contracts/strict-json.js";
+import { localReviewDirectory, MAX_LOCAL_JSON_BYTES_V1 } from "./standards-input.js";
 
 const SIMPLE_SETTINGS_FILE_V1 = "simple-settings.json";
 
@@ -15,7 +16,12 @@ export async function readLocalSimpleReviewSettingsV1(
 ): Promise<SimpleReviewSettingsV1 | undefined> {
   const path = join(await localReviewDirectory(repositoryPath), SIMPLE_SETTINGS_FILE_V1);
   try {
-    return SimpleReviewSettingsV1Schema.parse(JSON.parse(await readFile(path, "utf8")));
+    return SimpleReviewSettingsV1Schema.parse(
+      await readStrictJsonFileV1(path, {
+        maxBytes: MAX_LOCAL_JSON_BYTES_V1,
+        source: "local simple review settings",
+      }),
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;

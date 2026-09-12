@@ -6,7 +6,9 @@ import { jsonDocument } from "../contracts/json-document.js";
 import { NonEmptyTextSchema } from "../contracts/primitives.js";
 import { FlowIdSchema } from "../contracts/review-request.js";
 import { ReviewRunConfigV3Schema } from "../contracts/review-run-config.js";
+import { readStrictJsonFileV1 } from "../contracts/strict-json.js";
 import {
+  MAX_EXTERNAL_JSON_BYTES_V1,
   ReviewAuthorSchema,
   StandardsProfileSchema,
   StandardsReviewRequestV2Schema,
@@ -15,6 +17,7 @@ import { resolveRepositoryRootV1 } from "../snapshot/git-capture.js";
 import { runGit } from "../snapshot/git-command.js";
 
 type Options = Map<string, string | true>;
+export const MAX_LOCAL_JSON_BYTES_V1 = 1024 * 1024;
 export const LocalReviewSettingsV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
   config: NonEmptyTextSchema,
@@ -35,7 +38,10 @@ export async function loadLocalSettings(options: Options): Promise<void> {
   const directory = await localReviewDirectory(repo);
   try {
     const settings = LocalReviewSettingsV1Schema.parse(
-      JSON.parse(await readFile(join(directory, "settings.json"), "utf8")),
+      await readStrictJsonFileV1(join(directory, "settings.json"), {
+        maxBytes: MAX_LOCAL_JSON_BYTES_V1,
+        source: "local review settings",
+      }),
     );
     for (const name of ["config", "standards", "author"] as const)
       if (!options.has(`--${name}`)) options.set(`--${name}`, settings[name]);
@@ -53,8 +59,18 @@ export async function saveLocalSettings(options: Options): Promise<string> {
     }),
   );
   const settings = LocalReviewSettingsV1Schema.parse({ schemaVersion: 1, ...paths });
-  ReviewRunConfigV3Schema.parse(JSON.parse(await readFile(settings.config, "utf8")));
-  StandardsProfileSchema.parse(JSON.parse(await readFile(settings.standards, "utf8")));
+  ReviewRunConfigV3Schema.parse(
+    await readStrictJsonFileV1(settings.config, {
+      maxBytes: MAX_LOCAL_JSON_BYTES_V1,
+      source: "review configuration",
+    }),
+  );
+  StandardsProfileSchema.parse(
+    await readStrictJsonFileV1(settings.standards, {
+      maxBytes: MAX_EXTERNAL_JSON_BYTES_V1,
+      source: "standards profile",
+    }),
+  );
   await readAuthor(settings.author);
   const directory = await localReviewDirectory(repo);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -71,8 +87,14 @@ export async function saveLocalSettings(options: Options): Promise<string> {
   return path;
 }
 async function readAuthor(path: string) {
+  if (path.endsWith(".json"))
+    return ReviewAuthorSchema.parse(
+      await readStrictJsonFileV1(path, {
+        maxBytes: MAX_EXTERNAL_JSON_BYTES_V1,
+        source: "author packet",
+      }),
+    );
   const text = await readFile(path, "utf8");
-  if (path.endsWith(".json")) return ReviewAuthorSchema.parse(JSON.parse(text));
   if (!text.trim()) throw new Error("Author overview must not be empty.");
   return ReviewAuthorSchema.parse({ schemaVersion: 2, overview: text, claimedVerification: [] });
 }
@@ -90,13 +112,19 @@ export async function assembleStandardsRequest(
       "Provide --standards, --author and either --config or simple model/cost settings.",
     );
   const profile = StandardsProfileSchema.parse(
-    JSON.parse(await readFile(resolve(standardPath), "utf8")),
+    await readStrictJsonFileV1(resolve(standardPath), {
+      maxBytes: MAX_EXTERNAL_JSON_BYTES_V1,
+      source: "standards profile",
+    }),
   );
   const author = await readAuthor(resolve(authorPath));
   const config =
     suppliedConfig ??
     ReviewRunConfigV3Schema.parse(
-      JSON.parse(await readFile(resolve(configPath as string), "utf8")),
+      await readStrictJsonFileV1(resolve(configPath as string), {
+        maxBytes: MAX_LOCAL_JSON_BYTES_V1,
+        source: "review configuration",
+      }),
     );
   const directory = await localReviewDirectory(repo);
   const pointer = join(directory, "flow.json");
@@ -104,7 +132,12 @@ export async function assembleStandardsRequest(
   let existing = false;
   if (!options.has("--new-flow"))
     try {
-      flowId = FlowStateSchema.parse(JSON.parse(await readFile(pointer, "utf8"))).flowId;
+      flowId = FlowStateSchema.parse(
+        await readStrictJsonFileV1(pointer, {
+          maxBytes: MAX_LOCAL_JSON_BYTES_V1,
+          source: "local review flow state",
+        }),
+      ).flowId;
       existing = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -162,7 +195,12 @@ export async function assembleStandardsRequest(
           await rename(temporary, pointer);
         } else await writeFile(pointer, contents, { flag: "wx", mode: 0o600 });
       } else {
-        const current = FlowStateSchema.parse(JSON.parse(await readFile(pointer, "utf8")));
+        const current = FlowStateSchema.parse(
+          await readStrictJsonFileV1(pointer, {
+            maxBytes: MAX_LOCAL_JSON_BYTES_V1,
+            source: "local review flow state",
+          }),
+        );
         if (current.flowId !== flowId)
           throw new Error("Review flow changed during preparation; rerun against current state.");
       }

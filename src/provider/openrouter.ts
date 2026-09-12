@@ -6,6 +6,7 @@ import {
   sha256Utf8,
   type OpenRouterProviderRoutingV2,
 } from "../contracts/index.js";
+import { parseStrictJsonV1 } from "../contracts/strict-json.js";
 import {
   ProviderCallError,
   type ProviderErrorDiagnosticV1,
@@ -136,7 +137,7 @@ async function readBoundedResponseText(response: Response, maxBytes: number): Pr
     return text;
   }
   const reader = body.getReader();
-  const decoder = new TextDecoder("utf-8");
+  const decoder = new TextDecoder("utf-8", { fatal: true });
   const chunks: string[] = [];
   let byteLength = 0;
   try {
@@ -152,12 +153,30 @@ async function readBoundedResponseText(response: Response, maxBytes: number): Pr
           `OpenRouter response exceeded the ${maxBytes}-byte response cap after ${byteLength} bytes.`,
         );
       }
-      chunks.push(decoder.decode(value, { stream: true }));
+      try {
+        chunks.push(decoder.decode(value, { stream: true }));
+      } catch (error) {
+        throw new ProviderCallError(
+          "INVALID_RESPONSE",
+          "OpenRouter response body was not valid UTF-8.",
+          { cause: error },
+        );
+      }
     }
   } finally {
     await reader.cancel().catch(() => undefined);
   }
-  chunks.push(decoder.decode());
+  try {
+    chunks.push(decoder.decode());
+  } catch (error) {
+    throw new ProviderCallError(
+      "INVALID_RESPONSE",
+      "OpenRouter response body was not valid UTF-8.",
+      {
+        cause: error,
+      },
+    );
+  }
   return chunks.join("");
 }
 
@@ -469,7 +488,29 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
         body: wireBody,
         signal: AbortSignal.timeout(request.timeoutMs),
       });
-      rawBody = await readBoundedResponseText(response, MAX_PROVIDER_RESPONSE_BYTES);
+      try {
+        rawBody = await readBoundedResponseText(response, MAX_PROVIDER_RESPONSE_BYTES);
+      } catch (error) {
+        if (
+          error instanceof ProviderCallError &&
+          error.code === "INVALID_RESPONSE" &&
+          !response.ok
+        ) {
+          throw new ProviderCallError(
+            "PROVIDER_ERROR",
+            `OpenRouter request failed (HTTP ${response.status}); response body could not be admitted.`,
+            {
+              diagnostic: providerErrorDiagnostic(
+                {},
+                { code: response.status },
+                response,
+                this.#apiKey,
+              ),
+            },
+          );
+        }
+        throw error;
+      }
     } catch (error) {
       if (error instanceof ProviderCallError) {
         throw error;
@@ -483,7 +524,10 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
 
     let body: unknown;
     try {
-      body = JSON.parse(rawBody) as unknown;
+      body = parseStrictJsonV1(rawBody, {
+        maxBytes: MAX_PROVIDER_RESPONSE_BYTES,
+        source: "OpenRouter response envelope",
+      });
     } catch (error) {
       if (!response.ok) {
         const diagnostic = providerErrorDiagnostic(
@@ -494,17 +538,17 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
         );
         throw new ProviderCallError(
           "PROVIDER_ERROR",
-          `OpenRouter request failed (HTTP ${response.status}).`,
+          `OpenRouter request failed (HTTP ${response.status}); response body failed strict JSON admission.`,
           {
+            cause: error,
             diagnostic,
-            responseBody: rawBody.replaceAll(this.#apiKey, "[REDACTED]"),
           },
         );
       }
       throw new ProviderCallError(
         "INVALID_RESPONSE",
-        `OpenRouter returned a non-JSON response (HTTP ${response.status}).`,
-        { cause: error, responseBody: rawBody.replaceAll(this.#apiKey, "[REDACTED]") },
+        `OpenRouter response envelope failed strict JSON admission (HTTP ${response.status}).`,
+        { cause: error },
       );
     }
     const responseBody = redactCredential(body, this.#apiKey);
@@ -582,14 +626,17 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
 
     let value: unknown;
     try {
-      value = JSON.parse(content) as unknown;
+      value = parseStrictJsonV1(content, {
+        maxBytes: MAX_PROVIDER_RESPONSE_BYTES,
+        source: "OpenRouter structured completion",
+      });
     } catch (error) {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
-        "OpenRouter returned malformed structured JSON.",
+        "OpenRouter structured completion failed strict JSON admission.",
         {
           cause: error,
-          ...rejectedResponse,
+          ...(metadata === null ? {} : { responseMetadata: metadata }),
         },
       );
     }

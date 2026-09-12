@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdtemp, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
+import { mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -17,6 +17,7 @@ import {
 import {
   assembleStandardsRequest,
   loadLocalSettings,
+  MAX_LOCAL_JSON_BYTES_V1,
   saveLocalSettings,
 } from "./cli/standards-input.js";
 import {
@@ -28,8 +29,10 @@ import {
 } from "./contracts/index.js";
 import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
 import { jsonDocument } from "./contracts/json-document.js";
+import { readStrictJsonFileV1, readStrictJsonLinesFileV1 } from "./contracts/strict-json.js";
 import {
   canonicalInputList,
+  MAX_EXTERNAL_JSON_BYTES_V1,
   type ReviewRequest,
   ReviewRequestSchema,
 } from "./contracts/standards-review.js";
@@ -58,6 +61,8 @@ export interface CliIoV1 {
 
 /** Kept in step with package.json by the version test. */
 const CLI_VERSION_V1 = "0.0.0";
+const MAX_CLI_RUN_RECORD_BYTES_V1 = 64 * 1024 * 1024;
+const MAX_CLI_RUN_RECORD_LINE_BYTES_V1 = 8 * 1024 * 1024;
 
 const processIo: CliIoV1 = {
   stdout: (message) => process.stdout.write(`${message}\n`),
@@ -106,6 +111,12 @@ interface CommandOptionSpecV1 {
 interface CommandSpecV1 {
   summary: string;
   options: Record<string, CommandOptionSpecV1>;
+  subcommand?: string;
+  run(
+    options: Map<string, string | true>,
+    io: CliIoV1,
+    dependencies: CliDependenciesV1,
+  ): Promise<number>;
 }
 
 const SNAPSHOT_PACKET_MARKERS_V1 = [
@@ -114,7 +125,11 @@ const SNAPSHOT_PACKET_MARKERS_V1 = [
   "packet-metadata.json",
 ] as const;
 
-const COMMAND_SPECS_V1: Record<string, CommandSpecV1> = {
+function defineCommandSpecsV1<const T extends Record<string, CommandSpecV1>>(specs: T): T {
+  return specs;
+}
+
+const COMMAND_SPECS_V1 = defineCommandSpecsV1({
   init: {
     summary: "Save local review settings without calling a provider.",
     options: {
@@ -128,6 +143,10 @@ const COMMAND_SPECS_V1: Record<string, CommandSpecV1> = {
       },
       author: { type: "string", description: "Author overview or packet file." },
     },
+    run: async (options, io) => {
+      io.stdout(`Saved review settings: ${await initializeReviewSettingsV1(options)}`);
+      return 0;
+    },
   },
   prepare: {
     summary: "Capture a frozen snapshot packet without contacting a provider.",
@@ -137,12 +156,20 @@ const COMMAND_SPECS_V1: Record<string, CommandSpecV1> = {
       output: { type: "string", description: "Packet directory (default <repo>/.review-runs)." },
       exclude: { type: "string", description: "Comma-separated glob patterns to exclude." },
     },
+    run: async (options, io) => {
+      await prepare(options, io);
+      return 0;
+    },
   },
   inspect: {
     summary: "Validate a packet and report what it contains.",
     options: {
       packet: { type: "string", description: "Path to the snapshot packet.", required: true },
       json: { type: "boolean", description: "Emit the versioned inspection report as JSON." },
+    },
+    run: async (options, io) => {
+      await inspect(options, io);
+      return 0;
     },
   },
   review: {
@@ -165,6 +192,7 @@ const COMMAND_SPECS_V1: Record<string, CommandSpecV1> = {
       output: { type: "string", description: "Packet directory (default <repo>/.review-runs)." },
       exclude: { type: "string", description: "Comma-separated glob patterns to exclude." },
     },
+    run: review,
   },
   "resume-final": {
     summary: "Retry only a final stage that failed with a definite provider error.",
@@ -175,26 +203,45 @@ const COMMAND_SPECS_V1: Record<string, CommandSpecV1> = {
       model: { type: "string", description: "Supported review model profile." },
       "max-cost": { type: "string", description: "Maximum review cost in US dollars." },
     },
+    run: resumeFinal,
   },
   config: {
     summary: "Show simple settings or their resolved runtime policy.",
+    subcommand: "show",
     options: {
       repo: { type: "string", description: "Repository (default current directory)." },
       model: { type: "string", description: "Override supported review model profile." },
       "max-cost": { type: "string", description: "Override maximum review cost." },
       resolved: { type: "boolean", description: "Include complete resolved runtime policy." },
     },
+    run: async (options, io) => {
+      await showSimpleReviewConfigV1(options, io);
+      return 0;
+    },
   },
-};
+});
 
-function usageText(command?: string): string {
-  const commands = Object.keys(COMMAND_SPECS_V1);
-  if (!command || !COMMAND_SPECS_V1[command]) {
+type CommandNameV1 = keyof typeof COMMAND_SPECS_V1;
+
+function isCommandNameV1(command: string): command is CommandNameV1 {
+  return Object.hasOwn(COMMAND_SPECS_V1, command);
+}
+
+function commandUsageV1(command: CommandNameV1): string {
+  const spec: CommandSpecV1 = COMMAND_SPECS_V1[command];
+  return spec.subcommand ? `${command} ${spec.subcommand}` : command;
+}
+
+function usageText(command?: CommandNameV1): string {
+  const commands = Object.keys(COMMAND_SPECS_V1) as CommandNameV1[];
+  if (!command) {
     const lines = [
-      `Usage: independent-reviewer <${commands.join("|")}> [options]`,
+      `Usage: independent-reviewer <${commands.map(commandUsageV1).join("|")}> [options]`,
       "",
       "Commands:",
-      ...commands.map((name) => `  ${name.padEnd(14)}${COMMAND_SPECS_V1[name]?.summary ?? ""}`),
+      ...commands.map(
+        (name) => `  ${commandUsageV1(name).padEnd(14)}${COMMAND_SPECS_V1[name].summary}`,
+      ),
       "",
       "Run 'independent-reviewer <command> --help' for command options.",
       "Set OPENROUTER_API_KEY in the environment for 'review' and 'resume-final'.",
@@ -203,7 +250,7 @@ function usageText(command?: string): string {
   }
   const spec = COMMAND_SPECS_V1[command];
   const lines = [
-    `Usage: independent-reviewer ${command === "config" ? "config show" : command} [options]`,
+    `Usage: independent-reviewer ${commandUsageV1(command)} [options]`,
     "",
     spec.summary,
     "",
@@ -227,11 +274,8 @@ function usageText(command?: string): string {
  * the last one: the configuration this tool runs on is digest-bound, and quietly preferring the
  * second `--config` is the wrong default.
  */
-function parseCommandOptions(command: string, args: string[]): Map<string, string | true> {
-  const spec = COMMAND_SPECS_V1[command];
-  if (!spec) {
-    throw new Error(usageText());
-  }
+function parseCommandOptions(command: CommandNameV1, args: string[]): Map<string, string | true> {
+  const spec: CommandSpecV1 = COMMAND_SPECS_V1[command];
   for (const name of Object.keys(spec.options)) {
     const flag = `--${name}`;
     const count = args.filter(
@@ -379,7 +423,12 @@ async function resolveReviewConfigV1(
     throw new Error("Use either --config or simple model/cost settings, not both.");
   }
   if (typeof configPath === "string") {
-    return ReviewRunConfigV3Schema.parse(JSON.parse(await readFile(resolve(configPath), "utf8")));
+    return ReviewRunConfigV3Schema.parse(
+      await readStrictJsonFileV1(resolve(configPath), {
+        maxBytes: MAX_LOCAL_JSON_BYTES_V1,
+        source: "review configuration",
+      }),
+    );
   }
   return (await resolveSimpleSettingsForOptionsV1(options)).reviewRunConfig;
 }
@@ -435,18 +484,6 @@ async function resolveLiveReviewContextV1(
   return { config, provider: dependencies.createProvider(apiKey, config) };
 }
 
-async function resolveAdvancedLiveReviewContextV1(
-  options: Map<string, string | true>,
-  dependencies: CliDependenciesV1,
-): Promise<{ config: ReviewRunConfigV3; provider: ReviewProviderV1 }> {
-  const apiKey = dependencies.readOpenRouterApiKey();
-  if (!apiKey || apiKey.trim().length === 0) {
-    throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
-  }
-  const config = await resolveReviewConfigV1(options);
-  return { config, provider: dependencies.createProvider(apiKey, config) };
-}
-
 /** The repository's own preference for letting its committed rules steer a review. */
 async function repositoryDiscoversSteeringV1(repositoryPath: string): Promise<boolean> {
   const local = await readLocalSimpleReviewSettingsV1(repositoryPath);
@@ -468,7 +505,12 @@ async function preparePacket(
   if (assembled) request = assembled.request;
   else {
     if (!requestPath) throw new Error("Review request path is required.");
-    request = ReviewRequestSchema.parse(JSON.parse(await readFile(requestPath, "utf8")));
+    request = ReviewRequestSchema.parse(
+      await readStrictJsonFileV1(requestPath, {
+        maxBytes: MAX_EXTERNAL_JSON_BYTES_V1,
+        source: "review request",
+      }),
+    );
   }
   if (policy.expectedConfigId && request.reviewConfigRef !== policy.expectedConfigId) {
     throw new Error(
@@ -692,16 +734,17 @@ async function review(
       await rm(temporary, { recursive: true, force: true });
     }
   }
-  const hasSimpleFlags = options.has("--model") || options.has("--max-cost");
-  const usesAdvancedConfig = typeof options.get("--config") === "string" && !hasSimpleFlags;
-  const live: { config: ReviewRunConfigV3; provider: ReviewProviderV1 } = usesAdvancedConfig
-    ? await resolveAdvancedLiveReviewContextV1(options, dependencies)
-    : await resolveLiveReviewContextV1(await resolveReviewConfigV1(options), dependencies);
-  const { config, provider } = live;
+  const config = await resolveReviewConfigV1(options);
+  const apiKey = dependencies.readOpenRouterApiKey();
+  if (!apiKey || apiKey.trim().length === 0) {
+    throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
+  }
   const prepared = await preparePacket(options, {
     expectedConfigId: config.configId,
     suppliedConfig: config,
   });
+  // Construct provider only after every caller-controlled JSON document has passed strict parsing.
+  const provider = dependencies.createProvider(apiKey, config);
   await warnUnignoredPacketLocation(prepared.repositoryRoot, prepared.packetPath, io);
   io.stdout(`Prepared snapshot packet: ${prepared.packetPath}`);
   if (prepared.claim) {
@@ -720,10 +763,13 @@ async function review(
     );
     io.stdout(`Report: ${result.markdownPath}`);
     if (prepared.standards) {
-      const events = (await readFile(result.runRecordPath, "utf8"))
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const events = (
+        await readStrictJsonLinesFileV1(result.runRecordPath, {
+          maxTotalBytes: MAX_CLI_RUN_RECORD_BYTES_V1,
+          maxLineBytes: MAX_CLI_RUN_RECORD_LINE_BYTES_V1,
+          source: "review run record",
+        })
+      ).map((event) => event as Record<string, unknown>);
       io.stdout(formatRunCost(events));
     }
     return reviewOutcomeExitCodeV1(result.report.verdict);
@@ -737,10 +783,16 @@ async function review(
       else {
         let events: Record<string, unknown>[] = [];
         try {
-          events = (await readFile(join(prepared.packetPath, "review", "run-record.jsonl"), "utf8"))
-            .trim()
-            .split("\n")
-            .map((line) => JSON.parse(line));
+          events = (
+            await readStrictJsonLinesFileV1(
+              join(prepared.packetPath, "review", "run-record.jsonl"),
+              {
+                maxTotalBytes: MAX_CLI_RUN_RECORD_BYTES_V1,
+                maxLineBytes: MAX_CLI_RUN_RECORD_LINE_BYTES_V1,
+                source: "review run record",
+              },
+            )
+          ).map((event) => event as Record<string, unknown>);
         } catch {
           /* Input/preflight may have failed before a ledger exists. */
         }
@@ -830,43 +882,33 @@ export async function runCliV1(
     return 0;
   }
   try {
-    if (!COMMAND_SPECS_V1[command]) {
+    if (!isCommandNameV1(command)) {
       throw new Error(`Unknown command ${command}\n\n${usageText()}`);
     }
-    const commandOptionArgs =
-      command === "config"
-        ? optionArgs[0] === "show"
-          ? optionArgs.slice(1)
-          : optionArgs
-        : optionArgs;
-    if (command === "config" && !["show", "--help", "-h"].includes(optionArgs[0] ?? "")) {
-      throw new Error(`Unknown config command ${optionArgs[0] ?? ""}\n\n${usageText(command)}`);
+    const spec: CommandSpecV1 = COMMAND_SPECS_V1[command];
+    let commandOptionArgs = optionArgs;
+    if (spec.subcommand) {
+      const suppliedSubcommand = optionArgs[0];
+      if (suppliedSubcommand === undefined) {
+        throw new Error(
+          `${command} requires a subcommand: ${spec.subcommand}\n\n${usageText(command)}`,
+        );
+      }
+      if (![spec.subcommand, "--help", "-h"].includes(suppliedSubcommand)) {
+        throw new Error(
+          `Unknown ${command} command ${suppliedSubcommand}\n\n${usageText(command)}`,
+        );
+      }
+      if (suppliedSubcommand === spec.subcommand) {
+        commandOptionArgs = optionArgs.slice(1);
+      }
     }
     if (commandOptionArgs.includes("--help") || commandOptionArgs.includes("-h")) {
       io.stdout(usageText(command));
       return 0;
     }
     const options = parseCommandOptions(command, commandOptionArgs);
-    if (command === "init") {
-      io.stdout(`Saved review settings: ${await initializeReviewSettingsV1(options)}`);
-      return 0;
-    }
-    if (command === "config") {
-      await showSimpleReviewConfigV1(options, io);
-      return 0;
-    }
-    if (command === "prepare") {
-      await prepare(options, io);
-      return 0;
-    }
-    if (command === "inspect") {
-      await inspect(options, io);
-      return 0;
-    }
-    if (command === "review") {
-      return await review(options, io, dependencies);
-    }
-    return await resumeFinal(options, io, dependencies);
+    return await spec.run(options, io, dependencies);
   } catch (error) {
     io.stderr(error instanceof Error ? error.message : "Unknown command failure");
     if (error instanceof ProviderCallError && error.responseMetadata !== null) {

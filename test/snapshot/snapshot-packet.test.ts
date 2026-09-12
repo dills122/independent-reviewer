@@ -199,6 +199,27 @@ describe("snapshot packet store", () => {
     }
   });
 
+  it("rejects duplicate nested manifest properties before identity validation", async () => {
+    const { repositoryPath, request } = await arrangeCapture();
+    const packetPath = join(repositoryPath, ".review-runs", "packet-test");
+    try {
+      const captured = await captureGitSnapshotV1(request);
+      await writeSnapshotPacketV1(packetPath, captured, request);
+      const manifestPath = join(packetPath, "snapshot-manifest.json");
+      const manifest = await readFile(manifestPath, "utf8");
+      const duplicated = manifest.replace(
+        '"snapshotDigest": {\n    "algorithm": "SHA256",',
+        '"snapshotDigest": {\n    "algorithm": "SHA256",\n    "algorithm": "SHA256",',
+      );
+      assert.notEqual(duplicated, manifest);
+      await writeFile(manifestPath, duplicated);
+
+      await assert.rejects(() => inspectSnapshotPacketV1(packetPath), /JSON_DUPLICATE_PROPERTY/);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a packet whose captured blob was changed", async () => {
     const { repositoryPath, request } = await arrangeCapture();
     const packetPath = join(repositoryPath, ".review-runs", "packet-test");

@@ -1689,6 +1689,40 @@ describe("two-stage review orchestrator", () => {
       assert.equal(resumedCalls.length, 0);
       await writeFile(runRecordPath, originalRunRecord);
 
+      const duplicateRunRecord = originalRunRecord.replace(
+        '"type":"RUN_STARTED"',
+        '"type":"RUN_STARTED","type":"RUN_STARTED"',
+      );
+      assert.notEqual(duplicateRunRecord, originalRunRecord);
+      await writeFile(runRecordPath, duplicateRunRecord);
+      await assert.rejects(
+        () => resumeFinalReviewV1(packetPath, config, resumedProvider),
+        /JSON_DUPLICATE_PROPERTY/,
+      );
+      assert.equal(resumedCalls.length, 0);
+      await assert.rejects(readFile(join(packetPath, "review", "final-resume-claim.json")));
+      await writeFile(runRecordPath, originalRunRecord);
+
+      const acceptedProviderPath = join(
+        packetPath,
+        "review",
+        "preliminary-repair-provider-response.json",
+      );
+      const acceptedProviderDocument = await readFile(acceptedProviderPath, "utf8");
+      const acceptedProvider = JSON.parse(acceptedProviderDocument) as { rawContent: string };
+      acceptedProvider.rawContent = acceptedProvider.rawContent.replace(
+        '"schemaVersion":1',
+        '"schemaVersion":1,"schemaVersion":1',
+      );
+      await writeFile(acceptedProviderPath, `${JSON.stringify(acceptedProvider)}\n`);
+      await assert.rejects(
+        () => resumeFinalReviewV1(packetPath, config, resumedProvider),
+        /JSON_DUPLICATE_PROPERTY/,
+      );
+      assert.equal(resumedCalls.length, 0);
+      await assert.rejects(readFile(join(packetPath, "review", "final-resume-claim.json")));
+      await writeFile(acceptedProviderPath, acceptedProviderDocument);
+
       const result = await resumeFinalReviewV1(packetPath, config, resumedProvider);
 
       assert.equal(result.report.verdict, "READY");

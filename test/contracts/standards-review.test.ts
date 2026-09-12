@@ -8,6 +8,7 @@ import {
 } from "../../src/contracts/neutral-review-brief.js";
 import {
   contractJsonSchema,
+  StandardsCanonicalInputsV2Schema,
   StandardsProfileSchema,
   StandardsProfileV1Schema,
   STANDARDS_PROFILE_V2_JSON_SCHEMA,
@@ -75,6 +76,95 @@ test("selected standards reject duplicate rule identities and empty applicabilit
     StandardsProfileV1Schema.safeParse({ ...profile, rules: [{ ...profile.rules[0], paths: [] }] })
       .success,
     false,
+  );
+});
+
+function standardsInput(id: string, content: string) {
+  return {
+    id,
+    kind: "PROJECT_GUIDANCE" as const,
+    title: id,
+    content,
+    provenance: { type: "INLINE" as const, label: id },
+  };
+}
+
+test("standards input reports strict JSON and schema failures distinctly with field paths", () => {
+  const duplicateJson = StandardsCanonicalInputsV2Schema.safeParse({
+    standards: [
+      standardsInput(
+        "input_duplicate_json",
+        JSON.stringify(profile).replace('"schemaVersion":1', '"schemaVersion":1,"schemaVersion":1'),
+      ),
+    ],
+  });
+  assert.equal(duplicateJson.success, false);
+  if (duplicateJson.success) return;
+  assert.match(duplicateJson.error.issues[0]?.message ?? "", /JSON_DUPLICATE_PROPERTY/);
+
+  const malformedJson = StandardsCanonicalInputsV2Schema.safeParse({
+    standards: [standardsInput("input_malformed_json", "{")],
+  });
+  assert.equal(malformedJson.success, false);
+  if (malformedJson.success) return;
+  assert.match(malformedJson.error.issues[0]?.message ?? "", /JSON_SYNTAX/);
+
+  const invalidProfile = StandardsCanonicalInputsV2Schema.safeParse({
+    standards: [
+      standardsInput(
+        "input_invalid_profile",
+        JSON.stringify({
+          ...profile,
+          rules: [{ ...profile.rules[0], paths: [] }],
+        }),
+      ),
+    ],
+  });
+  assert.equal(invalidProfile.success, false);
+  if (invalidProfile.success) return;
+  assert.deepEqual(invalidProfile.error.issues[0]?.path, [
+    "standards",
+    0,
+    "content",
+    "rules",
+    0,
+    "paths",
+  ]);
+  assert.doesNotMatch(invalidProfile.error.issues[0]?.message ?? "", /JSON_/);
+});
+
+test("standards conflicts name the identifier and first defining input", () => {
+  const result = StandardsCanonicalInputsV2Schema.safeParse({
+    standards: [
+      standardsInput("input_first", JSON.stringify(profile)),
+      standardsInput("input_second", JSON.stringify({ ...profile, name: "Second profile" })),
+    ],
+  });
+
+  assert.equal(result.success, false);
+  if (result.success) return;
+  assert.deepEqual(result.error.issues[0]?.path, ["standards", 1, "content"]);
+  assert.match(result.error.issues[0]?.message ?? "", /rule_layering/);
+  assert.match(result.error.issues[0]?.message ?? "", /input_first/);
+  assert.match(result.error.issues[0]?.message ?? "", /index 0/);
+});
+
+test("a conflicting profile does not poison a later blameless profile", () => {
+  const ruleA = { ...profile.rules[0], id: "rule_a" };
+  const ruleB = { ...profile.rules[0], id: "rule_b" };
+  const result = StandardsCanonicalInputsV2Schema.safeParse({
+    standards: [
+      standardsInput("input_p0", JSON.stringify({ ...profile, rules: [ruleA] })),
+      standardsInput("input_p1", JSON.stringify({ ...profile, rules: [ruleB, ruleA] })),
+      standardsInput("input_p2", JSON.stringify({ ...profile, rules: [ruleB] })),
+    ],
+  });
+
+  assert.equal(result.success, false);
+  if (result.success) return;
+  assert.deepEqual(
+    result.error.issues.map((issue) => issue.path),
+    [["standards", 1, "content"]],
   );
 });
 

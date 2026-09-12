@@ -402,6 +402,174 @@ describe("OpenRouterProviderV1", () => {
     assert.deepEqual(result.rawResponseBody, rawResponseBody);
   });
 
+  it("rejects ambiguous or non-strict OpenRouter envelopes without retaining their bodies", async () => {
+    const apiKey = "synthetic-credential";
+    const validChoice = '"choices":[{"finish_reason":"stop","message":{"content":"{}"}}]';
+    const cases = [
+      `{${validChoice},"duplicate":"first","duplicate":"second"}`,
+      `{${validChoice},"sentinel":"safe","\\u0073entinel":"${apiKey}"}`,
+      `{${validChoice},/* sentinel ${apiKey} */"commented":true}`,
+      `{${validChoice},"trailing":true,}`,
+      `{${validChoice},"malformed":}`,
+    ];
+
+    for (const rawBody of cases) {
+      const provider = new OpenRouterProviderV1(apiKey, providerRouting, async () =>
+        Promise.resolve(
+          new Response(rawBody, {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        ),
+      );
+
+      await assert.rejects(
+        () => provider.complete(request),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderCallError);
+          assert.equal(error.code, "INVALID_RESPONSE");
+          assert.match(error.message, /strict JSON admission/i);
+          assert.doesNotMatch(error.message, /synthetic-credential|sentinel|duplicate|commented/);
+          assert.equal(error.responseBody, null);
+          assert.equal(error.responseMetadata, null);
+          assert.equal(error.diagnostic, null);
+          return true;
+        },
+      );
+    }
+  });
+
+  it("rejects ambiguous or non-strict structured completions without retaining the envelope", async () => {
+    const apiKey = "synthetic-credential";
+    const contents = [
+      '{"duplicate":"first","duplicate":"second"}',
+      `{"sentinel":"safe","\\u0073entinel":"${apiKey}"}`,
+      `{"ok":true/* sentinel ${apiKey} */}`,
+      '{"ok":true,}',
+      '{"ok":',
+    ];
+
+    for (const content of contents) {
+      const provider = new OpenRouterProviderV1(apiKey, providerRouting, async () =>
+        Response.json({
+          id: "generation-non-strict",
+          model: "vendor/model",
+          provider: "Mock Provider",
+          choices: [{ finish_reason: "stop", message: { content } }],
+          usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30, cost: 0.003 },
+        }),
+      );
+
+      await assert.rejects(
+        () => provider.complete(request),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderCallError);
+          assert.equal(error.code, "INVALID_RESPONSE");
+          assert.match(error.message, /strict JSON admission/i);
+          assert.doesNotMatch(error.message, /synthetic-credential|sentinel|duplicate/);
+          assert.equal(error.responseBody, null);
+          assert.deepEqual(error.responseMetadata, {
+            responseId: "generation-non-strict",
+            model: "vendor/model",
+            provider: "Mock Provider",
+            finishReason: "stop",
+            usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30, cost: 0.003 },
+          });
+          assert.equal(error.diagnostic, null);
+          return true;
+        },
+      );
+    }
+  });
+
+  it("rejects invalid UTF-8 response bytes without accepting or retaining replacement text", async () => {
+    const prefix = new TextEncoder().encode(
+      '{"choices":[{"finish_reason":"stop","message":{"content":"{}"}}],"extension":"',
+    );
+    const suffix = new TextEncoder().encode('"}');
+    const bytes = new Uint8Array(prefix.byteLength + 1 + suffix.byteLength);
+    bytes.set(prefix);
+    bytes[prefix.byteLength] = 0xff;
+    bytes.set(suffix, prefix.byteLength + 1);
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+      Promise.resolve(
+        new Response(bytes, {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    await assert.rejects(
+      () => provider.complete(request),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.code, "INVALID_RESPONSE");
+        assert.match(error.message, /UTF-8/i);
+        assert.doesNotMatch(error.message, /\uFFFD/);
+        assert.equal(error.responseBody, null);
+        assert.equal(error.responseMetadata, null);
+        assert.equal(error.diagnostic, null);
+        return true;
+      },
+    );
+  });
+
+  it("preserves HTTP 429 retry diagnostics when its response body is invalid UTF-8", async () => {
+    const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () =>
+      Promise.resolve(
+        new Response(new Uint8Array([0xff]), {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "7" },
+        }),
+      ),
+    );
+
+    await assert.rejects(
+      () => provider.complete(request),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.code, "PROVIDER_ERROR");
+        assert.match(error.message, /HTTP 429/);
+        assert.doesNotMatch(error.message, /UTF-8|encoded|decoder|0xff/i);
+        assert.equal(error.cause, undefined);
+        assert.equal(error.responseBody, null);
+        assert.equal(error.responseMetadata, null);
+        assert.equal(error.diagnostic?.httpStatus, 429);
+        assert.equal(error.diagnostic?.providerErrorCode, "429");
+        assert.equal(error.diagnostic?.retryAfter, "7");
+        return true;
+      },
+    );
+  });
+
+  it("keeps a safe HTTP diagnostic when a rejected error envelope fails strict admission", async () => {
+    const apiKey = "synthetic-credential";
+    const provider = new OpenRouterProviderV1(apiKey, providerRouting, async () =>
+      Promise.resolve(
+        new Response(`{"sentinel":"${apiKey}","sentinel":"hidden"}`, {
+          status: 429,
+          headers: { "content-type": "application/json", "retry-after": "12" },
+        }),
+      ),
+    );
+
+    await assert.rejects(
+      () => provider.complete(request),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderCallError);
+        assert.equal(error.code, "PROVIDER_ERROR");
+        assert.match(error.message, /HTTP 429/);
+        assert.doesNotMatch(error.message, /synthetic-credential|sentinel|hidden/);
+        assert.equal(error.responseBody, null);
+        assert.equal(error.diagnostic?.httpStatus, 429);
+        assert.equal(error.diagnostic?.providerErrorCode, "429");
+        assert.equal(error.diagnostic?.retryAfter, "12");
+        return true;
+      },
+    );
+  });
+
   it("retains the raw provider body when the usable completion content is missing", async () => {
     const rawResponseBody = {
       id: "generation-invalid",

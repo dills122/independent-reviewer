@@ -49,14 +49,47 @@ describe("review run configuration schemas", () => {
     assert.equal(parsed.data?.budgets.maxAttemptsPerCall, 3);
   });
 
-  it("rejects a duplicated or aliased model in the fallback chain", () => {
+  it("rejects a duplicated model in the fallback chain", () => {
     const duplicateModel = structuredClone(validConfig);
     duplicateModel.fallbackModels = ["vendor/model"];
     assert.equal(ReviewRunConfigV3Schema.safeParse(duplicateModel).success, false);
+  });
 
-    const aliased = structuredClone(validConfig);
-    aliased.fallbackModels = ["vendor/model:latest"];
-    assert.equal(ReviewRunConfigV3Schema.safeParse(aliased).success, false);
+  it("rejects dynamic aliases and automatic routers case-insensitively", () => {
+    const dynamicModels = [
+      "vendor/model:latest",
+      "vendor/model:PREVIEW",
+      "vendor/model:Beta",
+      "vendor/model:ONLINE",
+      "vendor/model:Floor",
+      "vendor/model:NITRO",
+      "openrouter/auto",
+      "OpenRouter/AUTO-BETA",
+      "~anthropic/claude-opus-latest",
+      "~Google/Gemini-Pro-LATEST:NITRO",
+    ];
+
+    for (const dynamicModel of dynamicModels) {
+      const config = structuredClone(validConfig);
+      config.fallbackModels = [dynamicModel];
+      assert.equal(
+        ReviewRunConfigV3Schema.safeParse(config).success,
+        false,
+        `${dynamicModel} must not pass as a pinned model identity`,
+      );
+    }
+  });
+
+  it("accepts pinned model slugs that contain auto as ordinary text", () => {
+    for (const pinnedModel of ["vendor/automatic-reviewer-2026-09-01", "vendor/auto-model-1"]) {
+      const config = structuredClone(validConfig);
+      config.model = pinnedModel;
+      assert.equal(
+        ReviewRunConfigV3Schema.safeParse(config).success,
+        true,
+        `${pinnedModel} must remain eligible as an explicit model identity`,
+      );
+    }
   });
 
   it("requires an explicit order before a run may pin away its failover", () => {
