@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted; first syntax-backed slice implemented
+Accepted; syntax-backed planning and bounded source-context materialization implemented
 
 ## Date
 
@@ -64,12 +64,26 @@ without transmitting raw runtime errors or host paths. Resume
 rebuilds and verifies the plan against the frozen packet before reusing the
 preliminary assessment.
 
+Unified hunks retain conventional three-line diff context, while the neutral
+brief also materializes exact, citable `SOURCE_CONTEXT` windows around changed
+BASE and HEAD lines. Windows use a language-neutral 12-line radius, merge when
+they overlap, and consume the same initial-evidence budget before unchanged
+supporting sources. Budget-dropped windows become explicit evidence constraints
+rather than hidden omissions. Review-unit declaration ownership remains seeded
+from actual diff lines; supplemental context must not make an adjacent
+declaration look changed.
+
 ## Consequences
 
 Review input now tells the reviewer which evidence belongs together and names
 the exact enclosing declarations without making a model choose coverage.
 Unsupported languages retain deterministic file-level units; adding an adapter
 does not change orchestration or report contracts.
+
+Reviewers also receive nearby changed-file behavior beyond a unified hunk's
+three context lines without receiving an entire large file. Those lines are
+part of the digest-bound brief, so existing citation validation can accept or
+reject findings against exactly what the reviewer saw.
 
 WASM is about 1.4 times slower than native Tree-sitter in the local synthetic
 spike, but absolute parsing time is small beside provider latency. Current

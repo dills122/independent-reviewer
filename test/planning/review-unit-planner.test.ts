@@ -22,7 +22,11 @@ const digest = (character: string) => ({
 });
 
 function briefFixture(
-  options: { additionalEvidence?: boolean; transmitSupportingContext?: boolean } = {},
+  options: {
+    additionalEvidence?: boolean;
+    sourceContext?: boolean;
+    transmitSupportingContext?: boolean;
+  } = {},
 ): ReviewBrief {
   const canonicalInputs = {
     requirements: [
@@ -151,6 +155,22 @@ function briefFixture(
             },
           ]
         : []),
+      ...(options.sourceContext
+        ? [
+            {
+              type: "SOURCE_CONTEXT" as const,
+              evidenceId: "evidence_service_context",
+              path: "src/service.py",
+              side: "HEAD" as const,
+              startLine: 1,
+              endLine: 8,
+              content: Array.from({ length: 8 }, (_, index) => `context ${index + 1}`).join("\n"),
+              digest: computeInitialEvidenceContentDigestV1(
+                Array.from({ length: 8 }, (_, index) => `context ${index + 1}`).join("\n"),
+              ),
+            },
+          ]
+        : []),
     ],
     referencedSources:
       options.transmitSupportingContext === false
@@ -226,6 +246,29 @@ function contextMapFixture() {
         },
         producerId: "producer_fixture",
         displayName: "service",
+      },
+      {
+        regionId: "region_service_other_function",
+        origin: "CHANGED_PATH",
+        path: "src/service.py",
+        side: "HEAD",
+        fileDigest: digest("4"),
+        byteLength: 120,
+        role: "SOURCE",
+        languageId: "python",
+        kind: "DECLARATION",
+        range: {
+          coordinateUnit: "UTF16_CODE_UNIT",
+          startOffset: 21,
+          endOffsetExclusive: 40,
+          contentByteLength: 19,
+          startLine: 5,
+          startColumn: 0,
+          endLine: 6,
+          endColumn: 0,
+        },
+        producerId: "producer_fixture",
+        displayName: "other",
       },
     ],
     relations: [
@@ -303,6 +346,16 @@ describe("planReviewUnitsV1", () => {
     assert.deepEqual(plan.units[0]?.supportingRegionIds, ["region_contract_head"]);
     assert.deepEqual(plan.units[0]?.relationIds, ["relation_service_contract"]);
     assert.equal(verifyReviewUnitPlanIdentityV1(plan), true);
+  });
+
+  it("does not treat supplemental source context as changed lines", () => {
+    const brief = briefFixture({ sourceContext: true });
+    const plan = planReviewUnitsV1(brief, contextMapFixture(), {
+      policyVersion: "review-unit-planner-v1",
+      maxSupportingBytesPerUnit: 1_024,
+    });
+
+    assert.deepEqual(plan.units[0]?.primaryRegionIds, ["region_service_function"]);
   });
 
   it("records budget overflow instead of silently dropping related context", () => {

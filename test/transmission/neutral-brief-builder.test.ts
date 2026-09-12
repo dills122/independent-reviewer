@@ -177,10 +177,11 @@ describe("buildReviewBrief diff evidence", () => {
     );
 
     const brief = await buildReviewBrief(packetPath, 32_000);
+    const diff = brief.initialEvidence.find((evidence) => evidence.type === "DIFF_HUNK");
 
-    assert.equal(brief.initialEvidence.length, 1);
+    assert.ok(diff);
     assert.equal(
-      brief.initialEvidence[0]?.content,
+      diff.content,
       [
         "Change: MODIFIED reviewed.ts",
         "Evidence form: UNIFIED_HUNKS",
@@ -196,6 +197,55 @@ describe("buildReviewBrief diff evidence", () => {
         " line 44",
         " line 45",
       ].join("\n"),
+    );
+  });
+
+  it("adds bounded changed-file context beyond the unified hunk", async () => {
+    const beforeLines = Array.from({ length: 80 }, (_, index) => `line ${index + 1}`);
+    beforeLines[52] = "expected outcome near the changed code";
+    const afterLines = [...beforeLines];
+    afterLines[41] = "line 42 changed";
+    const packetPath = await arrangePacket(
+      `${beforeLines.join("\n")}\n`,
+      `${afterLines.join("\n")}\n`,
+    );
+
+    const brief = await buildReviewBrief(packetPath, 32_000);
+    const diff = brief.initialEvidence.find((evidence) => evidence.type === "DIFF_HUNK");
+    const headContext = brief.initialEvidence.find(
+      (evidence) => evidence.type === "SOURCE_CONTEXT" && evidence.side === "HEAD",
+    );
+
+    assert.ok(diff);
+    assert.equal(headContext?.type, "SOURCE_CONTEXT");
+    if (headContext?.type !== "SOURCE_CONTEXT") throw new Error("Expected HEAD source context.");
+    assert.doesNotMatch(diff.content, /expected outcome near the changed code/);
+    assert.match(headContext.content, /expected outcome near the changed code/);
+    assert.equal(headContext.startLine, 30);
+    assert.equal(headContext.endLine, 54);
+  });
+
+  it("declares bounded changed-file context that does not fit the evidence budget", async () => {
+    const beforeLines = Array.from({ length: 80 }, (_, index) => `line ${index + 1}`);
+    const afterLines = [...beforeLines];
+    afterLines[41] = "line 42 changed";
+    const packetPath = await arrangePacket(
+      `${beforeLines.join("\n")}\n`,
+      `${afterLines.join("\n")}\n`,
+    );
+
+    const brief = await buildReviewBrief(packetPath, 350);
+
+    assert.deepEqual(
+      brief.coverageConstraints.filter((constraint) => constraint.type === "EVIDENCE_BUDGET"),
+      [
+        {
+          type: "EVIDENCE_BUDGET",
+          detail:
+            "Bounded changed-file context was not transmitted, so nearby behavior outside the unified hunk is unavailable to this review.",
+          paths: ["reviewed.ts"],
+        },
+      ],
     );
   });
 

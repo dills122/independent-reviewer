@@ -66,7 +66,9 @@ function primaryRegionsForPath(
   contextMap: ReviewContextMapV1,
 ): string[] {
   const changedLines = { BASE: new Set<number>(), HEAD: new Set<number>() };
-  for (const item of evidence) {
+  const diffEvidence = evidence.filter((item) => item.type === "DIFF_HUNK");
+  const seedEvidence = diffEvidence.length > 0 ? diffEvidence : evidence;
+  for (const item of seedEvidence) {
     const itemLines = changedLinesBySide(item);
     for (const line of itemLines.BASE) changedLines.BASE.add(line);
     for (const line of itemLines.HEAD) changedLines.HEAD.add(line);
