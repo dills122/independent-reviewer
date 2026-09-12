@@ -137,7 +137,7 @@ async function readBoundedResponseText(response: Response, maxBytes: number): Pr
     return text;
   }
   const reader = body.getReader();
-  const decoder = new TextDecoder("utf-8");
+  const decoder = new TextDecoder("utf-8", { fatal: true });
   const chunks: string[] = [];
   let byteLength = 0;
   try {
@@ -153,12 +153,30 @@ async function readBoundedResponseText(response: Response, maxBytes: number): Pr
           `OpenRouter response exceeded the ${maxBytes}-byte response cap after ${byteLength} bytes.`,
         );
       }
-      chunks.push(decoder.decode(value, { stream: true }));
+      try {
+        chunks.push(decoder.decode(value, { stream: true }));
+      } catch (error) {
+        throw new ProviderCallError(
+          "INVALID_RESPONSE",
+          "OpenRouter response body was not valid UTF-8.",
+          { cause: error },
+        );
+      }
     }
   } finally {
     await reader.cancel().catch(() => undefined);
   }
-  chunks.push(decoder.decode());
+  try {
+    chunks.push(decoder.decode());
+  } catch (error) {
+    throw new ProviderCallError(
+      "INVALID_RESPONSE",
+      "OpenRouter response body was not valid UTF-8.",
+      {
+        cause: error,
+      },
+    );
+  }
   return chunks.join("");
 }
 
@@ -594,7 +612,10 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
         "OpenRouter structured completion failed strict JSON admission.",
-        { cause: error },
+        {
+          cause: error,
+          ...(metadata === null ? {} : { responseMetadata: metadata }),
+        },
       );
     }
 
