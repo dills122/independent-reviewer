@@ -19,6 +19,11 @@ export {
   REVIEWER_RULES_PATH_V1,
 } from "./guidance/reviewer-rules.js";
 export { renderGuidancePromptPresentationV1 } from "./guidance/presentation.js";
+export {
+  evaluateGuidanceAdmissionV1,
+  GUIDANCE_CONTENT_STOP_BYTES_V1,
+  GUIDANCE_CONTENT_WARNING_BYTES_V1,
+} from "./orchestrator/guidance-admission.js";
 export type {
   TwoStageReviewResult,
   TwoStageReviewResultV1,

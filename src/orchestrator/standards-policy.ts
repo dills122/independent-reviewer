@@ -11,7 +11,7 @@ export function assertStandardsFindings(
   findings: ReviewPreliminary["findings"] | ReviewReport["findings"],
   brief: ReviewBrief,
 ): void {
-  if (brief.schemaVersion !== 2) return;
+  if (brief.schemaVersion === 1) return;
   const rules = new Map(selectedRules(brief.canonicalInputs).map((rule) => [rule.id, rule]));
   for (const finding of findings) {
     if (!("ruleIds" in finding))
@@ -43,7 +43,7 @@ export function assertStandardsRuleCoverage(
   result: ReviewPreliminary | ReviewReport,
   brief: ReviewBrief,
 ): void {
-  if (brief.schemaVersion !== 2 || result.schemaVersion !== 2) return;
+  if (brief.schemaVersion === 1 || result.schemaVersion !== 2) return;
   const expected = new Set(selectedRules(brief.canonicalInputs).map((rule) => rule.id));
   const entries = new Map(result.ruleAssessments.map((entry) => [entry.ruleId, entry]));
   if (
