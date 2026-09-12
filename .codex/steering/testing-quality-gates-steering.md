@@ -11,10 +11,11 @@ project placeholders, and unconditional requirements for optional CCE tools.
 ## Application gates
 
 Use Node.js 24 and the committed npm lockfile. `npm run check` runs formatting,
-lint, strict type checking, build, and the Node.js test suite. Run focused tests
-during a red-green-refactor cycle and the complete command before committing.
-Generated JSON Schema artifacts must match the runtime schemas in the same
-change.
+lint, strict type checking, build, and the Node.js test suite with minimum 90%
+line, 80% branch, and 90% function coverage. `npm run test:e2e:dry-run` runs the
+provider-free CLI preparation and review dry runs. Run focused tests during a
+red-green-refactor cycle and the complete command before committing. Generated
+JSON Schema artifacts must match the runtime schemas in the same change.
 
 The initial application suite covers strict `ReviewRequestV1`,
 `SnapshotManifestV1`, and `NeutralReviewBriefV1` parsing; cumulative
@@ -55,7 +56,8 @@ retransmission cannot invalidate an already admitted mandatory-call token budget
 
 ## Committed repository gate
 
-Run `python3 -B scripts/check-ai-context.py --ci` and `npm run check` for the
-clean-clone checks used by GitHub Actions. Run the Python command without `--ci`
-to additionally verify local AI Central links. See
-`docs/repository-governance.md` for merge rules and required checks.
+Run `python3 -B scripts/check-ai-context.py --ci`, `npm run check`,
+`npm run test:e2e:dry-run`, and `npm run audit:dependencies` for the clean-clone
+checks used by GitHub Actions. Run the Python command without `--ci` to
+additionally verify local AI Central links. See `docs/repository-governance.md`
+for merge rules and required checks.

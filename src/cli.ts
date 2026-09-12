@@ -28,7 +28,11 @@ import {
 } from "./contracts/index.js";
 import { jsonDocument } from "./contracts/json-document.js";
 import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
-import { canonicalInputList, ReviewRequestSchema } from "./contracts/standards-review.js";
+import {
+  canonicalInputList,
+  type ReviewRequest,
+  ReviewRequestSchema,
+} from "./contracts/standards-review.js";
 import { captureReviewerRulesGuidanceV1 } from "./guidance/reviewer-rules.js";
 import { withReviewProgress } from "./orchestrator/progress.js";
 import {
@@ -212,9 +216,10 @@ function usageText(command?: string): string {
   for (const [name, option] of Object.entries(spec.options)) {
     const valueHint = option.type === "string" ? " <value>" : "";
     const requirement = option.required ? " (required)" : "";
-    lines.push(`  --${name}${valueHint}`.padEnd(24) + `${option.description}${requirement}`);
+    const optionLabel = `  --${name}${valueHint}`.padEnd(24);
+    lines.push(`${optionLabel}${option.description}${requirement}`);
   }
-  lines.push("  --help".padEnd(24) + "Print this message.");
+  lines.push(`${"  --help".padEnd(24)}Print this message.`);
   return lines.join("\n");
 }
 
@@ -463,9 +468,12 @@ async function preparePacket(
     ? undefined
     : await assembleStandardsRequest(options, policy.suppliedConfig);
   const requestPath = typeof requestOption === "string" ? resolve(requestOption) : undefined;
-  const request = assembled
-    ? assembled.request
-    : ReviewRequestSchema.parse(JSON.parse(await readFile(requestPath!, "utf8")));
+  let request: ReviewRequest;
+  if (assembled) request = assembled.request;
+  else {
+    if (!requestPath) throw new Error("Review request path is required.");
+    request = ReviewRequestSchema.parse(JSON.parse(await readFile(requestPath, "utf8")));
+  }
   if (policy.expectedConfigId && request.reviewConfigRef !== policy.expectedConfigId) {
     throw new Error(
       `Review request config reference ${request.reviewConfigRef} does not match ${policy.expectedConfigId}.`,
@@ -753,7 +761,7 @@ async function review(
           error.diagnostic?.httpStatus === 429 &&
           JSON.stringify(events.map((event) => event.type)) === JSON.stringify(eligibleShape)
         ) {
-          const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+          const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
           const resumeConfig =
             typeof options.get("--config") === "string"
               ? `--config ${quote(resolve(requiredOption(options, "--config")))}`
