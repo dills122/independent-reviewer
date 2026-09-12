@@ -21,18 +21,18 @@ import {
 } from "../contracts/standards-review.js";
 import { mapWithConcurrencyV1 } from "./concurrency.js";
 import {
+  DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+  decodeGitText,
+  decodeNulFields,
+  runGit,
+} from "./git-command.js";
+import {
   classifyPathV1,
   isReviewableRoleV1,
   type PathGitAttributesV1,
   type PathRoleV1,
 } from "./path-classification.js";
 import { resolveReferencedPathsV1 } from "./referenced-sources.js";
-import {
-  DEFAULT_GIT_COMMAND_TIMEOUT_MS,
-  decodeGitText,
-  decodeNulFields,
-  runGit,
-} from "./git-command.js";
 
 export type SnapshotCaptureErrorCode =
   | "AMBIGUOUS_BASE"
@@ -174,22 +174,60 @@ export function isSecretPathV1(path: string): boolean {
   );
 }
 
-/** Names the first credential marker found in captured content, if any. */
-export function secretContentMarkerV1(bytes: Uint8Array): string | undefined {
-  if (bytes.includes(0)) {
-    return undefined;
+/**
+ * Outcome of scanning one file's bytes for credentials.
+ *
+ * `NOT_SCANNED` exists because "no marker found" and "never looked" are different facts, and
+ * collapsing them into one `undefined` is what let a UTF-16 source file carrying a private key
+ * through the content policy (#92). A caller that admits content must record the difference.
+ */
+export type SecretScanResultV1 =
+  | { readonly status: "CLEAN" }
+  | { readonly status: "MARKER"; readonly label: string }
+  | { readonly status: "NOT_SCANNED"; readonly reason: "UNDECODABLE" };
+
+/** Minimum share of NUL bytes before an even-length file is treated as UTF-16 without a BOM. */
+const UTF16_NUL_SHARE_V1 = 0.2;
+
+/**
+ * The text encoding a file's bytes plausibly carry, or undefined when nothing is decodable.
+ *
+ * UTF-8 without NUL is the common case. Otherwise a byte-order mark decides, and failing that a
+ * strong NUL-interleaving pattern does: every NUL at an odd offset means UTF-16LE, every NUL at an
+ * even offset means UTF-16BE. Anything else is left undecoded rather than scanned as garbage, so
+ * the result is an honest `NOT_SCANNED` instead of a false `CLEAN`.
+ */
+function textEncodingOf(bytes: Uint8Array): "utf-8" | "utf-16le" | "utf-16be" | undefined {
+  if (!bytes.includes(0)) return "utf-8";
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) return "utf-16le";
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) return "utf-16be";
+  if (bytes.length % 2 !== 0) return undefined;
+  let odd = 0;
+  let even = 0;
+  for (let index = 0; index < bytes.length; index += 1) {
+    if (bytes[index] !== 0) continue;
+    if (index % 2 === 0) even += 1;
+    else odd += 1;
   }
-  let text: string;
-  try {
-    text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  } catch {
-    return undefined;
-  }
+  const share = (odd + even) / bytes.length;
+  if (share < UTF16_NUL_SHARE_V1) return undefined;
+  if (even === 0) return "utf-16le";
+  if (odd === 0) return "utf-16be";
+  return undefined;
+}
+
+/** Scans captured content for credential markers, in whichever text encoding it carries. */
+export function secretContentScanV1(bytes: Uint8Array): SecretScanResultV1 {
+  const encoding = textEncodingOf(bytes);
+  if (!encoding) return { status: "NOT_SCANNED", reason: "UNDECODABLE" };
+  // A non-fatal decoder substitutes U+FFFD rather than throwing, so there is no failure to catch.
+  const text = new TextDecoder(encoding, { fatal: false }).decode(bytes);
   const scanText = KNOWN_PUBLIC_CREDENTIAL_EXAMPLES_V1.reduce(
     (candidate, example) => candidate.replaceAll(example, ""),
     text,
   );
-  return SECRET_CONTENT_MARKERS_V1.find(({ pattern }) => pattern.test(scanText))?.label;
+  const marker = SECRET_CONTENT_MARKERS_V1.find(({ pattern }) => pattern.test(scanText))?.label;
+  return marker ? { status: "MARKER", label: marker } : { status: "CLEAN" };
 }
 
 /**
@@ -502,13 +540,16 @@ async function captureReferencedSources(
         });
       continue;
     }
-    const secretMarker = secretContentMarkerV1(side.bytes);
-    if (secretMarker) {
+    const scan = secretContentScanV1(side.bytes);
+    if (scan.status !== "CLEAN") {
       if (requiredExplicitPaths.has(path) || importedReferencePaths.has(path))
         options.omissions.push({
           scope: path,
           reason: requiredExplicitPaths.has(path) ? "CAPTURE_FAILED" : "OTHER",
-          detail: `${requiredExplicitPaths.has(path) ? "Required BASE reference" : "Referenced source"} omitted by capture-v2 content policy: ${secretMarker} detected.`,
+          detail:
+            scan.status === "MARKER"
+              ? `${requiredExplicitPaths.has(path) ? "Required BASE reference" : "Referenced source"} omitted by capture-v2 content policy: ${scan.label} detected.`
+              : `${requiredExplicitPaths.has(path) ? "Required BASE reference" : "Referenced source"} omitted; its bytes decode in no supported text encoding, so the content policy could not scan it.`,
         });
       continue;
     }
@@ -830,16 +871,18 @@ async function collectState(
       continue;
     }
     // Content scanning happens after the read and before anything is admitted to the manifest, so
-    // a credential pasted into ordinary source never reaches a blob the packet would transmit.
-    const secretMarker = [before, after]
+    // a credential pasted into ordinary source never reaches a blob the packet would store. A side
+    // whose bytes decode in no supported text encoding is admitted unscanned, and says so: the
+    // alternative was reporting it as clean (#92).
+    const scans = [before, after]
       .filter((side): side is CapturedSide => typeof side === "object" && side !== null)
-      .map((side) => secretContentMarkerV1(side.bytes))
-      .find((marker) => marker !== undefined);
-    if (secretMarker) {
+      .map((side) => secretContentScanV1(side.bytes));
+    const marker = scans.find((scan) => scan.status === "MARKER");
+    if (marker?.status === "MARKER") {
       exclusions.push({
         path: spec.path,
         reason: "SECRET_CONTENT",
-        detail: `Excluded by capture-v2 content policy: ${secretMarker} detected.`,
+        detail: `Excluded by capture-v2 content policy: ${marker.label} detected.`,
       });
       continue;
     }
@@ -867,6 +910,17 @@ async function collectState(
       continue;
     }
     roles.set(spec.path, declaredRole);
+    // Recorded after admission, so a path the classifier drops anyway is not also reported as
+    // admitted-unscanned. A reviewable path that no supported encoding decodes reaches the packet
+    // without the content policy having cleared it, and the manifest has to say so (#92).
+    if (scans.some((scan) => scan.status === "NOT_SCANNED")) {
+      omissions.push({
+        scope: spec.path,
+        reason: "OTHER",
+        detail:
+          "Admitted without a credential content scan; its bytes decode in no supported text encoding.",
+      });
+    }
 
     const unavailable =
       before === "SIZE_LIMIT" || after === "SIZE_LIMIT"

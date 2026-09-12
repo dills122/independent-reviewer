@@ -444,6 +444,65 @@ describe("captureGitSnapshotV1", () => {
     }
   });
 
+  it("excludes a credential in a NUL-dense encoding and keeps its bytes out of the packet", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/utf16-secret");
+      const source = `export const token = "${syntheticAwsAccessKeyId}";\n`;
+      // Regression for #92: the content scan short-circuited on any NUL byte, so this file read as
+      // clean, classified as SOURCE from its extension, and had its key written into blobs/.
+      await writeFile(join(repositoryPath, "utf16.ts"), Buffer.from(source, "utf16le"));
+      await writeFile(join(repositoryPath, "kept.ts"), "ordinary source\n");
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const byPath = new Map(
+        captured.manifest.exclusions.map((entry) => [entry.path, entry.reason]),
+      );
+
+      assert.equal(byPath.get("utf16.ts"), "SECRET_CONTENT");
+      assert.equal(
+        captured.manifest.paths.some((entry) => entry.path === "utf16.ts"),
+        false,
+      );
+      assert.equal(
+        [...captured.blobs.values()].some((bytes) =>
+          Buffer.from(bytes).toString("utf16le").includes(syntheticAwsAccessKeyId),
+        ),
+        false,
+      );
+      assert.equal(
+        captured.manifest.paths.some((entry) => entry.path === "kept.ts"),
+        true,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("records an omission for a reviewable path no supported encoding decodes", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/undecodable");
+      // NULs on both parities, so neither UTF-16 orientation explains them and the content policy
+      // cannot clear the file. It is still reviewable by extension, so the manifest must say the
+      // scan did not run rather than imply it passed.
+      await writeFile(
+        join(repositoryPath, "undecodable.ts"),
+        Buffer.from([0x41, 0x00, 0x42, 0x00, 0x00, 0x43, 0x44, 0x00]),
+      );
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const omission = captured.manifest.omissions.find(
+        (entry) => entry.scope === "undecodable.ts",
+      );
+
+      assert.equal(omission?.reason, "OTHER");
+      assert.match(omission?.detail ?? "", /without a credential content scan/);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("keeps synthetic secret-scanner fixtures reviewable", async () => {
     const repositoryPath = await createRepository();
     try {

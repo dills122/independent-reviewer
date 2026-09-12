@@ -5,10 +5,10 @@ import {
   buildReviewerRulesGuidanceGraphV1,
   createGuidanceDiagnosticV1,
   type GuidanceGraphV1,
-  sha256BytesDigestV1,
   type SnapshotManifestV1,
+  sha256BytesDigestV1,
 } from "../contracts/index.js";
-import { isSecretPathV1, secretContentMarkerV1 } from "../snapshot/git-capture.js";
+import { isSecretPathV1, secretContentScanV1 } from "../snapshot/git-capture.js";
 import { runGit } from "../snapshot/git-command.js";
 
 export const REVIEWER_RULES_PATH_V1 = ".independent-reviewer/rules.md";
@@ -148,13 +148,22 @@ export async function captureReviewerRulesGuidanceV1(
   if (!source) {
     return { graph: buildReviewerRulesGuidanceGraphV1(manifest), blobs: new Map() };
   }
-  const marker = secretContentMarkerV1(source.bytes);
-  if (marker) {
+  // Guidance fails closed on anything the content policy could not clear: an unscannable source is
+  // rejected rather than admitted, since this text goes into the prompt as instructions.
+  const scan = secretContentScanV1(source.bytes);
+  if (scan.status === "MARKER") {
     throw new GuidanceCaptureError(
       "GUIDANCE_SECRET_CONTENT",
       REVIEWER_RULES_PATH_V1,
-      `${REVIEWER_RULES_PATH_V1} is rejected by the snapshot secret-content policy (${marker}).`,
-      marker,
+      `${REVIEWER_RULES_PATH_V1} is rejected by the snapshot secret-content policy (${scan.label}).`,
+      scan.label,
+    );
+  }
+  if (scan.status === "NOT_SCANNED") {
+    throw new GuidanceCaptureError(
+      "GUIDANCE_INVALID_UTF8",
+      REVIEWER_RULES_PATH_V1,
+      `${REVIEWER_RULES_PATH_V1} decodes in no supported text encoding, so it cannot be scanned for credentials.`,
     );
   }
   const content = parseWholeMarkdown(source.bytes);
