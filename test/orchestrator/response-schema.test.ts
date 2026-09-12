@@ -220,11 +220,28 @@ describe("constrainResponseSchemaV1", () => {
     const { schema } = constrainResponseSchemaV1(PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA, options);
 
     assert.equal(rootProperty(schema, "findings").maxItems, 40);
-    assert.equal(rootProperty(schema, "inspectedPaths").maxItems, 2);
+    const inspectedPaths = rootProperty(schema, "inspectedPaths");
+    assert.equal(inspectedPaths.maxItems, 2);
+    assert.deepEqual((inspectedPaths.items as { enum?: string[] }).enum, options.evidencePaths);
     assert.deepEqual(
       nodesNamed(schema, "evidence").map((node) => node.maxItems),
       [8],
     );
+  });
+
+  it("allows every transmitted rename-side path in the inspected ledger", () => {
+    const { schema } = constrainResponseSchemaV1(PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA, {
+      ...options,
+      changedPaths: ["src/new-name.ts"],
+      evidencePaths: ["src/new-name.ts", "src/old-name.ts"],
+    });
+
+    const inspectedPaths = rootProperty(schema, "inspectedPaths");
+    assert.equal(inspectedPaths.maxItems, 2);
+    assert.deepEqual((inspectedPaths.items as { enum?: string[] }).enum, [
+      "src/new-name.ts",
+      "src/old-name.ts",
+    ]);
   });
 
   it("fails loudly when the schema no longer exposes the expected shape", () => {

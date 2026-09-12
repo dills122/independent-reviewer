@@ -76,6 +76,7 @@ import {
 import {
   assertFindingsUseTransmittedEvidenceV1,
   transmittedEvidencePathsV1,
+  transmittedLineEvidenceV1,
 } from "./transmitted-evidence.js";
 
 export interface TwoStageReviewResultV1 {
@@ -1251,6 +1252,7 @@ function preliminaryRepairMessagesV1(
   blindMessages: ReviewMessageV1[],
   rejectedRawContent: string,
   validationError: string,
+  acceptedLineEvidence: ReturnType<typeof transmittedLineEvidenceV1>,
 ): ReviewMessageV1[] {
   return [
     ...blindMessages,
@@ -1261,8 +1263,9 @@ function preliminaryRepairMessagesV1(
         schemaVersion: 1,
         type: "PRELIMINARY_OUTPUT_REPAIR",
         instruction:
-          "Return one complete corrected blind preliminary assessment under the same schema. Change only what is needed to resolve every listed validation error; preserve supported review judgments and do not infer or request author context.",
+          "Return one complete corrected blind preliminary assessment under the same schema. Change only what is needed to resolve every listed validation error; preserve supported review judgments and do not infer or request author context. Copy inspected paths exactly from the schema. LINE_RANGE evidence may use only a path, side, and range wholly contained within one range in acceptedLineEvidence. Omit a finding when no listed range supports it; never move a citation to nearby lines.",
         validationError,
+        acceptedLineEvidence,
       }),
     },
   ];
@@ -1326,6 +1329,7 @@ async function validatePreliminaryStageV1(
       blindMessages,
       initialResponse.rawContent,
       validationError,
+      transmittedLineEvidenceV1(brief),
     );
     assertConversationBudget(repairMessages, config.budgets.maxConversationBytes);
     const repairInputTokens = conservativeInputTokenUpperBound(repairMessages, responseSchema);
@@ -2636,6 +2640,7 @@ export async function resumeFinalReview(
       blindMessages,
       rejectedProvider.rawContent,
       rejected.validationError,
+      transmittedLineEvidenceV1(brief),
     );
     const repairRequest = {
       stage: "PRELIMINARY" as const,

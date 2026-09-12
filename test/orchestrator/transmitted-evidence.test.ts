@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import type { ReviewBrief } from "../../src/contracts/neutral-review-brief.js";
 import {
   assertFindingsUseTransmittedEvidenceV1,
+  transmittedLineEvidenceV1,
   transmittedEvidencePathsV1,
 } from "../../src/orchestrator/transmitted-evidence.js";
 
@@ -62,6 +63,13 @@ function symbolEvidence(side: "BASE" | "HEAD", symbol: string) {
 }
 
 describe("assertFindingsUseTransmittedEvidenceV1", () => {
+  it("summarizes exact accepted line ranges without source text", () => {
+    assert.deepEqual(transmittedLineEvidenceV1(diffBrief), [
+      { path: "src/example.ts", side: "BASE", ranges: [{ startLine: 10, endLine: 11 }] },
+      { path: "src/example.ts", side: "HEAD", ranges: [{ startLine: 10, endLine: 11 }] },
+    ]);
+  });
+
   it("keeps a transmitted rename source available for BASE citations", () => {
     const renamed = {
       ...diffBrief,

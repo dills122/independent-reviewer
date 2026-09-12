@@ -1,6 +1,7 @@
 import parseDiff from "parse-diff";
 
 import type { ReviewBrief } from "../contracts/neutral-review-brief.js";
+import { compareUtf16 } from "../contracts/primitives.js";
 import type { ReviewFindingV1 } from "../contracts/review-results.js";
 
 interface VisibleSourceV1 {
@@ -8,6 +9,12 @@ interface VisibleSourceV1 {
   side: "BASE" | "HEAD";
   lines: ReadonlySet<number>;
   text: string;
+}
+
+export interface TransmittedLineEvidenceV1 {
+  path: string;
+  side: VisibleSourceV1["side"];
+  ranges: Array<{ startLine: number; endLine: number }>;
 }
 
 function sourcePath(label: string | undefined, side: VisibleSourceV1["side"], fallback: string) {
@@ -85,6 +92,37 @@ export function transmittedEvidencePathsV1(brief: ReviewBrief): string[] {
     }
   }
   return [...paths].sort();
+}
+
+/** Content-free ledger of exact contiguous line ranges accepted as finding evidence. */
+export function transmittedLineEvidenceV1(brief: ReviewBrief): TransmittedLineEvidenceV1[] {
+  const grouped = new Map<
+    string,
+    Pick<VisibleSourceV1, "path" | "side"> & { lines: Set<number> }
+  >();
+  for (const source of visibleSources(brief)) {
+    if (source.lines.size === 0) continue;
+    const key = JSON.stringify([source.path, source.side]);
+    const existing = grouped.get(key);
+    if (existing) {
+      for (const line of source.lines) existing.lines.add(line);
+    } else {
+      grouped.set(key, { path: source.path, side: source.side, lines: new Set(source.lines) });
+    }
+  }
+  return [...grouped.values()]
+    .sort(
+      (left, right) => compareUtf16(left.path, right.path) || compareUtf16(left.side, right.side),
+    )
+    .map(({ path, side, lines }) => {
+      const ranges: TransmittedLineEvidenceV1["ranges"] = [];
+      for (const line of [...lines].sort((left, right) => left - right)) {
+        const last = ranges.at(-1);
+        if (last && line === last.endLine + 1) last.endLine = line;
+        else ranges.push({ startLine: line, endLine: line });
+      }
+      return { path, side, ranges };
+    });
 }
 
 /** Rejects source coordinates the provider could not have read from the frozen payload. */
