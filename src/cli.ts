@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import type * as z from "zod";
 import {
   createProgressOutput,
   formatRunCost,
@@ -22,7 +21,11 @@ import {
   ReviewRunConfigV3Schema,
 } from "./contracts/index.js";
 import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
-import { canonicalInputList, ReviewRequestSchema } from "./contracts/standards-review.js";
+import {
+  canonicalInputList,
+  type ReviewRequest,
+  ReviewRequestSchema,
+} from "./contracts/standards-review.js";
 import { withReviewProgress } from "./orchestrator/progress.js";
 import {
   preflightReview,
@@ -179,9 +182,10 @@ function usageText(command?: string): string {
   for (const [name, option] of Object.entries(spec.options)) {
     const valueHint = option.type === "string" ? " <value>" : "";
     const requirement = option.required ? " (required)" : "";
-    lines.push(`  --${name}${valueHint}`.padEnd(24) + `${option.description}${requirement}`);
+    const optionLabel = `  --${name}${valueHint}`.padEnd(24);
+    lines.push(`${optionLabel}${option.description}${requirement}`);
   }
-  lines.push("  --help".padEnd(24) + "Print this message.");
+  lines.push(`${"  --help".padEnd(24)}Print this message.`);
   return lines.join("\n");
 }
 
@@ -298,9 +302,12 @@ async function preparePacket(
     throw new Error("Use either --request or standards/author inputs, not both.");
   const assembled = requestOption ? undefined : await assembleStandardsRequest(options);
   const requestPath = typeof requestOption === "string" ? resolve(requestOption) : undefined;
-  const request = assembled
-    ? assembled.request
-    : ReviewRequestSchema.parse(JSON.parse(await readFile(requestPath!, "utf8")));
+  let request: ReviewRequest;
+  if (assembled) request = assembled.request;
+  else {
+    if (!requestPath) throw new Error("Review request path is required.");
+    request = ReviewRequestSchema.parse(JSON.parse(await readFile(requestPath, "utf8")));
+  }
   if (expectedConfigId && request.reviewConfigRef !== expectedConfigId) {
     throw new Error(
       `Review request config reference ${request.reviewConfigRef} does not match ${expectedConfigId}.`,
@@ -554,7 +561,7 @@ async function review(
           error.diagnostic?.httpStatus === 429 &&
           JSON.stringify(events.map((event) => event.type)) === JSON.stringify(eligibleShape)
         ) {
-          const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+          const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
           io.stderr(
             `A final-only retry may be available. This command revalidates eligibility: independent-reviewer resume-final --packet ${quote(prepared.packetPath)} --config ${quote(resolve(requiredOption(options, "--config")))}`,
           );
