@@ -226,6 +226,38 @@ describe("bounded strict JSON file readers", () => {
     }
   });
 
+  it("rejects an empty first line without splitting the whole newline-heavy input", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "strict-jsonl-newlines-"));
+    const path = join(directory, "empty-lines.jsonl");
+    const newlineHeavyInput = "\n".repeat(4_096);
+    const originalSplit = String.prototype.split;
+
+    try {
+      await writeFile(path, newlineHeavyInput, "utf8");
+      String.prototype.split = function (separator, limit): string[] {
+        if (separator === "\n" && this.length === newlineHeavyInput.length) {
+          throw new Error("whole-input newline split attempted");
+        }
+        return Reflect.apply(originalSplit, this, [separator, limit]) as string[];
+      };
+
+      await assert.rejects(
+        readStrictJsonLinesFileV1(path, {
+          maxTotalBytes: newlineHeavyInput.length,
+          maxLineBytes: 16,
+          source: "newline-heavy JSONL fixture",
+        }),
+        (error: unknown) =>
+          error instanceof StrictJsonErrorV1 &&
+          error.code === "JSON_SYNTAX" &&
+          error.physicalLine === 1,
+      );
+    } finally {
+      String.prototype.split = originalSplit;
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("reports the physical JSONL line for syntax and duplicate failures", async () => {
     const directory = await mkdtemp(join(tmpdir(), "strict-jsonl-location-"));
     try {

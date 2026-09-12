@@ -210,13 +210,14 @@ export async function readStrictJsonLinesFileV1(
 ): Promise<readonly unknown[]> {
   assertByteCap(options.maxLineBytes, "maxLineBytes");
   const text = await readBoundedUtf8FileV1(path, options.maxTotalBytes, options.source);
-  const lines = text.split("\n");
-  if (lines.at(-1) === "") {
-    lines.pop();
-  }
+  const values: unknown[] = [];
+  let lineStart = 0;
+  let physicalLine = 1;
 
-  return lines.map((lineWithPossibleCarriageReturn, index) => {
-    const physicalLine = index + 1;
+  while (lineStart < text.length) {
+    const newlineIndex = text.indexOf("\n", lineStart);
+    const lineEnd = newlineIndex === -1 ? text.length : newlineIndex;
+    const lineWithPossibleCarriageReturn = text.slice(lineStart, lineEnd);
     const line = lineWithPossibleCarriageReturn.endsWith("\r")
       ? lineWithPossibleCarriageReturn.slice(0, -1)
       : lineWithPossibleCarriageReturn;
@@ -225,10 +226,12 @@ export async function readStrictJsonLinesFileV1(
     }
 
     try {
-      return parseStrictJsonV1(line, {
-        maxBytes: options.maxLineBytes,
-        source: options.source,
-      });
+      values.push(
+        parseStrictJsonV1(line, {
+          maxBytes: options.maxLineBytes,
+          source: options.source,
+        }),
+      );
     } catch (error) {
       if (!(error instanceof StrictJsonErrorV1)) {
         throw error;
@@ -241,5 +244,13 @@ export async function readStrictJsonLinesFileV1(
         error.cause instanceof Error ? error.cause : undefined,
       );
     }
-  });
+
+    if (newlineIndex === -1) {
+      break;
+    }
+    lineStart = newlineIndex + 1;
+    physicalLine += 1;
+  }
+
+  return values;
 }
