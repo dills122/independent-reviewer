@@ -158,14 +158,48 @@ const SECRET_DIRECTORIES_V1 = new Set([".ssh", ".aws", ".gnupg", ".docker"]);
  * a key pasted into ordinary source, configuration, or a test fixture.
  */
 const SECRET_CONTENT_MARKERS_V1: ReadonlyArray<{ label: string; pattern: RegExp }> = [
+  // Key material. Deliberately matches a header without its END marker: a partially pasted key is
+  // still a leaked key, and a truncated paste is a common way one reaches a repository.
   { label: "PEM private key block", pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----\r?\n/ },
   { label: "PGP private key block", pattern: /-----BEGIN PGP PRIVATE KEY BLOCK-----\r?\n/ },
-  { label: "AWS access key id", pattern: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
+  { label: "PuTTY private key", pattern: /\bPuTTY-User-Key-File-\d+:/ },
+  // Cloud. The IAM prefix list is the full documented set, not just long-term user keys.
+  {
+    label: "AWS access key id",
+    pattern: /\b(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA)[0-9A-Z]{16}\b/,
+  },
+  { label: "Azure storage account key", pattern: /\bAccountKey=[A-Za-z0-9+/]{60,}={0,2}/ },
+  { label: "Google API key", pattern: /\bAIza[0-9A-Za-z_-]{35}\b/ },
+  { label: "Google OAuth client secret", pattern: /\bGOCSPX-[A-Za-z0-9_-]{20,}\b/ },
+  // Model providers. This product ships evidence to one, so its own key formats matter most.
+  { label: "OpenAI-style API key", pattern: /\bsk-[A-Za-z0-9]{20,}\b/ },
+  { label: "OpenAI project key", pattern: /\bsk-(?:proj|admin|svcacct)-[A-Za-z0-9_-]{20,}/ },
+  { label: "Anthropic API key", pattern: /\bsk-ant-api\d{2}-[A-Za-z0-9_-]{20,}/ },
+  { label: "Groq API key", pattern: /\bgsk_[A-Za-z0-9]{40,}\b/ },
+  { label: "Hugging Face token", pattern: /\bhf_[A-Za-z0-9]{30,}\b/ },
+  // Forges and registries.
   { label: "GitHub token", pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\b/ },
   { label: "GitHub fine-grained token", pattern: /\bgithub_pat_[A-Za-z0-9_]{22,}\b/ },
+  { label: "GitLab access token", pattern: /\bglpat-[A-Za-z0-9_-]{20,}\b/ },
+  { label: "npm access token", pattern: /\bnpm_[A-Za-z0-9]{36}\b/ },
+  // SaaS.
   { label: "Slack token", pattern: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/ },
-  { label: "Google API key", pattern: /\bAIza[0-9A-Za-z_-]{35}\b/ },
-  { label: "OpenAI-style API key", pattern: /\bsk-[A-Za-z0-9]{20,}\b/ },
+  {
+    label: "Slack incoming webhook",
+    pattern:
+      /https:\/\/hooks\.slack\.com\/services\/T[A-Za-z0-9]+\/B[A-Za-z0-9]+\/[A-Za-z0-9]{16,}/,
+  },
+  { label: "SendGrid API key", pattern: /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/ },
+  // Live keys only: Stripe test keys are routine in fixtures, and excluding those would delete
+  // ordinary review evidence for no security gain.
+  { label: "Stripe live key", pattern: /\b(?:sk|rk)_live_[A-Za-z0-9]{16,}\b/ },
+  { label: "Notion integration token", pattern: /\bntn_[A-Za-z0-9]{40,}\b/ },
+  // Credentials embedded in a connection URL, which is how database passwords usually leak. The
+  // 8-character minimum keeps `http://user:pass@` style documentation placeholders out.
+  {
+    label: "URL with embedded credentials",
+    pattern: /\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:[^\s:@/]{8,}@/,
+  },
 ];
 
 /** Public dummy credentials that should not make test or documentation evidence disappear. */
