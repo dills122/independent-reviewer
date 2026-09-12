@@ -1,0 +1,422 @@
+{
+  "$id": "urn:independent-reviewer:schema:guidance-graph:v1",
+  "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "graphId": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 128,
+      "pattern": "^guidance_[A-Za-z0-9][A-Za-z0-9_-]*$"
+    },
+    "snapshotDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "baseCommit": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "targetId": {
+            "type": "string",
+            "minLength": 17,
+            "maxLength": 128,
+            "pattern": "^guidance_target_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "manifestPath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "applicabilityPath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "side": {
+            "type": "string",
+            "enum": [
+              "BASE",
+              "HEAD"
+            ]
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "PRIMARY",
+              "RELOCATION_SOURCE"
+            ]
+          },
+          "changeType": {
+            "type": "string",
+            "enum": [
+              "ADDED",
+              "COPIED",
+              "DELETED",
+              "MODIFIED",
+              "RENAMED",
+              "TYPE_CHANGED",
+              "UNTRACKED"
+            ]
+          }
+        },
+        "required": [
+          "targetId",
+          "manifestPath",
+          "applicabilityPath",
+          "side",
+          "role",
+          "changeType"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "sourceId": {
+            "type": "string",
+            "minLength": 17,
+            "maxLength": 128,
+            "pattern": "^guidance_source_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "resolvedPath": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "contentDigest": {
+            "type": "object",
+            "properties": {
+              "algorithm": {
+                "type": "string",
+                "const": "SHA256"
+              },
+              "value": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "algorithm",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          "semanticTier": {
+            "type": "string",
+            "enum": [
+              "REPOSITORY_PEER",
+              "REVIEWER_SPECIFIC"
+            ]
+          },
+          "applicableTargetIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 17,
+              "maxLength": 128,
+              "pattern": "^guidance_target_[A-Za-z0-9][A-Za-z0-9_-]*$"
+            }
+          },
+          "directRecognitions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "familyId": {
+                  "type": "string",
+                  "enum": [
+                    "CODEX",
+                    "CLAUDE",
+                    "GEMINI",
+                    "KIRO",
+                    "COPILOT",
+                    "CURSOR",
+                    "INDEPENDENT_REVIEWER"
+                  ]
+                },
+                "sourceKind": {
+                  "type": "string",
+                  "enum": [
+                    "CODEX_AGENTS",
+                    "CODEX_AGENTS_OVERRIDE",
+                    "CLAUDE_MD",
+                    "CLAUDE_DOT_CLAUDE_MD",
+                    "CLAUDE_RULE",
+                    "GEMINI_CONTEXT",
+                    "KIRO_AGENTS",
+                    "KIRO_STEERING",
+                    "COPILOT_REPOSITORY",
+                    "COPILOT_MODULAR",
+                    "COPILOT_AGENTS",
+                    "COPILOT_CLAUDE",
+                    "COPILOT_DOT_CLAUDE",
+                    "COPILOT_GEMINI",
+                    "CURSOR_RULE",
+                    "REVIEWER_RULES"
+                  ]
+                },
+                "nativeOrder": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "applicableTargetId": {
+                  "type": "string",
+                  "minLength": 17,
+                  "maxLength": 128,
+                  "pattern": "^guidance_target_[A-Za-z0-9][A-Za-z0-9_-]*$"
+                },
+                "discoveredPath": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 4096
+                }
+              },
+              "required": [
+                "familyId",
+                "sourceKind",
+                "nativeOrder",
+                "applicableTargetId",
+                "discoveredPath"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "sourceId",
+          "resolvedPath",
+          "contentDigest",
+          "semanticTier",
+          "applicableTargetIds",
+          "directRecognitions"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "occurrences": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "occurrenceId": {
+            "type": "string",
+            "minLength": 21,
+            "maxLength": 128,
+            "pattern": "^guidance_occurrence_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "familyId": {
+            "type": "string",
+            "enum": [
+              "CODEX",
+              "CLAUDE",
+              "GEMINI",
+              "KIRO",
+              "COPILOT",
+              "CURSOR",
+              "INDEPENDENT_REVIEWER"
+            ]
+          },
+          "syntaxKind": {
+            "type": "string",
+            "enum": [
+              "CLAUDE_AT_PATH",
+              "GEMINI_AT_PATH",
+              "KIRO_FILE_REFERENCE",
+              "COPILOT_AT_PATH",
+              "CURSOR_AT_FILENAME"
+            ]
+          },
+          "importerSourceId": {
+            "type": "string",
+            "minLength": 17,
+            "maxLength": 128,
+            "pattern": "^guidance_source_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "requestedSpecifier": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "startUtf16": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "endUtf16": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "occurrenceId",
+          "familyId",
+          "syntaxKind",
+          "importerSourceId",
+          "requestedSpecifier",
+          "startUtf16",
+          "endUtf16"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "edgeId": {
+            "type": "string",
+            "minLength": 15,
+            "maxLength": 128,
+            "pattern": "^guidance_edge_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "occurrenceId": {
+            "type": "string",
+            "minLength": 21,
+            "maxLength": 128,
+            "pattern": "^guidance_occurrence_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "importedSourceId": {
+            "type": "string",
+            "minLength": 17,
+            "maxLength": 128,
+            "pattern": "^guidance_source_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "applicableTargetId": {
+            "type": "string",
+            "minLength": 17,
+            "maxLength": 128,
+            "pattern": "^guidance_target_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          }
+        },
+        "required": [
+          "edgeId",
+          "occurrenceId",
+          "importedSourceId",
+          "applicableTargetId"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "diagnosticId": {
+            "type": "string",
+            "minLength": 21,
+            "maxLength": 128,
+            "pattern": "^guidance_diagnostic_[A-Za-z0-9][A-Za-z0-9_-]*$"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "UNSELECTED_MANUAL_MODE",
+              "UNSELECTED_MODEL_SELECTED_MODE",
+              "EMPTY_SOURCE",
+              "UNKNOWN_SETTING_IGNORED",
+              "MARKDOWN_SYNTAX_WARNING",
+              "MARKDOWN_STYLE_WARNING",
+              "DIAGNOSTIC_LIMIT_EXCEEDED"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "EXCLUSION",
+              "WARNING"
+            ]
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "startUtf16": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "omittedCount": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "diagnosticId",
+          "code",
+          "severity",
+          "path",
+          "startUtf16",
+          "omittedCount"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "graphId",
+    "snapshotDigest",
+    "baseCommit",
+    "targets",
+    "nodes",
+    "occurrences",
+    "edges",
+    "diagnostics"
+  ],
+  "additionalProperties": false
+}

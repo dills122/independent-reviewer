@@ -8,6 +8,7 @@ import {
   FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
   FINDING_VERIFICATION_V1_JSON_SCHEMA,
 } from "../src/contracts/finding-verification.js";
+import { GUIDANCE_GRAPH_V1_JSON_SCHEMA } from "../src/contracts/guidance-graph.js";
 import {
   NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,
   StandardsReviewBriefV2Schema,
@@ -45,6 +46,7 @@ const schemaDirectory = resolve("schemas");
 await mkdir(schemaDirectory, { recursive: true });
 
 const schemaArtifacts = [
+  ["guidance-graph-v1.schema.json", GUIDANCE_GRAPH_V1_JSON_SCHEMA],
   ["finding-verification-candidate-v1.schema.json", FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA],
   ["finding-verification-v1.schema.json", FINDING_VERIFICATION_V1_JSON_SCHEMA],
   ["standards-profile-v1.schema.json", STANDARDS_PROFILE_V1_JSON_SCHEMA],

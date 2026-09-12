@@ -9,7 +9,7 @@ import {
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 import { CanonicalInputIdSchema, NonEmptyTextSchema, prefixedIdentifier } from "./primitives.js";
 
-const GitObjectIdSchema = z
+export const GitObjectIdSchema = z
   .string()
   .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/, "must be a lowercase Git object ID");
 const PersistedBranchNameSchema = z

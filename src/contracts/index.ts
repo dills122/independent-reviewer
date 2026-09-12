@@ -33,6 +33,18 @@ export {
   sha256BytesHex,
 } from "./json-document.js";
 export { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
+export type { GuidanceGraphV1, GuidanceTargetV1 } from "./guidance-graph.js";
+export {
+  assertGuidanceGraphMatchesSnapshotV1,
+  buildReviewerRulesGuidanceGraphV1,
+  finalizeGuidanceGraphV1,
+  GUIDANCE_GRAPH_V1_JSON_SCHEMA,
+  guidanceGraphDigestV1,
+  GuidanceGraphV1Schema,
+  GuidanceTargetV1Schema,
+  projectGuidanceTargetsV1,
+  verifyGuidanceGraphIdentityV1,
+} from "./guidance-graph.js";
 export type {
   FindingVerificationCandidateV1,
   FindingVerificationV1,
@@ -153,6 +165,7 @@ export type {
 } from "./snapshot-manifest.js";
 export {
   DigestV1Schema,
+  GitObjectIdSchema,
   logicalLineCountV1,
   resolveSnapshotSourceContentV1,
   SNAPSHOT_MANIFEST_V1_JSON_SCHEMA,
