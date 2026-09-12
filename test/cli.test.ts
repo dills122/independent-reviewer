@@ -931,11 +931,18 @@ it("emits a versioned inspection report that never carries author-packet content
       "blobCount",
       "canonicalInputs",
       "reviewConfigRef",
+      "reviewerGuidance",
       "schemaVersion",
       "snapshotManifest",
     ]);
     assert.equal(report.schemaVersion, 1);
     assert.equal(report.authorPacketPresent, true);
+    // A requirements-mode packet never carries guidance, and now says so rather than staying silent.
+    assert.deepEqual(report.reviewerGuidance, {
+      captured: false,
+      sourceCount: 0,
+      guidanceGraphDigest: null,
+    });
     assert.equal(report.reviewConfigRef, "config_cli_inspect");
     // Presence is reported; content never is.
     assert.doesNotMatch(JSON.stringify(report), /AUTHOR_ONLY_SECRET/);
@@ -944,6 +951,7 @@ it("emits a versioned inspection report that never carries author-packet content
     assert.equal(await runCliV1(["inspect", "--packet", packetPath], io), 0);
     const text = output.join("\n");
     assert.match(text, /Author packet: stored separately/);
+    assert.match(text, /Reviewer guidance: not captured for this packet/);
     assert.doesNotMatch(text, /AUTHOR_ONLY_SECRET/);
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });

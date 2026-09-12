@@ -2,11 +2,25 @@ import * as z from "zod";
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 import { prefixedIdentifier } from "./primitives.js";
 import { PersistedCanonicalInputsV1Schema } from "./review-request.js";
-import { SnapshotManifestV1Schema } from "./snapshot-manifest.js";
+import { DigestV1Schema, SnapshotManifestV1Schema } from "./snapshot-manifest.js";
 import {
   type ReviewCanonicalInputs,
   StandardsCanonicalInputsV2Schema,
 } from "./standards-review.js";
+
+/**
+ * Whether repository-owned reviewer guidance was captured, and how much of it there is.
+ *
+ * `captured` distinguishes the two silences a caller could not previously tell apart: a packet
+ * built by a path that never ran guidance capture reports `false`, while a packet whose repository
+ * simply has no rules file reports `captured: true` with `sourceCount: 0`. Source content stays out
+ * of the report, like the author packet.
+ */
+export const InspectedReviewerGuidanceV1Schema = z.strictObject({
+  captured: z.boolean(),
+  sourceCount: z.int().min(0),
+  guidanceGraphDigest: DigestV1Schema.nullable(),
+});
 
 /**
  * The machine-readable view of a snapshot packet, as `inspect --json` emits it.
@@ -22,6 +36,7 @@ export const InspectionReportV1Schema = z.strictObject({
   canonicalInputs: PersistedCanonicalInputsV1Schema,
   authorPacketPresent: z.boolean(),
   blobCount: z.int().min(0),
+  reviewerGuidance: InspectedReviewerGuidanceV1Schema,
 });
 
 export type InspectionReportV1 = z.infer<typeof InspectionReportV1Schema>;
@@ -32,6 +47,18 @@ export interface InspectionReportInputV1 {
   authorPacket?: unknown;
   reviewConfigRef: string;
   blobCount: number;
+  guidanceGraph?: { nodes: readonly unknown[] };
+  guidanceGraphDigest?: z.infer<typeof DigestV1Schema>;
+}
+
+function inspectedReviewerGuidance(
+  input: Pick<InspectionReportInputV1, "guidanceGraph" | "guidanceGraphDigest">,
+): z.infer<typeof InspectedReviewerGuidanceV1Schema> {
+  return {
+    captured: input.guidanceGraph !== undefined,
+    sourceCount: input.guidanceGraph?.nodes.length ?? 0,
+    guidanceGraphDigest: input.guidanceGraphDigest ?? null,
+  };
 }
 
 /** Builds and validates the report, so an invalid payload never reaches a calling process. */
@@ -43,6 +70,7 @@ export function buildInspectionReportV1(input: InspectionReportInputV1): Inspect
     canonicalInputs: input.canonicalInputs,
     authorPacketPresent: input.authorPacket !== undefined,
     blobCount: input.blobCount,
+    reviewerGuidance: inspectedReviewerGuidance(input),
   });
 }
 
@@ -73,5 +101,6 @@ export function buildInspectionReport(
     canonicalInputs: input.canonicalInputs,
     authorPacketPresent: input.authorPacket !== undefined,
     blobCount: input.blobCount,
+    reviewerGuidance: inspectedReviewerGuidance(input),
   });
 }

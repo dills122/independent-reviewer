@@ -413,7 +413,9 @@ test("standards convenience dry-run needs no credentials or provider and leaves 
     );
     assert.equal(result, 0, errors.join("\n"));
     assert.match(output.join("\n"), /Reserved tokens/);
-    assert.doesNotMatch(output.join("\n"), /Reviewer guidance:/);
+    // Advanced --config used to disable reviewer-rules capture silently, so this fixture's
+    // committed rules.md was dropped without a word (#105). Guidance is a repository property now.
+    assert.match(output.join("\n"), /Reviewer guidance: \d+ content bytes \(ACCEPTED\)/);
     assert.doesNotMatch(output.join("\n"), /AUTHOR_PRIVATE/);
     await assert.rejects(readFile(join(f.packet, "review", "final.json")));
   } finally {
