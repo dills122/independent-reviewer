@@ -3,15 +3,15 @@ import { dirname, join } from "node:path";
 import * as z from "zod";
 import { verifyReviewBriefIdentity } from "../contracts/artifact-identity.js";
 import {
+  type AuthorPacketV1,
   assembleFindingVerificationV1,
   assertFindingVerificationScopeV1,
-  type AuthorPacketV1,
-  FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
-  type FindingVerificationV1,
-  FindingVerificationCandidateV1Schema,
-  FindingVerificationV1Schema,
   FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
+  FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
   type FinalReviewReportV1,
+  FindingVerificationCandidateV1Schema,
+  type FindingVerificationV1,
+  FindingVerificationV1Schema,
   GuidancePromptPresentationV1Schema,
   jsonDocument,
   logicalLineCountV1,
@@ -54,19 +54,20 @@ import { renderReviewMarkdown } from "../report/markdown.js";
 import { inspectSnapshotPacket, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
 import { buildReviewBrief } from "../transmission/neutral-brief-builder.js";
 import { compactProjectGuidanceV1 } from "../transmission/project-guidance-digest.js";
-import { emitReviewProgress } from "./progress.js";
 import {
   evaluateGuidanceAdmissionV1,
   type GuidanceAdmissionResultV1,
 } from "./guidance-admission.js";
+import { emitReviewProgress } from "./progress.js";
 import {
   type ConstrainedResponseSchemaV1,
-  constrainFindingVerificationCandidateSchemaV1,
   constrainFinalConcernScopeV1,
+  constrainFindingVerificationCandidateSchemaV1,
   constrainRepairReferencesV1,
   constrainResponseSchemaV1,
 } from "./response-schema.js";
 import {
+  applyRunnerOwnedStandardsSeverityV1,
   assertStandardsChangedPathScope,
   assertStandardsFindings,
   assertStandardsRuleCoverage,
@@ -95,7 +96,7 @@ export interface TwoStageReviewResult extends Omit<TwoStageReviewResultV1, "repo
 }
 
 const REVIEW_PROMPT_VERSION_V1 = "review-policy-v21";
-const STANDARDS_GUIDANCE_POLICY_VERSION_V1 = "standards-review-v15";
+const STANDARDS_GUIDANCE_POLICY_VERSION_V1 = "standards-review-v17";
 const FINDING_VERIFICATION_POLICY_VERSION_V1 = "finding-verification-policy-v3";
 const REVIEW_UNIT_POLICY_VERSION_V1 = "review-unit-planner-v1";
 const PATH_ROLE_DEPTH_POLICY_V1 =
@@ -1003,7 +1004,7 @@ async function parsePreliminary(
 ): Promise<ReviewPreliminary> {
   const parsed = (
     isStandardsBrief(brief) ? StandardsPreliminaryV2Schema : PreliminaryAssessmentV1Schema
-  ).safeParse(value);
+  ).safeParse(applyRunnerOwnedStandardsSeverityV1(value, brief));
   if (!parsed.success) {
     throw new PreliminaryOutputValidationError(
       `Invalid preliminary assessment: ${z.prettifyError(parsed.error)}`,
@@ -1112,7 +1113,7 @@ async function parseFinal(
 ): Promise<ReviewReport> {
   try {
     const report = materializeFinalCandidate(
-      value,
+      applyRunnerOwnedStandardsSeverityV1(value, brief),
       preliminary,
       authorVerificationClaims,
       runnerOwnedFinalCoverage(preliminary, brief),

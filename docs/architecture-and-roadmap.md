@@ -98,7 +98,9 @@ submission; inspection exposes only its presence.
 
 Standards findings cite selected rule IDs, applicability, a concrete code-quality
 problem, evidence and correction. REQUIRED and RECOMMENDED classifications replace
-defect severity in this mode. Existing verdict codes retain exit compatibility,
+defect severity in this mode, and the runner derives each finding's classification
+from the enforcement of the selected rules it cites: the reviewer is not asked for
+it and cannot downgrade a mandatory rule. Existing verdict codes retain exit compatibility,
 but labels explicitly describe standards satisfaction/changes/recommendations or
 inability to assess, never deployment readiness. Unknown or inapplicable rule
 references fail validation. Conflicting rule IDs require explicit selection of

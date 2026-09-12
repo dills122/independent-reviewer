@@ -15,7 +15,7 @@ test("report metadata binds runner-owned report inputs", () => {
     briefDigest: digest,
     guidanceGraphDigest: digest,
     reportDigest: digest,
-    promptVersion: "standards-review-v15",
+    promptVersion: "standards-review-v17",
     preliminarySchema: "standards_preliminary_v2",
     finalSchema: "standards_candidate_v3",
   };
