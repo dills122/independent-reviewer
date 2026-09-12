@@ -77,20 +77,27 @@ async function readAuthor(path: string) {
   return ReviewAuthorSchema.parse({ schemaVersion: 2, overview: text, claimedVerification: [] });
 }
 /** No state is written until capture and admission succeed. Exclusive instance claims arbitrate concurrent starts. */
-export async function assembleStandardsRequest(options: Options) {
+export async function assembleStandardsRequest(
+  options: Options,
+  suppliedConfig?: z.infer<typeof ReviewRunConfigV3Schema>,
+) {
   const repo = await resolveRepositoryRootV1(option(options, "--repo") ?? process.cwd());
   const standardPath = option(options, "--standards");
   const authorPath = option(options, "--author");
   const configPath = option(options, "--config");
-  if (!standardPath || !authorPath || !configPath)
-    throw new Error("Provide --standards, --author and --config, or save them with init.");
+  if (!standardPath || !authorPath || (!configPath && !suppliedConfig))
+    throw new Error(
+      "Provide --standards, --author and either --config or simple model/cost settings.",
+    );
   const profile = StandardsProfileSchema.parse(
     JSON.parse(await readFile(resolve(standardPath), "utf8")),
   );
   const author = await readAuthor(resolve(authorPath));
-  const config = ReviewRunConfigV3Schema.parse(
-    JSON.parse(await readFile(resolve(configPath), "utf8")),
-  );
+  const config =
+    suppliedConfig ??
+    ReviewRunConfigV3Schema.parse(
+      JSON.parse(await readFile(resolve(configPath as string), "utf8")),
+    );
   const directory = await localReviewDirectory(repo);
   const pointer = join(directory, "flow.json");
   let flowId = `flow_${randomUUID()}`;
@@ -140,7 +147,11 @@ export async function assembleStandardsRequest(options: Options) {
   });
   return {
     request,
-    excludedPaths: [resolve(standardPath), resolve(authorPath), resolve(configPath)],
+    excludedPaths: [
+      resolve(standardPath),
+      resolve(authorPath),
+      ...(configPath ? [resolve(configPath)] : []),
+    ],
     async claim() {
       await mkdir(directory, { recursive: true, mode: 0o700 });
       if (!existing) {

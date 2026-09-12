@@ -226,6 +226,11 @@ function constrainLedgers(root: JsonSchemaNodeV1, options: ConstrainResponseSche
     stage === "PRELIMINARY",
   );
   constrainLedger("changedPathCoverage", "path", options.changedPaths, false);
+  const inspectedPaths = optionalNode(properties.inspectedPaths);
+  if (inspectedPaths) {
+    const items = requireNode(inspectedPaths.items, "inspectedPaths.items");
+    items.enum = options.evidencePaths;
+  }
   constrainLedger(
     "authorVerificationClaims",
     "claimIndex",
@@ -313,7 +318,7 @@ export function constrainResponseSchemaV1(
         node.maxItems = options.ruleIds?.length;
       }
     });
-  const appliedArrayLimits = boundUnspecifiedProse(root, Math.max(options.changedPaths.length, 1));
+  const appliedArrayLimits = boundUnspecifiedProse(root, Math.max(options.evidencePaths.length, 1));
   if (hasRunnerOwnedFastFollows) appliedArrayLimits.fastFollows = 0;
   const concerns = optionalNode(optionalProperties(root).preliminaryConcernDispositions);
   if (concerns) {

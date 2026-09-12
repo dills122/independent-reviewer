@@ -1,18 +1,21 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 
 import {
+  buildReviewerRulesGuidanceGraphV1,
   captureGitSnapshotV1,
+  captureReviewerRulesGuidanceV1,
   finalizeReviewContextMapV1,
   inspectSnapshotPacketV1,
   type ReviewContextMapIdentityInputV1,
   type ReviewContextMapV1,
   type ReviewRequestV1,
+  sha256Utf8,
   writeSnapshotPacketV1,
 } from "../../src/index.js";
 
@@ -22,7 +25,7 @@ async function git(repositoryPath: string, ...args: string[]): Promise<void> {
   await execFileAsync("git", ["-C", repositoryPath, ...args], { encoding: "utf8" });
 }
 
-async function arrangeCapture(): Promise<{
+async function arrangeCapture(baseRules?: string): Promise<{
   repositoryPath: string;
   request: ReviewRequestV1;
 }> {
@@ -35,6 +38,10 @@ async function arrangeCapture(): Promise<{
     join(repositoryPath, "reviewed.ts"),
     'const marker = "😀";\nexport function reviewed() { return "😀1"; }\n',
   );
+  if (baseRules !== undefined) {
+    await mkdir(join(repositoryPath, ".independent-reviewer"), { recursive: true });
+    await writeFile(join(repositoryPath, ".independent-reviewer", "rules.md"), baseRules);
+  }
   await git(repositoryPath, "add", ".");
   await git(repositoryPath, "commit", "-m", "initial");
   await git(repositoryPath, "switch", "-c", "feature/packet");
@@ -104,6 +111,57 @@ function declarationRange(draft: ReviewContextMapIdentityInputV1) {
 }
 
 describe("snapshot packet store", () => {
+  it("writes and verifies a graph-bound reviewer-guidance packet", async () => {
+    const { repositoryPath, request } = await arrangeCapture(
+      "# Review rules\n\nNo hidden fallback.\n",
+    );
+    const packetPath = join(repositoryPath, ".review-runs", "packet-guidance");
+    try {
+      const captured = await captureGitSnapshotV1(request);
+      const guidance = await captureReviewerRulesGuidanceV1(repositoryPath, captured.manifest);
+      await writeSnapshotPacketV1(packetPath, captured, request, { guidance });
+
+      const inspected = await inspectSnapshotPacketV1(packetPath);
+      const metadata = JSON.parse(await readFile(join(packetPath, "packet-metadata.json"), "utf8"));
+      assert.equal(metadata.schemaVersion, 4);
+      assert.deepEqual(metadata.guidanceGraphDigest, inspected.guidanceGraphDigest);
+      assert.equal(
+        inspected.guidanceGraph?.nodes[0]?.resolvedPath,
+        ".independent-reviewer/rules.md",
+      );
+      assert.equal(inspected.blobCount, 3);
+
+      const digest = inspected.guidanceGraph?.nodes[0]?.contentDigest.value;
+      assert.ok(digest);
+      await unlink(join(packetPath, "blobs", digest));
+      await assert.rejects(() => inspectSnapshotPacketV1(packetPath), /guidance blob/i);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a self-consistent guidance graph replacement against packet metadata", async () => {
+    const { repositoryPath, request } = await arrangeCapture("# Original rules\n");
+    const packetPath = join(repositoryPath, ".review-runs", "packet-guidance");
+    try {
+      const captured = await captureGitSnapshotV1(request);
+      const guidance = await captureReviewerRulesGuidanceV1(repositoryPath, captured.manifest);
+      await writeSnapshotPacketV1(packetPath, captured, request, { guidance });
+      const replacement = buildReviewerRulesGuidanceGraphV1(
+        captured.manifest,
+        sha256Utf8("# Replacement rules\n"),
+      );
+      await writeFile(join(packetPath, "guidance-graph.json"), `${JSON.stringify(replacement)}\n`);
+
+      await assert.rejects(
+        () => inspectSnapshotPacketV1(packetPath),
+        /metadata guidance graph digest/i,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("writes and validates a private content-addressed packet", async () => {
     const { repositoryPath, request } = await arrangeCapture();
     const packetPath = join(repositoryPath, ".review-runs", "packet-test");

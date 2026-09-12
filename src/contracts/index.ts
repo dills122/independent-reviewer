@@ -34,6 +34,31 @@ export {
 } from "./json-document.js";
 export { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 export type {
+  GuidanceDiagnosticV1,
+  GuidanceGraphV1,
+  GuidanceTargetV1,
+} from "./guidance-graph.js";
+export type { GuidancePromptPresentationV1 } from "./guidance-presentation.js";
+export {
+  CanonicalGuidancePresentationV1Schema,
+  GuidanceGraphBindingV1Schema,
+  GuidancePresentationSourceV1Schema,
+  GuidancePromptPresentationV1Schema,
+} from "./guidance-presentation.js";
+export {
+  assertGuidanceGraphMatchesSnapshotV1,
+  buildReviewerRulesGuidanceGraphV1,
+  createGuidanceDiagnosticV1,
+  finalizeGuidanceGraphV1,
+  GUIDANCE_GRAPH_V1_JSON_SCHEMA,
+  guidanceGraphDigestV1,
+  GuidanceGraphV1Schema,
+  GuidanceDiagnosticV1Schema,
+  GuidanceTargetV1Schema,
+  projectGuidanceTargetsV1,
+  verifyGuidanceGraphIdentityV1,
+} from "./guidance-graph.js";
+export type {
   FindingVerificationCandidateV1,
   FindingVerificationV1,
 } from "./finding-verification.js";
@@ -53,6 +78,7 @@ export {
   NeutralReviewBriefV1Schema,
   ReviewBriefSchema,
   StandardsReviewBriefV2Schema,
+  StandardsReviewBriefV3Schema,
 } from "./neutral-review-brief.js";
 export {
   CanonicalInputIdSchema,
@@ -95,6 +121,11 @@ export type {
   ReviewEvidenceV1,
   ReviewFindingV1,
 } from "./review-results.js";
+export type { ReviewReportMetadataV1 } from "./review-report-metadata.js";
+export {
+  REVIEW_REPORT_METADATA_V1_JSON_SCHEMA,
+  ReviewReportMetadataV1Schema,
+} from "./review-report-metadata.js";
 export {
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA,
@@ -116,9 +147,25 @@ export type {
 export {
   OpenRouterProviderRoutingV2Schema,
   permittedModelsV1,
+  ReviewModelSlugV1Schema,
   REVIEW_RUN_CONFIG_V3_JSON_SCHEMA,
   ReviewRunConfigV3Schema,
 } from "./review-run-config.js";
+export type {
+  ResolvedSimpleReviewSettingsV1,
+  ResolveSimpleReviewSettingsInputV1,
+  SimpleReviewSettingsV1,
+} from "./simple-review-settings.js";
+export {
+  RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+  resolveSimpleReviewSettingsV1,
+  ResolvedSimpleReviewSettingsV1Schema,
+  SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+  SimpleReviewSettingsOverridesV1Schema,
+  SimpleReviewSettingsV1Schema,
+  supportedReviewModelsV1,
+  SupportedReviewModelV1Schema,
+} from "./simple-review-settings.js";
 export type {
   ReviewUnitPlanIdentityInputV1,
   ReviewUnitPlanV1,
@@ -137,6 +184,7 @@ export type {
 } from "./snapshot-manifest.js";
 export {
   DigestV1Schema,
+  GitObjectIdSchema,
   logicalLineCountV1,
   resolveSnapshotSourceContentV1,
   SNAPSHOT_MANIFEST_V1_JSON_SCHEMA,

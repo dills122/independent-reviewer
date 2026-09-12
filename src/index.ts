@@ -9,6 +9,22 @@ export {
 } from "./context/tree-sitter-analyzer.js";
 export * from "./contracts/index.js";
 export type {
+  CapturedReviewerRulesGuidanceV1,
+  GuidanceCaptureErrorCode,
+} from "./guidance/reviewer-rules.js";
+export {
+  captureReviewerRulesGuidanceV1,
+  GuidanceCaptureError,
+  MAX_GUIDANCE_SOURCE_BYTES_V1,
+  REVIEWER_RULES_PATH_V1,
+} from "./guidance/reviewer-rules.js";
+export { renderGuidancePromptPresentationV1 } from "./guidance/presentation.js";
+export {
+  evaluateGuidanceAdmissionV1,
+  GUIDANCE_CONTENT_STOP_BYTES_V1,
+  GUIDANCE_CONTENT_WARNING_BYTES_V1,
+} from "./orchestrator/guidance-admission.js";
+export type {
   TwoStageReviewResult,
   TwoStageReviewResultV1,
 } from "./orchestrator/two-stage-review.js";

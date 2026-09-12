@@ -1,0 +1,306 @@
+{
+  "$id": "urn:independent-reviewer:schema:resolved-simple-review-settings:v1",
+  "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "settings": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "maxCostUsd": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1000
+        },
+        "requireAuthorExplanation": {
+          "type": "boolean"
+        },
+        "discoverRepositorySteering": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "model",
+        "maxCostUsd",
+        "requireAuthorExplanation",
+        "discoverRepositorySteering"
+      ],
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string",
+          "enum": [
+            "CLI",
+            "LOCAL",
+            "ENGINE_DEFAULT"
+          ]
+        },
+        "maxCostUsd": {
+          "type": "string",
+          "enum": [
+            "CLI",
+            "LOCAL",
+            "ENGINE_DEFAULT"
+          ]
+        },
+        "requireAuthorExplanation": {
+          "type": "string",
+          "enum": [
+            "CLI",
+            "LOCAL",
+            "ENGINE_DEFAULT"
+          ]
+        },
+        "discoverRepositorySteering": {
+          "type": "string",
+          "enum": [
+            "CLI",
+            "LOCAL",
+            "ENGINE_DEFAULT"
+          ]
+        }
+      },
+      "required": [
+        "model",
+        "maxCostUsd",
+        "requireAuthorExplanation",
+        "discoverRepositorySteering"
+      ],
+      "additionalProperties": false
+    },
+    "profile": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "model"
+      ],
+      "additionalProperties": false
+    },
+    "settingsDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "reviewRunConfig": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 3
+        },
+        "configId": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "pattern": "^config_[A-Za-z0-9][A-Za-z0-9_-]*$"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "fallbackModels": {
+          "default": [],
+          "maxItems": 4,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "providerRouting": {
+          "type": "object",
+          "properties": {
+            "order": {
+              "minItems": 1,
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 128,
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+              }
+            },
+            "pinToOrder": {
+              "default": false,
+              "type": "boolean"
+            },
+            "zeroDataRetention": {
+              "default": false,
+              "type": "boolean"
+            },
+            "denyDataCollection": {
+              "default": false,
+              "type": "boolean"
+            },
+            "maxPrice": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1000
+                },
+                "completion": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1000
+                },
+                "request": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1000
+                }
+              },
+              "required": [
+                "prompt",
+                "completion",
+                "request"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "maxPrice"
+          ],
+          "additionalProperties": false
+        },
+        "budgets": {
+          "type": "object",
+          "properties": {
+            "maxInitialEvidenceBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "maxConversationBytes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "maxOutputTokensPerCall": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "maxTotalTokens": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 9007199254740991
+            },
+            "maxTotalCostUsd": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1000
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 600000
+            },
+            "maxAttemptsPerCall": {
+              "default": 3,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5
+            },
+            "minimumCallIntervalMs": {
+              "default": 1500,
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 60000
+            }
+          },
+          "required": [
+            "maxInitialEvidenceBytes",
+            "maxConversationBytes",
+            "maxOutputTokensPerCall",
+            "maxTotalTokens",
+            "maxTotalCostUsd",
+            "timeoutMs"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "configId",
+        "model",
+        "providerRouting",
+        "budgets"
+      ],
+      "additionalProperties": false
+    },
+    "reviewRunConfigDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "settings",
+    "provenance",
+    "profile",
+    "settingsDigest",
+    "reviewRunConfig",
+    "reviewRunConfigDigest"
+  ],
+  "additionalProperties": false
+}

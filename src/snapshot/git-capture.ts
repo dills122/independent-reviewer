@@ -59,6 +59,8 @@ export interface CaptureGitSnapshotOptionsV1 {
   pathRoleOverrides?: ReadonlyMap<string, PathRoleV1>;
   maxAttempts?: number;
   maxFileBytes?: number;
+  /** Total unchanged supporting-source bytes retained in the frozen packet. */
+  maxReferencedSourceBytes?: number;
 }
 
 export interface CapturedGitSnapshotV1 {
@@ -157,7 +159,7 @@ const SECRET_CONTENT_MARKERS_V1: ReadonlyArray<{ label: string; pattern: RegExp 
 /** Public dummy credentials that should not make test or documentation evidence disappear. */
 const KNOWN_PUBLIC_CREDENTIAL_EXAMPLES_V1 = ["AKIAIOSFODNN7EXAMPLE"] as const;
 
-function isSecretPath(path: string): boolean {
+export function isSecretPathV1(path: string): boolean {
   const segments = path.toLowerCase().split("/");
   if (segments.slice(0, -1).some((segment) => SECRET_DIRECTORIES_V1.has(segment))) {
     return true;
@@ -173,7 +175,7 @@ function isSecretPath(path: string): boolean {
 }
 
 /** Names the first credential marker found in captured content, if any. */
-function secretContentMarker(bytes: Uint8Array): string | undefined {
+export function secretContentMarkerV1(bytes: Uint8Array): string | undefined {
   if (bytes.includes(0)) {
     return undefined;
   }
@@ -344,6 +346,7 @@ interface CaptureReferencedSourcesOptionsV1 {
   baseRevision: string;
   captureWorkingTree: boolean;
   maxFileBytes: number;
+  maxReferencedSourceBytes: number;
   paths: SnapshotManifestIdentityInputV1["paths"];
   blobs: Map<string, Uint8Array>;
   omissions: SnapshotManifestIdentityInputV1["omissions"];
@@ -454,7 +457,7 @@ async function captureReferencedSources(
   for (const path of referencePaths) {
     const importedBy = importersByPath.get(path) ?? [];
     const standardReferenceIds = standardReferenceIdsByPath.get(path) ?? [];
-    if (isSecretPath(path)) {
+    if (isSecretPathV1(path)) {
       if (requiredExplicitPaths.has(path) || importedReferencePaths.has(path))
         options.omissions.push({
           scope: path,
@@ -499,7 +502,7 @@ async function captureReferencedSources(
         });
       continue;
     }
-    const secretMarker = secretContentMarker(side.bytes);
+    const secretMarker = secretContentMarkerV1(side.bytes);
     if (secretMarker) {
       if (requiredExplicitPaths.has(path) || importedReferencePaths.has(path))
         options.omissions.push({
@@ -509,12 +512,12 @@ async function captureReferencedSources(
         });
       continue;
     }
-    if (capturedBytes + side.content.byteLength > MAX_REFERENCED_SOURCE_BYTES_V1) {
+    if (capturedBytes + side.content.byteLength > options.maxReferencedSourceBytes) {
       if (requiredExplicitPaths.has(path) || importedReferencePaths.has(path))
         options.omissions.push({
           scope: path,
           reason: requiredExplicitPaths.has(path) ? "CAPTURE_FAILED" : "OTHER",
-          detail: `${requiredExplicitPaths.has(path) ? "Required BASE reference" : "Referenced source"} omitted; the ${MAX_REFERENCED_SOURCE_BYTES_V1}-byte context budget is exhausted.`,
+          detail: `${requiredExplicitPaths.has(path) ? "Required BASE reference" : "Referenced source"} omitted; the ${options.maxReferencedSourceBytes}-byte context budget is exhausted.`,
         });
       continue;
     }
@@ -722,6 +725,7 @@ async function collectState(
   captureWorkingTree: boolean,
   includeUntracked: boolean,
   maxFileBytes: number,
+  maxReferencedSourceBytes: number,
   excludedPaths: ReadonlySet<string>,
   excludedPatterns: readonly RegExp[],
   roleOverrides: ReadonlyMap<string, PathRoleV1>,
@@ -773,7 +777,7 @@ async function collectState(
       });
       continue;
     }
-    const secretPath = relevantPaths.find(isSecretPath);
+    const secretPath = relevantPaths.find(isSecretPathV1);
     if (secretPath) {
       exclusions.push({
         path: secretPath,
@@ -829,7 +833,7 @@ async function collectState(
     // a credential pasted into ordinary source never reaches a blob the packet would transmit.
     const secretMarker = [before, after]
       .filter((side): side is CapturedSide => typeof side === "object" && side !== null)
-      .map((side) => secretContentMarker(side.bytes))
+      .map((side) => secretContentMarkerV1(side.bytes))
       .find((marker) => marker !== undefined);
     if (secretMarker) {
       exclusions.push({
@@ -972,6 +976,7 @@ async function collectState(
     baseRevision: baseCommit,
     captureWorkingTree,
     maxFileBytes,
+    maxReferencedSourceBytes,
     paths,
     blobs,
     omissions,
@@ -1112,11 +1117,16 @@ export async function captureGitSnapshotV1(
   );
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+  const maxReferencedSourceBytes =
+    options.maxReferencedSourceBytes ?? MAX_REFERENCED_SOURCE_BYTES_V1;
   if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || maxAttempts > 3) {
     throw new RangeError("maxAttempts must be an integer from 1 to 3");
   }
   if (!Number.isInteger(maxFileBytes) || maxFileBytes < 1) {
     throw new RangeError("maxFileBytes must be a positive integer");
+  }
+  if (!Number.isSafeInteger(maxReferencedSourceBytes) || maxReferencedSourceBytes < 0) {
+    throw new RangeError("maxReferencedSourceBytes must be a non-negative safe integer");
   }
   const excludedPaths = new Set(
     (
@@ -1158,6 +1168,7 @@ export async function captureGitSnapshotV1(
       captureWorkingTree,
       request.repository.workingTree.includeUntracked,
       maxFileBytes,
+      maxReferencedSourceBytes,
       excludedPaths,
       excludedPatterns,
       roleOverrides,
@@ -1170,6 +1181,7 @@ export async function captureGitSnapshotV1(
       captureWorkingTree,
       request.repository.workingTree.includeUntracked,
       maxFileBytes,
+      maxReferencedSourceBytes,
       excludedPaths,
       excludedPatterns,
       roleOverrides,

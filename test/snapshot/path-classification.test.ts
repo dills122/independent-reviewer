@@ -42,6 +42,7 @@ describe("classifyPathV1", () => {
       "CONTRIBUTING.md",
       ".cursorrules",
       ".github/copilot-instructions.md",
+      ".independent-reviewer/rules.md",
       ".claude/skills/review.md",
     ]) {
       assert.equal(classifyPathV1(path), "STEERING", path);

@@ -8,9 +8,11 @@ import {
   FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
   FINDING_VERIFICATION_V1_JSON_SCHEMA,
 } from "../src/contracts/finding-verification.js";
+import { GUIDANCE_GRAPH_V1_JSON_SCHEMA } from "../src/contracts/guidance-graph.js";
 import {
   NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,
   StandardsReviewBriefV2Schema,
+  StandardsReviewBriefV3Schema,
 } from "../src/contracts/neutral-review-brief.js";
 import { REVIEW_CONTEXT_MAP_V1_JSON_SCHEMA } from "../src/contracts/review-context-map.js";
 import { REVIEW_REQUEST_V1_JSON_SCHEMA } from "../src/contracts/review-request.js";
@@ -22,6 +24,11 @@ import {
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
 } from "../src/contracts/review-results.js";
 import { REVIEW_RUN_CONFIG_V3_JSON_SCHEMA } from "../src/contracts/review-run-config.js";
+import { REVIEW_REPORT_METADATA_V1_JSON_SCHEMA } from "../src/contracts/review-report-metadata.js";
+import {
+  RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+  SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+} from "../src/contracts/simple-review-settings.js";
 import { REVIEW_UNIT_PLAN_V1_JSON_SCHEMA } from "../src/contracts/review-unit-plan.js";
 import { SNAPSHOT_MANIFEST_V1_JSON_SCHEMA } from "../src/contracts/snapshot-manifest.js";
 import {
@@ -41,6 +48,7 @@ const schemaDirectory = resolve("schemas");
 await mkdir(schemaDirectory, { recursive: true });
 
 const schemaArtifacts = [
+  ["guidance-graph-v1.schema.json", GUIDANCE_GRAPH_V1_JSON_SCHEMA],
   ["finding-verification-candidate-v1.schema.json", FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA],
   ["finding-verification-v1.schema.json", FINDING_VERIFICATION_V1_JSON_SCHEMA],
   ["standards-profile-v1.schema.json", STANDARDS_PROFILE_V1_JSON_SCHEMA],
@@ -55,6 +63,10 @@ const schemaArtifacts = [
     contractJsonSchema(StandardsReviewBriefV2Schema, "standards-review-brief:v2"),
   ],
   [
+    "standards-review-brief-v3.schema.json",
+    contractJsonSchema(StandardsReviewBriefV3Schema, "standards-review-brief:v3"),
+  ],
+  [
     "standards-inspection-report-v2.schema.json",
     contractJsonSchema(StandardsInspectionReportV2Schema, "standards-inspection-report:v2"),
   ],
@@ -66,6 +78,12 @@ const schemaArtifacts = [
   ["preliminary-assessment-v1.schema.json", PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA],
   ["review-request-v1.schema.json", REVIEW_REQUEST_V1_JSON_SCHEMA],
   ["review-run-config-v3.schema.json", REVIEW_RUN_CONFIG_V3_JSON_SCHEMA],
+  ["review-report-metadata-v1.schema.json", REVIEW_REPORT_METADATA_V1_JSON_SCHEMA],
+  ["simple-review-settings-v1.schema.json", SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA],
+  [
+    "resolved-simple-review-settings-v1.schema.json",
+    RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+  ],
   ["inspection-report-v1.schema.json", INSPECTION_REPORT_V1_JSON_SCHEMA],
   ["snapshot-manifest-v1.schema.json", SNAPSHOT_MANIFEST_V1_JSON_SCHEMA],
   ["review-context-map-v1.schema.json", REVIEW_CONTEXT_MAP_V1_JSON_SCHEMA],

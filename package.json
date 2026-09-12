@@ -21,6 +21,7 @@
     "./schemas/review-request-v1": "./schemas/review-request-v1.schema.json",
     "./schemas/inspection-report-v1": "./schemas/inspection-report-v1.schema.json",
     "./schemas/snapshot-manifest-v1": "./schemas/snapshot-manifest-v1.schema.json",
+    "./schemas/guidance-graph-v1": "./schemas/guidance-graph-v1.schema.json",
     "./schemas/review-context-map-v1": "./schemas/review-context-map-v1.schema.json",
     "./schemas/review-unit-plan-v1": "./schemas/review-unit-plan-v1.schema.json",
     "./schemas/standards-candidate-v2": "./schemas/standards-candidate-v2.schema.json",
@@ -30,8 +31,12 @@
     "./schemas/standards-profile-v1": "./schemas/standards-profile-v1.schema.json",
     "./schemas/standards-report-v2": "./schemas/standards-report-v2.schema.json",
     "./schemas/standards-review-brief-v2": "./schemas/standards-review-brief-v2.schema.json",
+    "./schemas/standards-review-brief-v3": "./schemas/standards-review-brief-v3.schema.json",
     "./schemas/standards-review-request-v2": "./schemas/standards-review-request-v2.schema.json",
-    "./schemas/review-run-config-v3": "./schemas/review-run-config-v3.schema.json"
+    "./schemas/review-run-config-v3": "./schemas/review-run-config-v3.schema.json",
+    "./schemas/review-report-metadata-v1": "./schemas/review-report-metadata-v1.schema.json",
+    "./schemas/simple-review-settings-v1": "./schemas/simple-review-settings-v1.schema.json",
+    "./schemas/resolved-simple-review-settings-v1": "./schemas/resolved-simple-review-settings-v1.schema.json"
   },
   "files": [
     "dist/src",
@@ -55,13 +60,16 @@
     "typecheck": "tsc --noEmit --project tsconfig.json"
   },
   "dependencies": {
+    "commander": "15.0.0",
     "es-module-lexer": "3.0.2",
     "parse-diff": "0.12.0",
+    "remark-parse": "11.0.0",
     "tree-sitter-go": "0.25.0",
     "tree-sitter-java": "0.23.5",
     "tree-sitter-javascript": "0.23.1",
     "tree-sitter-python": "0.25.0",
     "tree-sitter-typescript": "0.23.2",
+    "unified": "11.0.5",
     "web-tree-sitter": "0.27.0",
     "zod": "4.5.4"
   },

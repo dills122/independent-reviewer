@@ -2,6 +2,10 @@ import { matchesGlob } from "node:path";
 import * as z from "zod";
 import { computeCanonicalInputDigestV1 } from "./canonical-input-identity.js";
 import { sha256Utf8 } from "./canonical-json.js";
+import {
+  CanonicalGuidancePresentationV1Schema,
+  GuidanceGraphBindingV1Schema,
+} from "./guidance-presentation.js";
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 import { CanonicalInputIdSchema, NonEmptyTextSchema, prefixedIdentifier } from "./primitives.js";
 import { PersistedCanonicalInputsV1Schema } from "./review-request.js";
@@ -355,9 +359,29 @@ export const StandardsReviewBriefV2Schema = z
         });
     });
   });
+
+export const StandardsReviewBriefV3Schema = z
+  .strictObject({
+    ...NeutralReviewBriefBaseV1Schema.shape,
+    schemaVersion: z.literal(3),
+    mode: z.literal("STANDARDS"),
+    canonicalInputs: StandardsCanonicalInputsV2Schema,
+    referenceEvidence: z.array(ReferenceEvidenceV2Schema),
+    guidanceGraph: GuidanceGraphBindingV1Schema,
+    guidancePresentation: CanonicalGuidancePresentationV1Schema,
+  })
+  .superRefine((brief, context) => {
+    const { guidanceGraph: _binding, guidancePresentation: _presentation, ...common } = brief;
+    const legacy = StandardsReviewBriefV2Schema.safeParse({ ...common, schemaVersion: 2 });
+    if (!legacy.success) {
+      for (const issue of legacy.error.issues)
+        context.addIssue({ code: "custom", path: issue.path, message: issue.message });
+    }
+  });
 export const ReviewBriefSchema = z.union([
   NeutralReviewBriefV1Schema,
   StandardsReviewBriefV2Schema,
+  StandardsReviewBriefV3Schema,
 ]);
 export type ReviewBrief = z.infer<typeof ReviewBriefSchema>;
 

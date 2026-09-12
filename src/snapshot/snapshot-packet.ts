@@ -7,11 +7,15 @@ import * as z from "zod";
 import { buildReviewContextMapV1 } from "../context/build-review-context-map.js";
 import { sha256Utf8 } from "../contracts/canonical-json.js";
 import {
+  assertGuidanceGraphMatchesSnapshotV1,
   type AuthorPacketV1,
   AuthorPacketV1Schema,
   canonicalizeJson,
   computeCanonicalInputDigestV1,
   DigestV1Schema,
+  type GuidanceGraphV1,
+  guidanceGraphDigestV1,
+  GuidanceGraphV1Schema,
   jsonDocument,
   PersistedCanonicalInputsV1Schema,
   type ReviewContextMapV1,
@@ -23,6 +27,7 @@ import {
   verifyReviewContextMapIdentityV1,
   verifySnapshotManifestIdentityV1,
 } from "../contracts/index.js";
+import type { CapturedReviewerRulesGuidanceV1 } from "../guidance/reviewer-rules.js";
 import {
   canonicalInputList,
   type ReviewAuthor,
@@ -40,6 +45,7 @@ const CANONICAL_INPUTS_FILE = "canonical-inputs.json";
 const AUTHOR_PACKET_FILE = "author-packet.json";
 const PACKET_METADATA_FILE = "packet-metadata.json";
 const CONTEXT_MAP_FILE = "review-context-map.json";
+const GUIDANCE_GRAPH_FILE = "guidance-graph.json";
 const BLOBS_DIRECTORY = "blobs";
 
 export interface InspectedSnapshotPacketV1 {
@@ -49,6 +55,8 @@ export interface InspectedSnapshotPacketV1 {
   authorPacket?: AuthorPacketV1;
   reviewConfigRef: string;
   blobCount: number;
+  guidanceGraph?: GuidanceGraphV1;
+  guidanceGraphDigest?: z.infer<typeof DigestV1Schema>;
 }
 
 export interface InspectedSnapshotPacket
@@ -74,6 +82,14 @@ const PacketMetadataSchema = z.union([
     requestSchemaVersion: z.union([z.literal(1), z.literal(2)]),
     reviewConfigRef: PacketMetadataV1Schema.shape.reviewConfigRef,
     contextMapDigest: DigestV1Schema,
+    authorDigest: DigestV1Schema.optional(),
+  }),
+  z.strictObject({
+    schemaVersion: z.literal(4),
+    requestSchemaVersion: z.union([z.literal(1), z.literal(2)]),
+    reviewConfigRef: PacketMetadataV1Schema.shape.reviewConfigRef,
+    contextMapDigest: DigestV1Schema,
+    guidanceGraphDigest: DigestV1Schema,
     authorDigest: DigestV1Schema.optional(),
   }),
 ]);
@@ -358,6 +374,7 @@ export async function writeSnapshotPacketV1(
   packetPath: string,
   captured: CapturedGitSnapshotV1,
   requestValue: unknown,
+  options: { guidance?: CapturedReviewerRulesGuidanceV1 } = {},
 ): Promise<void> {
   const request = ReviewRequestSchema.parse(requestValue);
   if (!verifySnapshotManifestIdentityV1(captured.manifest)) {
@@ -366,8 +383,26 @@ export async function writeSnapshotPacketV1(
   assertCanonicalInputsMatch(captured.manifest, request.canonicalInputs);
   const contextMap = await buildReviewContextMapV1(captured.manifest, captured.blobs);
   const records = contentRecords(captured.manifest);
+  const packetBlobs = new Map(captured.blobs);
+  if (options.guidance) {
+    assertGuidanceGraphMatchesSnapshotV1(options.guidance.graph, captured.manifest);
+    for (const node of options.guidance.graph.nodes) {
+      const bytes = options.guidance.blobs.get(node.contentDigest.value);
+      if (!bytes || sha256BytesHex(bytes) !== node.contentDigest.value) {
+        throw new Error(`Guidance blob ${node.contentDigest.value} failed digest verification.`);
+      }
+      const existing = packetBlobs.get(node.contentDigest.value);
+      if (existing && !Buffer.from(existing).equals(bytes)) {
+        throw new Error("Guidance digest conflicts with captured snapshot content.");
+      }
+      packetBlobs.set(node.contentDigest.value, bytes);
+      if (!records.some(({ digest }) => digest === node.contentDigest.value)) {
+        records.push({ digest: node.contentDigest.value, byteLength: bytes.length });
+      }
+    }
+  }
   for (const record of records) {
-    const bytes = captured.blobs.get(record.digest);
+    const bytes = packetBlobs.get(record.digest);
     if (!bytes || bytes.length !== record.byteLength || sha256BytesHex(bytes) !== record.digest) {
       throw new Error(`Captured blob ${record.digest} does not match the snapshot manifest.`);
     }
@@ -389,6 +424,13 @@ export async function writeSnapshotPacketV1(
       flag: "wx",
       mode: 0o600,
     });
+    if (options.guidance) {
+      await writeFile(
+        join(stagingPath, GUIDANCE_GRAPH_FILE),
+        jsonDocument(options.guidance.graph),
+        { flag: "wx", mode: 0o600 },
+      );
+    }
     await writeFile(
       join(stagingPath, CANONICAL_INPUTS_FILE),
       jsonDocument(request.canonicalInputs),
@@ -397,10 +439,13 @@ export async function writeSnapshotPacketV1(
     await writeFile(
       join(stagingPath, PACKET_METADATA_FILE),
       jsonDocument({
-        schemaVersion: 3,
+        schemaVersion: options.guidance ? 4 : 3,
         requestSchemaVersion: request.schemaVersion,
         reviewConfigRef: request.reviewConfigRef,
         contextMapDigest: contextMap.contextMapDigest,
+        ...(options.guidance
+          ? { guidanceGraphDigest: guidanceGraphDigestV1(options.guidance.graph) }
+          : {}),
         ...(request.schemaVersion === 2
           ? { authorDigest: sha256Utf8(jsonDocument(request.authorPacket)) }
           : {}),
@@ -414,11 +459,10 @@ export async function writeSnapshotPacketV1(
       });
     }
     await mapWithConcurrencyV1(records, ({ digest }) =>
-      writeFile(
-        join(stagingPath, BLOBS_DIRECTORY, digest),
-        captured.blobs.get(digest) as Uint8Array,
-        { flag: "wx", mode: 0o600 },
-      ),
+      writeFile(join(stagingPath, BLOBS_DIRECTORY, digest), packetBlobs.get(digest) as Uint8Array, {
+        flag: "wx",
+        mode: 0o600,
+      }),
     );
     await rename(stagingPath, packetPath);
   } catch (error) {
@@ -459,13 +503,13 @@ export async function inspectSnapshotPacket(packetPath: string): Promise<Inspect
     JSON.parse(await readFile(join(packetPath, PACKET_METADATA_FILE), "utf8")),
   );
   if (
-    packetMetadata.schemaVersion === 3 &&
+    (packetMetadata.schemaVersion === 3 || packetMetadata.schemaVersion === 4) &&
     (packetMetadata.requestSchemaVersion === 2) !== (packetMetadata.authorDigest !== undefined)
   ) {
     throw new Error("Packet metadata author binding does not match request mode.");
   }
   const contextMap =
-    packetMetadata.schemaVersion === 3
+    packetMetadata.schemaVersion === 3 || packetMetadata.schemaVersion === 4
       ? ReviewContextMapV1Schema.parse(
           JSON.parse(await readFile(join(packetPath, CONTEXT_MAP_FILE), "utf8")),
         )
@@ -474,12 +518,36 @@ export async function inspectSnapshotPacket(packetPath: string): Promise<Inspect
     throw new Error("Review context map digest verification failed.");
   }
   if (
-    packetMetadata.schemaVersion === 3 &&
+    (packetMetadata.schemaVersion === 3 || packetMetadata.schemaVersion === 4) &&
     packetMetadata.contextMapDigest.value !== contextMap.contextMapDigest.value
   ) {
     throw new Error("Packet metadata context map digest verification failed.");
   }
   assertContextMapMatchesManifest(contextMap, manifest);
+  const guidanceGraph =
+    packetMetadata.schemaVersion === 4
+      ? GuidanceGraphV1Schema.parse(
+          JSON.parse(await readFile(join(packetPath, GUIDANCE_GRAPH_FILE), "utf8")),
+        )
+      : undefined;
+  if (packetMetadata.schemaVersion === 4 && guidanceGraph) {
+    assertGuidanceGraphMatchesSnapshotV1(guidanceGraph, manifest);
+    if (guidanceGraphDigestV1(guidanceGraph).value !== packetMetadata.guidanceGraphDigest.value) {
+      throw new Error("Packet metadata guidance graph digest verification failed.");
+    }
+    await mapWithConcurrencyV1(guidanceGraph.nodes, async (node) => {
+      const verified = await verifyBlobFile(
+        join(packetPath, BLOBS_DIRECTORY, node.contentDigest.value),
+      ).catch((error: unknown) => {
+        throw new Error(`Guidance blob ${node.contentDigest.value} failed verification.`, {
+          cause: error,
+        });
+      });
+      if (verified.digest !== node.contentDigest.value) {
+        throw new Error(`Guidance blob ${node.contentDigest.value} failed digest verification.`);
+      }
+    });
+  }
   assertCanonicalInputsMatch(manifest, canonicalInputs);
   const records = contentRecords(manifest);
   const rangedRegionsByDigest = new Map<string, ReviewContextMapV1["regions"]>();
@@ -501,7 +569,7 @@ export async function inspectSnapshotPacket(packetPath: string): Promise<Inspect
   });
   const authorPacket = await readOptionalAuthorPacket(packetPath);
   const requestSchemaVersion =
-    packetMetadata.schemaVersion === 3
+    packetMetadata.schemaVersion === 3 || packetMetadata.schemaVersion === 4
       ? packetMetadata.requestSchemaVersion
       : packetMetadata.schemaVersion;
   if ((requestSchemaVersion === 2) !== "standards" in canonicalInputs)
@@ -520,7 +588,13 @@ export async function inspectSnapshotPacket(packetPath: string): Promise<Inspect
     canonicalInputs,
     ...(authorPacket ? { authorPacket } : {}),
     reviewConfigRef: packetMetadata.reviewConfigRef,
-    blobCount: records.length,
+    blobCount: new Set([
+      ...records.map(({ digest }) => digest),
+      ...(guidanceGraph?.nodes.map(({ contentDigest }) => contentDigest.value) ?? []),
+    ]).size,
+    ...(guidanceGraph
+      ? { guidanceGraph, guidanceGraphDigest: guidanceGraphDigestV1(guidanceGraph) }
+      : {}),
   };
 }
 

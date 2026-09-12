@@ -825,7 +825,7 @@ it("prints help and version on stdout without a packet or provider", async () =>
   const printed = output.join("\n");
   assert.match(
     printed,
-    /Usage: independent-reviewer <init\|prepare\|inspect\|review\|resume-final>/,
+    /Usage: independent-reviewer <init\|prepare\|inspect\|review\|resume-final\|config>/,
   );
   assert.match(printed, /--config <value>/);
   assert.match(printed, /OPENROUTER_API_KEY/);

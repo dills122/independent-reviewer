@@ -1,4 +1,5 @@
 import { matchesGlob } from "node:path";
+import parseDiff from "parse-diff";
 import { finalizeReviewBrief } from "../contracts/artifact-identity.js";
 import {
   computeInitialEvidenceContentDigestV1,
@@ -7,13 +8,65 @@ import {
   type SnapshotContentV1,
 } from "../contracts/index.js";
 import { NeutralReviewBriefV1Schema, type ReviewBrief } from "../contracts/neutral-review-brief.js";
+import { compareUtf16 } from "../contracts/primitives.js";
 import {
   canonicalInputList,
   selectedReferences,
   selectedRules,
 } from "../contracts/standards-review.js";
+import { renderGuidancePromptPresentationV1 } from "../guidance/presentation.js";
 import { inspectSnapshotPacket, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
 import { renderUnifiedDiff } from "./unified-diff.js";
+
+const CHANGED_SOURCE_CONTEXT_RADIUS_V1 = 12;
+
+type SourceContextRangeV1 = { readonly startLine: number; readonly endLine: number };
+
+function logicalLines(source: string): string[] {
+  if (source.length === 0) return [];
+  const lines = source.split(/\r\n|[\r\n]/);
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
+}
+
+function changedLinesBySide(diff: string): { BASE: number[]; HEAD: number[] } {
+  const changed = { BASE: new Set<number>(), HEAD: new Set<number>() };
+  for (const file of parseDiff(diff)) {
+    for (const chunk of file.chunks) {
+      for (const change of chunk.changes) {
+        if (change.type === "del") changed.BASE.add(change.ln);
+        if (change.type === "add") changed.HEAD.add(change.ln);
+      }
+    }
+  }
+  return {
+    BASE: [...changed.BASE].sort((left, right) => left - right),
+    HEAD: [...changed.HEAD].sort((left, right) => left - right),
+  };
+}
+
+function boundedContextRanges(
+  changedLines: readonly number[],
+  lineCount: number,
+): SourceContextRangeV1[] {
+  const ranges: SourceContextRangeV1[] = [];
+  for (const line of changedLines) {
+    const candidate = {
+      startLine: Math.max(1, line - CHANGED_SOURCE_CONTEXT_RADIUS_V1),
+      endLine: Math.min(lineCount, line + CHANGED_SOURCE_CONTEXT_RADIUS_V1),
+    };
+    const previous = ranges.at(-1);
+    if (previous && candidate.startLine <= previous.endLine + 1) {
+      ranges[ranges.length - 1] = {
+        startLine: previous.startLine,
+        endLine: Math.max(previous.endLine, candidate.endLine),
+      };
+    } else {
+      ranges.push(candidate);
+    }
+  }
+  return ranges;
+}
 
 /**
  * How a captured side renders: either a standalone label, or a pointer to source bytes the caller
@@ -83,6 +136,12 @@ export async function buildReviewBrief(
     throw new TypeError("maxInitialEvidenceBytes must be a positive safe integer.");
   }
   const packet = await inspectSnapshotPacket(packetPath);
+  if (packet.guidanceGraph && !("standards" in packet.canonicalInputs)) {
+    throw new Error("Guidance-capable briefs require standards review mode.");
+  }
+  const guidancePresentation = packet.guidanceGraph
+    ? await renderGuidancePromptPresentationV1(packetPath, packet.guidanceGraph)
+    : undefined;
   const canonicalInputIds = canonicalInputList(packet.canonicalInputs).map((input) => input.id);
   const standardsRules =
     "standards" in packet.canonicalInputs ? selectedRules(packet.canonicalInputs) : undefined;
@@ -95,7 +154,8 @@ export async function buildReviewBrief(
     !standardsRules.some((rule) => rule.paths.some((pattern) => matchesGlob(path, pattern)));
 
   let transmittedBytes = 0;
-  const initialEvidence = [];
+  const initialEvidence: ReviewBrief["initialEvidence"] = [];
+  const droppedChangedContextPaths = new Set<string>();
   const evidencePaths = packet.manifest.paths.filter(
     (entry) => !isOutsideSelectedStandards(entry.path),
   );
@@ -126,6 +186,43 @@ export async function buildReviewBrief(
       content,
       digest: computeInitialEvidenceContentDigestV1(content),
     });
+    if (diff.form === "UNIFIED_HUNKS") {
+      const changedLines = changedLinesBySide(diff.content);
+      const sides = [
+        {
+          side: "BASE" as const,
+          path: "previousPath" in entry ? entry.previousPath : entry.path,
+          source: before,
+          changedLines: changedLines.BASE,
+        },
+        { side: "HEAD" as const, path: entry.path, source: after, changedLines: changedLines.HEAD },
+      ];
+      for (const side of sides) {
+        const lines = logicalLines(side.source);
+        for (const [rangeIndex, range] of boundedContextRanges(
+          side.changedLines,
+          lines.length,
+        ).entries()) {
+          const context = lines.slice(range.startLine - 1, range.endLine).join("\n");
+          const rendered = Buffer.byteLength(context, "utf8");
+          if (context.length === 0 || transmittedBytes + rendered > maxInitialEvidenceBytes) {
+            droppedChangedContextPaths.add(entry.path);
+            continue;
+          }
+          transmittedBytes += rendered;
+          initialEvidence.push({
+            type: "SOURCE_CONTEXT",
+            evidenceId: `evidence_context_${String(index + 1).padStart(4, "0")}_${side.side.toLowerCase()}_${String(rangeIndex + 1).padStart(4, "0")}`,
+            path: side.path,
+            side: side.side,
+            startLine: range.startLine,
+            endLine: range.endLine,
+            content: context,
+            digest: computeInitialEvidenceContentDigestV1(context),
+          });
+        }
+      }
+    }
   }
 
   /**
@@ -186,6 +283,16 @@ export async function buildReviewBrief(
           },
         ]
       : []),
+    ...(droppedChangedContextPaths.size > 0
+      ? [
+          {
+            type: "EVIDENCE_BUDGET" as const,
+            detail:
+              "Bounded changed-file context was not transmitted, so nearby behavior outside the unified hunk is unavailable to this review.",
+            paths: [...droppedChangedContextPaths].sort(compareUtf16),
+          },
+        ]
+      : []),
     ...packet.manifest.paths
       .filter(
         (entry) =>
@@ -238,7 +345,18 @@ export async function buildReviewBrief(
 
   return finalizeReviewBrief({
     ...("standards" in packet.canonicalInputs
-      ? { schemaVersion: 2, mode: "STANDARDS", referenceEvidence }
+      ? packet.guidanceGraph && packet.guidanceGraphDigest && guidancePresentation
+        ? {
+            schemaVersion: 3,
+            mode: "STANDARDS",
+            referenceEvidence,
+            guidanceGraph: {
+              graphId: packet.guidanceGraph.graphId,
+              guidanceGraphDigest: packet.guidanceGraphDigest,
+            },
+            guidancePresentation,
+          }
+        : { schemaVersion: 2, mode: "STANDARDS", referenceEvidence }
       : { schemaVersion: 1 }),
     briefId: `brief_${packet.manifest.snapshotDigest.value.slice(0, 24)}`,
     objective: {

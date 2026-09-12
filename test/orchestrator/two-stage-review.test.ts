@@ -689,6 +689,11 @@ describe("two-stage review orchestrator", () => {
             JSON.stringify(providerRequest.messages),
             /not included in transmitted evidence/i,
           );
+          const repairInstruction = JSON.parse(providerRequest.messages.at(-1)?.content ?? "{}");
+          assert.deepEqual(repairInstruction.acceptedLineEvidence, [
+            { path: "reviewed.ts", side: "BASE", ranges: [{ startLine: 30, endLine: 54 }] },
+            { path: "reviewed.ts", side: "HEAD", ranges: [{ startLine: 30, endLine: 54 }] },
+          ]);
           return {
             ...response({
               schemaVersion: 1,

@@ -1,9 +1,12 @@
 # Independent Reviewer — architecture and project plan
 
 Status: first local release implemented and exercised with controlled live smoke fixtures.
+Friendly operations implementation is in progress: simple settings, explicit
+reviewer rules, guidance admission, and identity binding are complete; broader
+harness discovery, inspection/lint, and interactive author input remain pending.
 
-Next milestone: friendly reviewer operations using simple local settings,
-repository Markdown steering, steering-budget admission, and first-class author
+Current milestone: complete friendly reviewer operations using repository
+Markdown steering, steering-budget inspection, and first-class author
 explanations. Design is accepted in
 [ADR-013](decisions/013-separate-simple-settings-from-resolved-review-policy.md)
 and [ADR-014](decisions/014-discover-repository-markdown-steering.md); execution
@@ -33,11 +36,13 @@ Fresh blind finding verification is recorded in
 
 ## Planned operator experience
 
-Current standards mode remains implemented as validated profile JSON. The next
-milestone adds a normal-user layer without weakening or silently changing that
-contract. A user selects a supported model and maximum review cost, reuses
-applicable repository Markdown guidance, and supplies an author explanation.
-The runner resolves those inputs into strict versioned runtime artifacts.
+Current standards mode supports validated profile JSON plus simple model/cost
+settings and BASE-owned `.independent-reviewer/rules.md`. Remaining milestone
+work adds common-harness discovery, steering inspection/lint, and interactive
+author input without weakening or silently changing strict runtime contracts.
+A user selects a supported model and maximum review cost, reuses applicable
+repository Markdown guidance, and supplies an author explanation. The runner
+resolves those inputs into strict versioned runtime artifacts.
 
 Repository guidance is discovered from common coding-agent locations in the
 frozen BASE tree. `.independent-reviewer/rules.md`, when present, is highest-

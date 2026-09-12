@@ -9,7 +9,7 @@ const ProviderEndpointSlugV1Schema = z
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/, "must be an OpenRouter provider endpoint slug");
 
-const ModelSlugV1Schema = z.string().trim().min(1).max(256);
+export const ReviewModelSlugV1Schema = z.string().trim().min(1).max(256);
 
 export const OpenRouterProviderRoutingV2Schema = z
   .strictObject({
@@ -57,12 +57,12 @@ export const ReviewRunConfigV3Schema = z
     schemaVersion: z.literal(3),
     configId: prefixedIdentifier("config"),
     /** Primary review model. Explicit identity only; aliases such as `:latest` are rejected. */
-    model: ModelSlugV1Schema,
+    model: ReviewModelSlugV1Schema,
     /**
      * Ordered fallback models, used when the primary is rate-limited, down, or over context.
      * A review artifact records the model that actually answered.
      */
-    fallbackModels: z.array(ModelSlugV1Schema).max(4).default([]),
+    fallbackModels: z.array(ReviewModelSlugV1Schema).max(4).default([]),
     providerRouting: OpenRouterProviderRoutingV2Schema,
     budgets: z.strictObject({
       maxInitialEvidenceBytes: z.int().min(1),

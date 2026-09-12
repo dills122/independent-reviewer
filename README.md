@@ -15,6 +15,10 @@ fixtures. It supports cumulative committed, staged, unstaged, and selected
 untracked changes; language-neutral file-level context; Tree-sitter enrichment
 for JavaScript, TypeScript, Python, Go, and Java; bounded OpenRouter routing and
 spend; durable run records; and fail-closed report validation.
+Simple settings reduce initial configuration to model and maximum cost. An
+optional BASE-owned `.independent-reviewer/rules.md` supplies highest-priority
+review guidance, and digest-bound source windows give reviewers bounded context
+around changed lines.
 
 This remains pre-release software. Review output is evidence for engineering
 judgment, not proof of correctness or deployment readiness.
@@ -37,20 +41,19 @@ npm ci
 npm run build
 ```
 
-Create a non-empty author overview for the change, then save review settings for
-the target repository:
+Save simple review settings for the target repository:
 
 ```sh
 node dist/src/cli.js init \
   --repo /path/to/target-repository \
-  --config "$PWD/examples/review-config.gpt-oss-120b.json" \
-  --standards "$PWD/examples/standards.javascript-typescript.json" \
-  --author /absolute/path/to/author-overview.md
+  --model openai/gpt-oss-120b \
+  --max-cost 0.05
 ```
 
-The bundled standards profile is an example for JavaScript and TypeScript, not a
-product limitation. Copy and adapt its `paths` and rules for the languages and
-standards used by your project.
+Create a non-empty author overview for the change. During the transition to
+automatic harness discovery and interactive author input, provide the standards
+profile and author file on each review. The bundled profile is an example, not a
+product language limitation.
 
 Check exact scope and conservative admission without credentials or provider
 calls:
@@ -59,6 +62,8 @@ calls:
 node dist/src/cli.js review \
   --repo /path/to/target-repository \
   --base main \
+  --standards "$PWD/examples/standards.javascript-typescript.json" \
+  --author /absolute/path/to/author-overview.md \
   --dry-run
 ```
 
@@ -73,8 +78,14 @@ Then let Node load it without sourcing or printing the file:
 ```sh
 node --env-file=.env dist/src/cli.js review \
   --repo /path/to/target-repository \
-  --base main
+  --base main \
+  --standards "$PWD/examples/standards.javascript-typescript.json" \
+  --author /absolute/path/to/author-overview.md
 ```
+
+If present in the frozen BASE tree,
+`<target-repository>/.independent-reviewer/rules.md` is captured automatically
+as opaque, highest-priority review guidance after secret and budget admission.
 
 Use the actual base ref for your changes. Live reports default to
 `<target-repository>/.review-runs/<snapshot-id>/review/report.md`.
