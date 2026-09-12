@@ -38,6 +38,13 @@ export type {
   GuidanceGraphV1,
   GuidanceTargetV1,
 } from "./guidance-graph.js";
+export type { GuidancePromptPresentationV1 } from "./guidance-presentation.js";
+export {
+  CanonicalGuidancePresentationV1Schema,
+  GuidanceGraphBindingV1Schema,
+  GuidancePresentationSourceV1Schema,
+  GuidancePromptPresentationV1Schema,
+} from "./guidance-presentation.js";
 export {
   assertGuidanceGraphMatchesSnapshotV1,
   buildReviewerRulesGuidanceGraphV1,
@@ -71,6 +78,7 @@ export {
   NeutralReviewBriefV1Schema,
   ReviewBriefSchema,
   StandardsReviewBriefV2Schema,
+  StandardsReviewBriefV3Schema,
 } from "./neutral-review-brief.js";
 export {
   CanonicalInputIdSchema,

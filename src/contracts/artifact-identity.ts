@@ -3,7 +3,9 @@ import {
   type NeutralReviewBriefV1,
   NeutralReviewBriefV1Schema,
   type ReviewBrief,
+  ReviewBriefSchema,
   StandardsReviewBriefV2Schema,
+  StandardsReviewBriefV3Schema,
 } from "./neutral-review-brief.js";
 import { compareUtf16 } from "./primitives.js";
 import {
@@ -207,20 +209,23 @@ export function finalizeReviewBrief(value: unknown): ReviewBrief {
   const cloned = cloneCanonicalJson(value);
   if (!cloned || typeof cloned !== "object" || Array.isArray(cloned))
     throw new TypeError("Brief must be an object.");
-  if ((cloned as Record<string, unknown>).schemaVersion !== 2)
-    return finalizeNeutralReviewBriefV1(cloned);
+  const schemaVersion = (cloned as Record<string, unknown>).schemaVersion;
+  if (schemaVersion === 1) return finalizeNeutralReviewBriefV1(cloned);
+  if (schemaVersion !== 2 && schemaVersion !== 3)
+    throw new TypeError("Unsupported brief schema version.");
   if (Object.hasOwn(cloned, "briefDigest"))
     throw new TypeError("Brief draft must not contain briefDigest.");
-  const parsed = StandardsReviewBriefV2Schema.parse(
-    addOwnField(cloned, "briefDigest", PLACEHOLDER_DIGEST),
-  );
+  const parsed =
+    schemaVersion === 2
+      ? StandardsReviewBriefV2Schema.parse(addOwnField(cloned, "briefDigest", PLACEHOLDER_DIGEST))
+      : StandardsReviewBriefV3Schema.parse(addOwnField(cloned, "briefDigest", PLACEHOLDER_DIGEST));
   if (!verifySnapshotManifestIdentityV1(parsed.snapshotManifest))
     throw new TypeError("Invalid snapshot identity.");
   const { briefId: _id, briefDigest: _digest, ...content } = parsed;
   return {
     ...parsed,
     briefDigest: digestCanonicalJson({
-      identityProfile: "urn:independent-reviewer:identity:standards-brief:v2",
+      identityProfile: `urn:independent-reviewer:identity:standards-brief:v${schemaVersion}`,
       content,
     }),
   };
@@ -229,9 +234,10 @@ export function verifyReviewBriefIdentity(value: unknown): value is ReviewBrief 
   try {
     const cloned = cloneCanonicalJson(value);
     if (!cloned || typeof cloned !== "object" || Array.isArray(cloned)) return false;
-    if ((cloned as Record<string, unknown>).schemaVersion !== 2)
+    if ((cloned as Record<string, unknown>).schemaVersion === 1)
       return verifyNeutralReviewBriefIdentityV1(cloned);
-    const parsed = StandardsReviewBriefV2Schema.parse(cloned);
+    const parsed = ReviewBriefSchema.parse(cloned);
+    if (parsed.schemaVersion === 1) return false;
     const { briefDigest, ...draft } = parsed;
     return finalizeReviewBrief(draft).briefDigest.value === briefDigest.value;
   } catch {

@@ -12,6 +12,7 @@ import {
   selectedReferences,
   selectedRules,
 } from "../contracts/standards-review.js";
+import { renderGuidancePromptPresentationV1 } from "../guidance/presentation.js";
 import { inspectSnapshotPacket, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
 import { renderUnifiedDiff } from "./unified-diff.js";
 
@@ -83,6 +84,12 @@ export async function buildReviewBrief(
     throw new TypeError("maxInitialEvidenceBytes must be a positive safe integer.");
   }
   const packet = await inspectSnapshotPacket(packetPath);
+  if (packet.guidanceGraph && !("standards" in packet.canonicalInputs)) {
+    throw new Error("Guidance-capable briefs require standards review mode.");
+  }
+  const guidancePresentation = packet.guidanceGraph
+    ? await renderGuidancePromptPresentationV1(packetPath, packet.guidanceGraph)
+    : undefined;
   const canonicalInputIds = canonicalInputList(packet.canonicalInputs).map((input) => input.id);
   const standardsRules =
     "standards" in packet.canonicalInputs ? selectedRules(packet.canonicalInputs) : undefined;
@@ -238,7 +245,18 @@ export async function buildReviewBrief(
 
   return finalizeReviewBrief({
     ...("standards" in packet.canonicalInputs
-      ? { schemaVersion: 2, mode: "STANDARDS", referenceEvidence }
+      ? packet.guidanceGraph && packet.guidanceGraphDigest && guidancePresentation
+        ? {
+            schemaVersion: 3,
+            mode: "STANDARDS",
+            referenceEvidence,
+            guidanceGraph: {
+              graphId: packet.guidanceGraph.graphId,
+              guidanceGraphDigest: packet.guidanceGraphDigest,
+            },
+            guidancePresentation,
+          }
+        : { schemaVersion: 2, mode: "STANDARDS", referenceEvidence }
       : { schemaVersion: 1 }),
     briefId: `brief_${packet.manifest.snapshotDigest.value.slice(0, 24)}`,
     objective: {

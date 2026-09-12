@@ -11,7 +11,7 @@ import {
   SnapshotPathV1Schema,
 } from "./snapshot-manifest.js";
 
-const GuidanceFamilyV1Schema = z.enum([
+export const GuidanceFamilyV1Schema = z.enum([
   "CODEX",
   "CLAUDE",
   "GEMINI",
@@ -21,7 +21,7 @@ const GuidanceFamilyV1Schema = z.enum([
   "INDEPENDENT_REVIEWER",
 ]);
 
-const GuidanceSourceKindV1Schema = z.enum([
+export const GuidanceSourceKindV1Schema = z.enum([
   "CODEX_AGENTS",
   "CODEX_AGENTS_OVERRIDE",
   "CLAUDE_MD",
@@ -40,7 +40,7 @@ const GuidanceSourceKindV1Schema = z.enum([
   "REVIEWER_RULES",
 ]);
 
-const DirectRecognitionV1Schema = z.strictObject({
+export const DirectRecognitionV1Schema = z.strictObject({
   familyId: GuidanceFamilyV1Schema,
   sourceKind: GuidanceSourceKindV1Schema,
   nativeOrder: z.int().nonnegative(),
@@ -65,7 +65,7 @@ export const GuidanceTargetV1Schema = z.strictObject({
   ]),
 });
 
-const GuidanceSourceNodeV1Schema = z.strictObject({
+export const GuidanceSourceNodeV1Schema = z.strictObject({
   sourceId: prefixedIdentifier("guidance_source"),
   resolvedPath: SnapshotPathV1Schema,
   contentDigest: DigestV1Schema,
@@ -74,7 +74,7 @@ const GuidanceSourceNodeV1Schema = z.strictObject({
   directRecognitions: z.array(DirectRecognitionV1Schema),
 });
 
-const GuidanceOccurrenceV1Schema = z.strictObject({
+export const GuidanceOccurrenceV1Schema = z.strictObject({
   occurrenceId: prefixedIdentifier("guidance_occurrence"),
   familyId: GuidanceFamilyV1Schema,
   syntaxKind: z.enum([
@@ -94,7 +94,7 @@ const GuidanceOccurrenceV1Schema = z.strictObject({
   endUtf16: z.int().positive(),
 });
 
-const GuidanceEdgeV1Schema = z.strictObject({
+export const GuidanceEdgeV1Schema = z.strictObject({
   edgeId: prefixedIdentifier("guidance_edge"),
   occurrenceId: prefixedIdentifier("guidance_occurrence"),
   importedSourceId: prefixedIdentifier("guidance_source"),

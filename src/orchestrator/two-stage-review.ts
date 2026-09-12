@@ -166,7 +166,7 @@ function blindReviewEvidence(
     },
     reviewContext: focusedReviewContext(plan, contextMap),
   };
-  if (brief.schemaVersion === 2)
+  if (brief.schemaVersion !== 1)
     return {
       ...brief,
       ...reviewPlanning,

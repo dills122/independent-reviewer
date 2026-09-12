@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, it } from "node:test";
 
-import { buildReviewBrief, captureGitSnapshotV1, writeSnapshotPacketV1 } from "../../src/index.js";
+import {
+  buildReviewBrief,
+  captureGitSnapshotV1,
+  captureReviewerRulesGuidanceV1,
+  verifyReviewBriefIdentity,
+  writeSnapshotPacketV1,
+} from "../../src/index.js";
 import { renderUnifiedDiff } from "../../src/transmission/unified-diff.js";
 
 const execFileAsync = promisify(execFile);
@@ -86,7 +92,7 @@ async function arrangePacket(before: string | null, after: string | null): Promi
   return packetPath;
 }
 
-async function arrangeStandardsPacket(): Promise<string> {
+async function arrangeStandardsPacket(baseRules?: string): Promise<string> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-scope-"));
   repositories.push(repositoryPath);
   await git(repositoryPath, "init", "--initial-branch=main");
@@ -95,6 +101,10 @@ async function arrangeStandardsPacket(): Promise<string> {
   await git(repositoryPath, "config", "commit.gpgsign", "false");
   await writeFile(join(repositoryPath, "reviewed.ts"), "export const value = 1;\n");
   await writeFile(join(repositoryPath, "settings.json"), '{"enabled":false}\n');
+  if (baseRules !== undefined) {
+    await mkdir(join(repositoryPath, ".independent-reviewer"), { recursive: true });
+    await writeFile(join(repositoryPath, ".independent-reviewer", "rules.md"), baseRules);
+  }
   await git(repositoryPath, "add", ".");
   await git(repositoryPath, "commit", "-m", "initial");
   await git(repositoryPath, "switch", "-c", "feature/scope");
@@ -143,7 +153,12 @@ async function arrangeStandardsPacket(): Promise<string> {
     reviewConfigRef: "config_test",
   };
   const packetPath = join(repositoryPath, ".review-runs", "packet");
-  await writeSnapshotPacketV1(packetPath, await captureGitSnapshotV1(request), request);
+  const captured = await captureGitSnapshotV1(request);
+  const guidance =
+    baseRules === undefined
+      ? undefined
+      : await captureReviewerRulesGuidanceV1(repositoryPath, captured.manifest);
+  await writeSnapshotPacketV1(packetPath, captured, request, guidance ? { guidance } : undefined);
   return packetPath;
 }
 
@@ -221,6 +236,53 @@ describe("buildReviewBrief diff evidence", () => {
           paths: ["settings.json"],
         },
       ],
+    );
+  });
+
+  it("binds whole BASE reviewer guidance and exact provenance into a v3 brief", async () => {
+    const rules = "# Hard stops\n\nNever silently fall back. 😀\n";
+    const packetPath = await arrangeStandardsPacket(rules);
+
+    const brief = await buildReviewBrief(packetPath, 32_000);
+
+    assert.equal(brief.schemaVersion, 3);
+    if (brief.schemaVersion !== 3) throw new Error("Expected guidance-capable standards brief.");
+    assert.equal(brief.guidanceGraph.graphId.startsWith("guidance_"), true);
+    assert.equal(
+      brief.guidanceGraph.guidanceGraphDigest.value,
+      brief.guidanceGraph.graphId.slice("guidance_".length),
+    );
+    const presentation = JSON.parse(brief.guidancePresentation);
+    assert.equal(presentation.schemaVersion, 1);
+    assert.equal(presentation.sources.length, 1);
+    assert.equal(presentation.sources[0].path, ".independent-reviewer/rules.md");
+    assert.equal(presentation.sources[0].semanticTier, "REVIEWER_SPECIFIC");
+    assert.equal(presentation.sources[0].content, rules);
+    assert.deepEqual(presentation.sources[0].sourceRange, {
+      coordinateUnit: "UTF16_CODE_UNIT",
+      startOffset: 0,
+      endOffsetExclusive: rules.length,
+    });
+    assert.deepEqual(
+      presentation.sources[0].applicableTargets.map(
+        (target: { path: string; side: string; role: string }) => ({
+          path: target.path,
+          side: target.side,
+          role: target.role,
+        }),
+      ),
+      [
+        { path: "reviewed.ts", side: "HEAD", role: "PRIMARY" },
+        { path: "settings.json", side: "HEAD", role: "PRIMARY" },
+      ],
+    );
+    assert.equal(verifyReviewBriefIdentity(brief), true);
+    assert.equal(
+      verifyReviewBriefIdentity({
+        ...brief,
+        guidancePresentation: `${brief.guidancePresentation} `,
+      }),
+      false,
     );
   });
 });

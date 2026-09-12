@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { ReviewRequestV1Schema } from "../../src/contracts/review-request.js";
-import { StandardsReviewBriefV2Schema } from "../../src/contracts/neutral-review-brief.js";
+import {
+  StandardsReviewBriefV2Schema,
+  StandardsReviewBriefV3Schema,
+} from "../../src/contracts/neutral-review-brief.js";
 import {
   contractJsonSchema,
   StandardsProfileSchema,
@@ -121,5 +124,9 @@ test("standards profile and brief v2 match committed JSON Schemas", async () => 
   assert.deepEqual(
     JSON.parse(await readFile("schemas/standards-review-brief-v2.schema.json", "utf8")),
     contractJsonSchema(StandardsReviewBriefV2Schema, "standards-review-brief:v2"),
+  );
+  assert.deepEqual(
+    JSON.parse(await readFile("schemas/standards-review-brief-v3.schema.json", "utf8")),
+    contractJsonSchema(StandardsReviewBriefV3Schema, "standards-review-brief:v3"),
   );
 });

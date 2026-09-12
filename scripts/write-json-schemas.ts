@@ -12,6 +12,7 @@ import { GUIDANCE_GRAPH_V1_JSON_SCHEMA } from "../src/contracts/guidance-graph.j
 import {
   NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,
   StandardsReviewBriefV2Schema,
+  StandardsReviewBriefV3Schema,
 } from "../src/contracts/neutral-review-brief.js";
 import { REVIEW_CONTEXT_MAP_V1_JSON_SCHEMA } from "../src/contracts/review-context-map.js";
 import { REVIEW_REQUEST_V1_JSON_SCHEMA } from "../src/contracts/review-request.js";
@@ -59,6 +60,10 @@ const schemaArtifacts = [
   [
     "standards-review-brief-v2.schema.json",
     contractJsonSchema(StandardsReviewBriefV2Schema, "standards-review-brief:v2"),
+  ],
+  [
+    "standards-review-brief-v3.schema.json",
+    contractJsonSchema(StandardsReviewBriefV3Schema, "standards-review-brief:v3"),
   ],
   [
     "standards-inspection-report-v2.schema.json",
