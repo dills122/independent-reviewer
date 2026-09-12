@@ -103,6 +103,18 @@ interface CollectedState {
 
 /** Paths per `git check-attr` invocation, bounded by the platform argument limit. */
 const GIT_ATTRIBUTE_BATCH_V1 = 200;
+
+/** Extra `check-attr` calls allowed across one capture while isolating a failing path. */
+const GIT_ATTRIBUTE_MAX_RETRY_CALLS_V1 = 64;
+
+/** Git's exit code when it cannot read working-tree content it needs to compare. */
+const GIT_UNREADABLE_CONTENT_EXIT_V1 = 128;
+
+/** Accepted from a `--quiet --exit-code` probe: 0 clean, 1 differs, 128 content unreadable. */
+const DIRTY_PROBE_EXIT_CODES_V1 = [0, 1, GIT_UNREADABLE_CONTENT_EXIT_V1] as const;
+
+/** Omission scope for a repository-wide probe, which names no single path. */
+const DIRTY_STATE_PROBE_SCOPE_V1 = "repository:working-tree-state";
 const DEFAULT_MAX_FILE_BYTES = 512 * 1024;
 const DEFAULT_MAX_ATTEMPTS = 2;
 
@@ -573,47 +585,94 @@ async function captureReferencedSources(
  * Resolves the project's own `.gitattributes` answers for a batch of paths.
  *
  * `git check-attr` is the only correct reader of the attribute stack: it applies the repository
- * root file, nested directory files, and the user's global configuration in the right order. A
- * failure degrades to no attributes, which leaves classification to the heuristics.
+ * root file, nested directory files, and the user's global configuration in the right order.
+ *
+ * A failing batch used to be skipped outright, so up to 200 paths silently lost their
+ * `.gitattributes` answers and a vendored or generated file could be admitted as SOURCE and shipped
+ * to the provider with nothing recorded (#95). A failure now bisects the batch, so one pathological
+ * path costs its own answers rather than its neighbours', and whatever stays unresolved is returned
+ * for the caller to record.
  */
-async function resolveGitAttributesV1(
+export interface ResolvedGitAttributesV1 {
+  resolved: Map<string, PathGitAttributesV1>;
+  unresolved: string[];
+}
+
+/** Reads one batch of paths, or returns undefined when Git could not answer for that batch. */
+export type GitAttributeBatchReaderV1 = (
+  batch: readonly string[],
+) => Promise<Uint8Array | undefined>;
+
+async function readAttributeBatch(
+  repositoryPath: string,
+  batch: readonly string[],
+): Promise<Uint8Array | undefined> {
+  try {
+    // Paths go as arguments rather than on stdin, so this needs no change to the shared Git runner.
+    const result = await runGit(repositoryPath, [
+      "check-attr",
+      "-z",
+      "linguist-generated",
+      "linguist-vendored",
+      "linguist-documentation",
+      "--",
+      ...batch,
+    ]);
+    return result.stdout;
+  } catch {
+    return undefined;
+  }
+}
+
+function recordAttributes(stdout: Uint8Array, resolved: Map<string, PathGitAttributesV1>): void {
+  // Records are NUL-separated triples of path, attribute, value.
+  const fields = decodeGitText(stdout).split("\0");
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    const path = fields[index] as string;
+    const attribute = fields[index + 1] as string;
+    if (fields[index + 2] !== "set" && fields[index + 2] !== "true") continue;
+    const entry = resolved.get(path) ?? {};
+    if (attribute === "linguist-generated") entry.generated = true;
+    if (attribute === "linguist-vendored") entry.vendored = true;
+    if (attribute === "linguist-documentation") entry.documentation = true;
+    resolved.set(path, entry);
+  }
+}
+
+export async function resolveGitAttributesV1(
   repositoryPath: string,
   paths: readonly string[],
-): Promise<Map<string, PathGitAttributesV1>> {
+  // Injectable so the bisecting and unresolved-path behaviour is testable: a real `check-attr`
+  // fails only on conditions a capture cannot produce, such as a path outside the repository.
+  readBatch: GitAttributeBatchReaderV1 = (batch) => readAttributeBatch(repositoryPath, batch),
+): Promise<ResolvedGitAttributesV1> {
   const resolved = new Map<string, PathGitAttributesV1>();
-  // Paths go as arguments rather than on stdin, so this needs no change to the shared Git runner.
+  const unresolved: string[] = [];
+  // Bounded so a repository-wide Git failure degrades in a fixed number of calls instead of
+  // bisecting every batch down to single paths.
+  let remainingRetries = GIT_ATTRIBUTE_MAX_RETRY_CALLS_V1;
+
+  const resolveChunk = async (batch: readonly string[]): Promise<void> => {
+    const stdout = await readBatch(batch);
+    if (stdout) {
+      recordAttributes(stdout, resolved);
+      return;
+    }
+    if (batch.length === 1 || remainingRetries <= 0) {
+      unresolved.push(...batch);
+      return;
+    }
+    remainingRetries -= 2;
+    const middle = Math.floor(batch.length / 2);
+    await resolveChunk(batch.slice(0, middle));
+    await resolveChunk(batch.slice(middle));
+  };
+
   // Chunking keeps a large changeset inside the platform argument limit.
   for (let start = 0; start < paths.length; start += GIT_ATTRIBUTE_BATCH_V1) {
-    const batch = paths.slice(start, start + GIT_ATTRIBUTE_BATCH_V1);
-    let stdout: Uint8Array;
-    try {
-      const result = await runGit(repositoryPath, [
-        "check-attr",
-        "-z",
-        "linguist-generated",
-        "linguist-vendored",
-        "linguist-documentation",
-        "--",
-        ...batch,
-      ]);
-      stdout = result.stdout;
-    } catch {
-      continue;
-    }
-    // Records are NUL-separated triples of path, attribute, value.
-    const fields = decodeGitText(stdout).split("\0");
-    for (let index = 0; index + 2 < fields.length; index += 3) {
-      const path = fields[index] as string;
-      const attribute = fields[index + 1] as string;
-      if (fields[index + 2] !== "set" && fields[index + 2] !== "true") continue;
-      const entry = resolved.get(path) ?? {};
-      if (attribute === "linguist-generated") entry.generated = true;
-      if (attribute === "linguist-vendored") entry.vendored = true;
-      if (attribute === "linguist-documentation") entry.documentation = true;
-      resolved.set(path, entry);
-    }
+    await resolveChunk(paths.slice(start, start + GIT_ATTRIBUTE_BATCH_V1));
   }
-  return resolved;
+  return { resolved, unresolved };
 }
 
 async function captureTreeSide(
@@ -781,11 +840,23 @@ async function collectState(
     [0, 1],
   );
   const branch = branchResult.exitCode === 0 ? decodeGitText(branchResult.stdout) : null;
+  // A dirty-state probe compares working-tree content, so one unreadable tracked file makes Git
+  // exit 128 and previously failed the whole capture with a raw Git diagnostic (#57). A tree Git
+  // cannot fully read is not verifiably clean, so the flag goes to true and the degradation is
+  // recorded below; the per-path loop still reports each unreadable file as an UNREADABLE omission.
   const stagedResult = captureWorkingTree
-    ? await runGit(repositoryPath, ["diff", "--cached", "--quiet", "--exit-code", "--"], [0, 1])
+    ? await runGit(
+        repositoryPath,
+        ["diff", "--cached", "--quiet", "--exit-code", "--"],
+        DIRTY_PROBE_EXIT_CODES_V1,
+      )
     : { exitCode: 0 };
   const unstagedResult = captureWorkingTree
-    ? await runGit(repositoryPath, ["diff", "--quiet", "--exit-code", "--"], [0, 1])
+    ? await runGit(
+        repositoryPath,
+        ["diff", "--quiet", "--exit-code", "--"],
+        DIRTY_PROBE_EXIT_CODES_V1,
+      )
     : { exitCode: 0 };
   const specs = await collectChangeSpecs(
     repositoryPath,
@@ -797,13 +868,32 @@ async function collectState(
   const paths: SnapshotManifestIdentityInputV1["paths"] = [];
   const exclusions: SnapshotManifestIdentityInputV1["exclusions"] = [];
   const omissions: SnapshotManifestIdentityInputV1["omissions"] = [];
+  for (const [label, result] of [
+    ["staged", stagedResult],
+    ["unstaged", unstagedResult],
+  ] as const) {
+    if (result.exitCode === GIT_UNREADABLE_CONTENT_EXIT_V1)
+      omissions.push({
+        scope: DIRTY_STATE_PROBE_SCOPE_V1,
+        reason: "UNREADABLE",
+        detail: `Git could not compare ${label} working-tree content, so the ${label}-changes flag is reported as changed without being verified.`,
+      });
+  }
   const blobs = new Map<string, Uint8Array>();
   const includedUntrackedPaths: string[] = [];
   const roles = new Map<string, PathRoleV1>();
-  const attributes = await resolveGitAttributesV1(
-    repositoryPath,
-    specs.map((spec) => spec.path),
-  );
+  const { resolved: attributes, unresolved: unresolvedAttributePaths } =
+    await resolveGitAttributesV1(
+      repositoryPath,
+      specs.map((spec) => spec.path),
+    );
+  for (const path of unresolvedAttributePaths)
+    omissions.push({
+      scope: path,
+      reason: "OTHER",
+      detail:
+        "Git could not resolve .gitattributes for this path, so its role comes from heuristics rather than the project's own declarations.",
+    });
 
   for (const spec of specs) {
     const relevantPaths = spec.previousPath ? [spec.previousPath, spec.path] : [spec.path];
@@ -1043,8 +1133,8 @@ async function collectState(
   const stableState = {
     branch,
     headCommit: observedHeadCommit,
-    hasStagedChanges: stagedResult.exitCode === 1,
-    hasUnstagedChanges: unstagedResult.exitCode === 1,
+    hasStagedChanges: stagedResult.exitCode !== 0,
+    hasUnstagedChanges: unstagedResult.exitCode !== 0,
     includedUntrackedPaths,
     paths,
     referencedSources,
