@@ -6,6 +6,7 @@ import {
   sha256Utf8,
   type OpenRouterProviderRoutingV2,
 } from "../contracts/index.js";
+import { parseStrictJsonV1 } from "../contracts/strict-json.js";
 import {
   ProviderCallError,
   type ProviderErrorDiagnosticV1,
@@ -483,7 +484,10 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
 
     let body: unknown;
     try {
-      body = JSON.parse(rawBody) as unknown;
+      body = parseStrictJsonV1(rawBody, {
+        maxBytes: MAX_PROVIDER_RESPONSE_BYTES,
+        source: "OpenRouter response envelope",
+      });
     } catch (error) {
       if (!response.ok) {
         const diagnostic = providerErrorDiagnostic(
@@ -494,17 +498,17 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
         );
         throw new ProviderCallError(
           "PROVIDER_ERROR",
-          `OpenRouter request failed (HTTP ${response.status}).`,
+          `OpenRouter request failed (HTTP ${response.status}); response body failed strict JSON admission.`,
           {
+            cause: error,
             diagnostic,
-            responseBody: rawBody.replaceAll(this.#apiKey, "[REDACTED]"),
           },
         );
       }
       throw new ProviderCallError(
         "INVALID_RESPONSE",
-        `OpenRouter returned a non-JSON response (HTTP ${response.status}).`,
-        { cause: error, responseBody: rawBody.replaceAll(this.#apiKey, "[REDACTED]") },
+        `OpenRouter response envelope failed strict JSON admission (HTTP ${response.status}).`,
+        { cause: error },
       );
     }
     const responseBody = redactCredential(body, this.#apiKey);
@@ -582,15 +586,15 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
 
     let value: unknown;
     try {
-      value = JSON.parse(content) as unknown;
+      value = parseStrictJsonV1(content, {
+        maxBytes: MAX_PROVIDER_RESPONSE_BYTES,
+        source: "OpenRouter structured completion",
+      });
     } catch (error) {
       throw new ProviderCallError(
         "INVALID_RESPONSE",
-        "OpenRouter returned malformed structured JSON.",
-        {
-          cause: error,
-          ...rejectedResponse,
-        },
+        "OpenRouter structured completion failed strict JSON admission.",
+        { cause: error },
       );
     }
 
