@@ -447,9 +447,15 @@ describe("captureGitSnapshotV1", () => {
   it("keeps synthetic secret-scanner fixtures reviewable", async () => {
     const repositoryPath = await createRepository();
     try {
-      await git(repositoryPath, "switch", "-c", "feature/reviewable-security-test");
       const compiledTestSource = await readFile(new URL(import.meta.url), "utf8");
       await writeFile(join(repositoryPath, "security-test.ts"), compiledTestSource);
+      await git(repositoryPath, "add", "security-test.ts");
+      await git(repositoryPath, "commit", "-m", "add reviewable security test");
+      await git(repositoryPath, "switch", "-c", "feature/reviewable-security-test");
+      await writeFile(
+        join(repositoryPath, "security-test.ts"),
+        `${compiledTestSource}\n// Exercise a later security-test change.\n`,
+      );
 
       const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
 
