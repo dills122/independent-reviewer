@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -9,6 +9,8 @@ import { promisify } from "node:util";
 import { captureGitSnapshotV1, type ReviewRequestV1 } from "../../src/index.js";
 
 const execFileAsync = promisify(execFile);
+const syntheticAwsAccessKeyId = ["AKIA", "ABCDEFGHIJKLMNOP"].join("");
+const syntheticOpenSshPrivateKeyHeader = ["-----BEGIN OPENSSH", " PRIVATE KEY-----"].join("");
 
 async function git(repositoryPath: string, ...args: string[]): Promise<string> {
   const result = await execFileAsync("git", ["-C", repositoryPath, ...args], {
@@ -413,11 +415,11 @@ describe("captureGitSnapshotV1", () => {
       await git(repositoryPath, "switch", "-c", "feature/secret-content");
       await writeFile(
         join(repositoryPath, "config.ts"),
-        'export const token = "AKIAABCDEFGHIJKLMNOP";\n',
+        `export const token = "${syntheticAwsAccessKeyId}";\n`,
       );
       await writeFile(
         join(repositoryPath, "fixture.pem.txt"),
-        "-----BEGIN OPENSSH PRIVATE KEY-----\nbase64\n",
+        `${syntheticOpenSshPrivateKeyHeader}\nbase64\n`,
       );
       await writeFile(join(repositoryPath, "kept.ts"), "ordinary source\n");
 
@@ -442,12 +444,34 @@ describe("captureGitSnapshotV1", () => {
     }
   });
 
+  it("keeps synthetic secret-scanner fixtures reviewable", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/reviewable-security-test");
+      const compiledTestSource = await readFile(new URL(import.meta.url), "utf8");
+      await writeFile(join(repositoryPath, "security-test.ts"), compiledTestSource);
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+
+      assert.equal(
+        captured.manifest.paths.some((entry) => entry.path === "security-test.ts"),
+        true,
+      );
+      assert.equal(
+        captured.manifest.exclusions.some((entry) => entry.path === "security-test.ts"),
+        false,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("omits credential-bearing unchanged referenced source without storing its bytes", async () => {
     const repositoryPath = await createRepository();
     try {
       await writeFile(
         join(repositoryPath, "credential.ts"),
-        'export const token = "AKIAABCDEFGHIJKLMNOP";\n',
+        `export const token = "${syntheticAwsAccessKeyId}";\n`,
       );
       await git(repositoryPath, "add", "credential.ts");
       await git(repositoryPath, "commit", "-m", "add referenced source");
@@ -472,7 +496,7 @@ describe("captureGitSnapshotV1", () => {
       assert.equal(omission?.reason, "OTHER");
       assert.match(omission?.detail ?? "", /content policy.*AWS access key id/i);
       assert.equal(
-        blobTexts.some((content) => content.includes("AKIAABCDEFGHIJKLMNOP")),
+        blobTexts.some((content) => content.includes(syntheticAwsAccessKeyId)),
         false,
       );
     } finally {
@@ -532,7 +556,7 @@ describe("captureGitSnapshotV1", () => {
   it("scans changed and referenced source content beyond the former prefix boundary", async () => {
     const repositoryPath = await createRepository();
     const padding = `// ${"x".repeat(256 * 1024)}\n`;
-    const credential = 'export const token = "AKIAABCDEFGHIJKLMNOP";\n';
+    const credential = `export const token = "${syntheticAwsAccessKeyId}";\n`;
     try {
       await writeFile(join(repositoryPath, "large-reference.ts"), padding + credential);
       await git(repositoryPath, "add", "large-reference.ts");
@@ -560,7 +584,7 @@ describe("captureGitSnapshotV1", () => {
       assert.equal(referencedOmission?.reason, "OTHER");
       assert.match(referencedOmission?.detail ?? "", /content policy.*AWS access key id/i);
       assert.equal(
-        blobTexts.some((content) => content.includes("AKIAABCDEFGHIJKLMNOP")),
+        blobTexts.some((content) => content.includes(syntheticAwsAccessKeyId)),
         false,
       );
     } finally {
