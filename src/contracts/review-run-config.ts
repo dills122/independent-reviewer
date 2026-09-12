@@ -11,6 +11,19 @@ const ProviderEndpointSlugV1Schema = z
 
 export const ReviewModelSlugV1Schema = z.string().trim().min(1).max(256);
 
+const OPENROUTER_DYNAMIC_MODEL_VARIANT_V1 =
+  /(?:^|:)(latest|preview|beta|online|floor|nitro)(?=:|$)/i;
+const OPENROUTER_AUTOMATIC_MODEL_ROUTERS_V1 = new Set(["openrouter/auto", "openrouter/auto-beta"]);
+
+function isDynamicModelIdentityV1(model: string): boolean {
+  const normalizedModel = model.toLowerCase();
+  return (
+    normalizedModel.startsWith("~") ||
+    OPENROUTER_AUTOMATIC_MODEL_ROUTERS_V1.has(normalizedModel) ||
+    OPENROUTER_DYNAMIC_MODEL_VARIANT_V1.test(normalizedModel)
+  );
+}
+
 export const OpenRouterProviderRoutingV2Schema = z
   .strictObject({
     /**
@@ -95,7 +108,7 @@ export const ReviewRunConfigV3Schema = z
       });
     }
     for (const [index, model] of models.entries()) {
-      if (/:(latest|preview|beta|online|floor|nitro)$/.test(model) || model.includes("auto")) {
+      if (isDynamicModelIdentityV1(model)) {
         context.addIssue({
           code: "custom",
           message: "model must be an explicit pinned identity, not an alias or router",
