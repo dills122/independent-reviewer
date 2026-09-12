@@ -54,6 +54,7 @@
     "typecheck": "tsc --noEmit --project tsconfig.json"
   },
   "dependencies": {
+    "commander": "15.0.0",
     "es-module-lexer": "3.0.2",
     "parse-diff": "0.12.0",
     "tree-sitter-go": "0.25.0",

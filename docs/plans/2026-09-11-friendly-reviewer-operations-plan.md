@@ -1,7 +1,7 @@
 # Friendly reviewer operations implementation plan
 
-Status: revised after final independent review instance 5; implementation not
-started; maintainer acceptance pending. Owner: project maintainer.
+Status: accepted by maintainer; implementation in progress. Slice 1 is complete
+and verified. Owner: project maintainer.
 Decision records: [ADR-013](../decisions/013-separate-simple-settings-from-resolved-review-policy.md)
 and [ADR-014](../decisions/014-discover-repository-markdown-steering.md).
 Research basis:
@@ -142,17 +142,17 @@ new non-interactive model/cost path.
 
 **Acceptance criteria:**
 
-- [ ] Model plus maximum cost resolve to one valid existing review-run policy
+- [x] Model plus maximum cost resolve to one valid existing review-run policy
       with a stable digest and visible field provenance.
-- [ ] Unknown models fail before credentials or provider access unless an
+- [x] Unknown models fail before credentials or provider access unless an
       advanced configuration supplies the missing policy.
-- [ ] Existing explicit JSON configuration and saved settings behave unchanged.
+- [x] Existing explicit JSON configuration and saved settings behave unchanged.
 
 **Verification:**
 
-- [ ] Contract/default/precedence and equivalent-resolution tests pass.
-- [ ] `config show` and `config show --resolved` expose no credentials.
-- [ ] Provider-free dry-run submits zero calls through both simple and legacy
+- [x] Contract/default/precedence and equivalent-resolution tests pass.
+- [x] `config show` and `config show --resolved` expose no credentials.
+- [x] Provider-free dry-run submits zero calls through both simple and legacy
       paths.
 
 **Dependencies:** None.

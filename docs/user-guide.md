@@ -55,7 +55,46 @@ lower-level `prepare` and `inspect` workflow.
 Both modes use the same snapshot, provider, verification, report, budget, and
 failure boundaries.
 
-## 3. Prepare standards-mode inputs
+## 3. Save simple model and cost settings
+
+The recommended configuration path needs one supported model and a maximum
+total review cost. Save both in the target repository's private Git metadata:
+
+```sh
+node dist/src/cli.js init \
+  --repo /path/to/target-repository \
+  --model openai/gpt-oss-120b \
+  --max-cost 0.05
+```
+
+`init` validates the selected model profile, makes no provider call, and writes
+`<git-dir>/independent-reviewer/simple-settings.json` with private permissions.
+It refuses to overwrite an existing file. Inspect saved values and their source:
+
+```sh
+node dist/src/cli.js config show --repo /path/to/target-repository
+node dist/src/cli.js config show --repo /path/to/target-repository --resolved
+```
+
+The resolved view exposes the complete runtime policy and stable digests, but no
+credentials. `--model` and `--max-cost` can override saved values for one
+`review`, `resume-final`, or `config show` command. Do not combine these flags
+with `--config`.
+
+Automatic Markdown steering discovery and interactive author input are planned
+but not implemented yet. During this transition, pass `--standards` and
+`--author` to each standards-mode review:
+
+```sh
+node dist/src/cli.js review \
+  --repo /path/to/target-repository \
+  --base main \
+  --standards /absolute/path/to/standards.json \
+  --author /absolute/path/to/author-overview.md \
+  --dry-run
+```
+
+## 4. Prepare standards-mode inputs
 
 Standards mode needs three files:
 
@@ -177,9 +216,10 @@ claim ledger. Structured shapes are defined in
 Author input is frozen before the blind call but withheld from both blind review
 and fresh finding verification. It is delivered only during final reconciliation.
 
-## 4. Save local settings
+## 5. Advanced saved settings
 
-Initialize once per target repository:
+The legacy advanced flow remains available when full JSON policy control is
+needed. Initialize it once per target repository:
 
 ```sh
 node dist/src/cli.js init \
@@ -199,7 +239,7 @@ path with the corresponding command flag.
 You can skip `init` by passing `--config`, `--standards`, and `--author` on every
 standards-mode `review` command.
 
-## 5. Run dry-run
+## 6. Run dry-run
 
 Dry-run validates the selected inputs, captures the actual scope into a temporary
 packet, and checks conservative token and cost admission:
@@ -267,7 +307,7 @@ Caller exclusions remain visible in packet metadata. Excluding evidence can
 produce `UNABLE_TO_VERIFY`; never exclude relevant code merely to force a run
 through admission.
 
-## 6. Run live review
+## 7. Run live review
 
 Create `.env` in the Independent Reviewer checkout or another private location:
 
@@ -295,7 +335,7 @@ The first successful admission in standards convenience mode claims one of at
 most three instances in the current Git-local flow. Use `--new-flow` only when
 you intentionally start a distinct review, not to shop for a favorable verdict.
 
-## 7. Interpret the result
+## 8. Interpret the result
 
 | Exit | Verdict or condition | Meaning |
 | --- | --- | --- |
@@ -309,7 +349,7 @@ A standards verdict means satisfied, changes required, recommendations remain,
 or unable to assess against selected rules. It is not a claim that code is
 bug-free, system-correct, secure, or deployable.
 
-## 8. Inspect retained artifacts
+## 9. Inspect retained artifacts
 
 Live packets default to:
 

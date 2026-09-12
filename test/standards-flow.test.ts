@@ -415,6 +415,162 @@ test("standards convenience dry-run needs no credentials or provider and leaves 
   }
 });
 
+test("simple settings initialize, inspect, and drive the existing provider-free dry-run", async () => {
+  const f = await fixture();
+  const output: string[] = [];
+  const errors: string[] = [];
+  const io = {
+    stdout: (message: string) => output.push(message),
+    stderr: (message: string) => errors.push(message),
+  };
+  try {
+    const request = JSON.parse(await readFile(f.requestPath, "utf8"));
+    const profilePath = join(f.repo, "standards.json");
+    const overviewPath = join(f.repo, "author.md");
+    await writeFile(profilePath, request.canonicalInputs.standards[0].content);
+    await writeFile(overviewPath, request.authorPacket.overview);
+
+    assert.equal(
+      await runCliV1(
+        ["init", "--repo", f.repo, "--model", "openai/gpt-oss-120b", "--max-cost", "0.05"],
+        io,
+      ),
+      0,
+      errors.join("\n"),
+    );
+    const { localReviewDirectory } = await import("../src/cli/standards-input.js");
+    const localSettings = JSON.parse(
+      await readFile(join(await localReviewDirectory(f.repo), "simple-settings.json"), "utf8"),
+    );
+    assert.deepEqual(localSettings, {
+      schemaVersion: 1,
+      model: "openai/gpt-oss-120b",
+      maxCostUsd: 0.05,
+      requireAuthorExplanation: true,
+      discoverRepositorySteering: true,
+    });
+    assert.equal(
+      await runCliV1(
+        ["init", "--repo", f.repo, "--model", "openai/gpt-oss-120b", "--max-cost", "0.05"],
+        io,
+      ),
+      1,
+    );
+    assert.match(errors.at(-1) ?? "", /Simple settings already exist/);
+    errors.length = 0;
+
+    output.length = 0;
+    assert.equal(await runCliV1(["config", "show", "--repo", f.repo], io), 0);
+    assert.match(output.join("\n"), /"model": "openai\/gpt-oss-120b"/);
+    assert.match(output.join("\n"), /"model": "LOCAL"/);
+    assert.doesNotMatch(output.join("\n"), /OPENROUTER_API_KEY/);
+
+    output.length = 0;
+    assert.equal(await runCliV1(["config", "show", "--repo", f.repo, "--resolved"], io), 0);
+    assert.match(output.join("\n"), /"reviewRunConfigDigest"/);
+    assert.match(output.join("\n"), /"maxTotalCostUsd": 0.05/);
+
+    output.length = 0;
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          profilePath,
+          "--author",
+          overviewPath,
+          "--dry-run",
+        ],
+        io,
+        {
+          readOpenRouterApiKey: () => {
+            throw new Error("simple dry-run read credential");
+          },
+          createProvider: () => {
+            throw new Error("simple dry-run created provider");
+          },
+        },
+      ),
+      0,
+      errors.join("\n"),
+    );
+    assert.match(output.join("\n"), /Models: openai\/gpt-oss-120b/);
+    assert.match(output.join("\n"), /No provider calls/);
+  } finally {
+    await rm(f.repo, { recursive: true, force: true });
+  }
+});
+
+test("simple settings reject advanced mixing and unknown models before credential access", async () => {
+  const f = await fixture();
+  const errors: string[] = [];
+  let credentialReads = 0;
+  const io = { stdout: (_: string) => {}, stderr: (message: string) => errors.push(message) };
+  try {
+    assert.equal(
+      await runCliV1(
+        ["init", "--repo", f.repo, "--model", "openai/gpt-oss-120b", "--max-cost", "0x10"],
+        io,
+      ),
+      1,
+    );
+    assert.match(errors.at(-1) ?? "", /positive finite decimal number/);
+
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--request",
+          f.requestPath,
+          "--config",
+          f.configPath,
+          "--model",
+          "openai/gpt-oss-120b",
+          "--max-cost",
+          "0.05",
+        ],
+        io,
+        {
+          readOpenRouterApiKey: () => {
+            credentialReads += 1;
+            return "unused";
+          },
+          createProvider: () => {
+            throw new Error("provider must not be created");
+          },
+        },
+      ),
+      1,
+    );
+    assert.match(errors.at(-1) ?? "", /either --config or simple model\/cost settings/);
+
+    assert.equal(
+      await runCliV1(
+        ["review", "--request", f.requestPath, "--model", "vendor/unknown", "--max-cost", "0.05"],
+        io,
+        {
+          readOpenRouterApiKey: () => {
+            credentialReads += 1;
+            return "unused";
+          },
+          createProvider: () => {
+            throw new Error("provider must not be created");
+          },
+        },
+      ),
+      1,
+    );
+    assert.match(errors.at(-1) ?? "", /Unsupported review model vendor\/unknown/);
+    assert.equal(credentialReads, 0);
+  } finally {
+    await rm(f.repo, { recursive: true, force: true });
+  }
+});
+
 test("saved settings never overwrite silently and direct inputs enforce three exclusive instance claims", async () => {
   const f = await fixture();
   try {
