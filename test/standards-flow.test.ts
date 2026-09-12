@@ -661,7 +661,7 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
       await readFile(join(f.packet, "review", "report-metadata.json"), "utf8"),
     );
     assert.deepEqual(metadata.guidanceGraphDigest, inspected.guidanceGraphDigest);
-    assert.equal(metadata.promptVersion, "standards-review-v15");
+    assert.equal(metadata.promptVersion, "standards-review-v17");
     assert.match(output.join("\n"), /Standards satisfied/);
   } finally {
     await rm(f.repo, { recursive: true, force: true });

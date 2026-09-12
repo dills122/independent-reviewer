@@ -193,16 +193,16 @@ test("guidance-capable run binds prompt identity and withholds author context", 
       .split("\n")
       .map((line) => JSON.parse(line));
     const started = events.find((event) => event.type === "RUN_STARTED");
-    assert.equal(started.promptVersion, "standards-review-v15");
+    assert.equal(started.promptVersion, "standards-review-v17");
     assert.equal(started.guidanceGraphDigest.value.length, 64);
     assert.equal(events.find((event) => event.type === "GUIDANCE_ADMISSION")?.status, "ACCEPTED");
     assert.equal(
       events.find((event) => event.type === "CALL_STARTED")?.promptVersion,
-      "standards-review-v15",
+      "standards-review-v17",
     );
     const reportMetadata = JSON.parse(await readFile(result.reportMetadataPath, "utf8"));
     assert.deepEqual(reportMetadata.guidanceGraphDigest, started.guidanceGraphDigest);
-    assert.equal(reportMetadata.promptVersion, "standards-review-v15");
+    assert.equal(reportMetadata.promptVersion, "standards-review-v17");
     assert.equal(reportMetadata.preliminarySchema, "standards_preliminary_v2");
     assert.equal(reportMetadata.finalSchema, "standards_candidate_v3");
     assert.deepEqual(

@@ -252,6 +252,50 @@ function constrainRunnerOwnedFastFollows(root: JsonSchemaNodeV1): boolean {
   return true;
 }
 
+/** Every object schema a findings entry could validate against, including union branches. */
+function findingVariants(findings: JsonSchemaNodeV1): JsonSchemaNodeV1[] {
+  const items = Array.isArray(findings.items) ? findings.items : [findings.items];
+  const variants: JsonSchemaNodeV1[] = [];
+  for (const item of items) {
+    const node = optionalNode(item);
+    if (!node) continue;
+    variants.push(node);
+    for (const key of ["anyOf", "oneOf"]) {
+      const branches = node[key];
+      if (!Array.isArray(branches)) continue;
+      for (const branch of branches) {
+        const branchNode = optionalNode(branch);
+        if (branchNode) variants.push(branchNode);
+      }
+    }
+  }
+  return variants;
+}
+
+/**
+ * Drops runner-owned finding severity from every findings variant, when the schema carries one.
+ *
+ * Standards enforcement is a property of the selected profile, so the runner derives it from the
+ * rule IDs a finding cites. Leaving the field in the request would only let the provider contradict
+ * the profile, which failed the whole run rather than the field (#79). Requirements-mode findings
+ * keep their model-authored severity: nothing else determines it.
+ */
+function constrainRunnerOwnedSeverity(root: JsonSchemaNodeV1): boolean {
+  const findings = optionalNode(optionalProperties(root).findings);
+  if (!findings) return false;
+  let removed = false;
+  for (const variant of findingVariants(findings)) {
+    const properties = optionalProperties(variant);
+    if (!Object.hasOwn(properties, "severity")) continue;
+    delete properties.severity;
+    if (Array.isArray(variant.required)) {
+      variant.required = variant.required.filter((name) => name !== "severity");
+    }
+    removed = true;
+  }
+  return removed;
+}
+
 /**
  * Pass 4: bounds every prose string and every array the earlier passes left unbounded.
  *
@@ -306,6 +350,14 @@ export function constrainResponseSchemaV1(
   constrainEvidencePaths(root, options.evidencePaths);
   constrainLedgers(root, options);
   const hasRunnerOwnedFastFollows = constrainRunnerOwnedFastFollows(root);
+  // Standards briefs are the only mode whose severity the runner can derive; `ruleIds` marks them.
+  // Failing closed here means a renamed or restructured findings shape cannot silently hand
+  // severity back to the provider.
+  if (options.ruleIds && !constrainRunnerOwnedSeverity(root)) {
+    throw new ResponseSchemaShapeError(
+      "Standards response schema exposes no finding severity for the runner to own.",
+    );
+  }
   if (options.ruleIds)
     visitNodes(root, (node, name) => {
       if ((name === "ruleIds" || name === "conflictingRuleIds") && node.type === "array") {
