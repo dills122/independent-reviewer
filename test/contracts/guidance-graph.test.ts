@@ -5,7 +5,10 @@ import { describe, it } from "node:test";
 
 import {
   assertGuidanceGraphMatchesSnapshotV1,
+  buildDirectGuidanceGraphV1,
+  buildGuidanceGraphV1,
   buildReviewerRulesGuidanceGraphV1,
+  finalizeGuidanceGraphV1,
   finalizeSnapshotManifestV1,
   GUIDANCE_GRAPH_V1_JSON_SCHEMA,
   GuidanceGraphV1Schema,
@@ -85,6 +88,178 @@ describe("GuidanceGraphV1", () => {
     assert.equal(graph.occurrences.length, 0);
     assert.equal(graph.edges.length, 0);
     assert.equal(verifyGuidanceGraphIdentityV1(graph), true);
+  });
+
+  it("merges direct multi-family recognition independent of adapter order", async () => {
+    const manifest = await manifestFixture();
+    const target = projectGuidanceTargetsV1(manifest)[0];
+    assert.ok(target);
+    const contentDigest = sha256Utf8("# Shared guidance\n");
+    const sources = [
+      {
+        resolvedPath: "AGENTS.md",
+        contentDigest,
+        directRecognitions: [
+          {
+            familyId: "CODEX" as const,
+            sourceKind: "CODEX_AGENTS" as const,
+            nativeOrder: 0,
+            applicableTargetId: target.targetId,
+            discoveredPath: "AGENTS.md",
+          },
+        ],
+      },
+      {
+        resolvedPath: "AGENTS.md",
+        contentDigest,
+        directRecognitions: [
+          {
+            familyId: "COPILOT" as const,
+            sourceKind: "COPILOT_AGENTS" as const,
+            nativeOrder: 1,
+            applicableTargetId: target.targetId,
+            discoveredPath: "AGENTS.md",
+          },
+        ],
+      },
+    ];
+
+    const forward = buildDirectGuidanceGraphV1(manifest, sources);
+    const reversed = buildDirectGuidanceGraphV1(manifest, [...sources].reverse());
+
+    assert.deepEqual(forward, reversed);
+    assert.equal(forward.nodes.length, 1);
+    assert.equal(forward.nodes[0]?.directRecognitions.length, 2);
+    assert.deepEqual(forward.nodes[0]?.applicableTargetIds, [target.targetId]);
+    assert.equal(forward.nodes[0]?.semanticTier, "REPOSITORY_PEER");
+  });
+
+  it("rejects conflicting recognition slots instead of using adapter arrival order", async () => {
+    const manifest = await manifestFixture();
+    const target = projectGuidanceTargetsV1(manifest)[0];
+    assert.ok(target);
+    const recognition = {
+      familyId: "CODEX" as const,
+      sourceKind: "CODEX_AGENTS" as const,
+      nativeOrder: 0,
+      applicableTargetId: target.targetId,
+      discoveredPath: "AGENTS.md",
+    };
+
+    assert.throws(
+      () =>
+        buildDirectGuidanceGraphV1(manifest, [
+          {
+            resolvedPath: "AGENTS.md",
+            contentDigest: sha256Utf8("first"),
+            directRecognitions: [recognition],
+          },
+          {
+            resolvedPath: "other/AGENTS.md",
+            contentDigest: sha256Utf8("second"),
+            directRecognitions: [recognition],
+          },
+        ]),
+      /GUIDANCE_RECOGNITION_CONFLICT/,
+    );
+
+    const first = buildDirectGuidanceGraphV1(manifest, [
+      {
+        resolvedPath: "AGENTS.md",
+        contentDigest: sha256Utf8("first"),
+        directRecognitions: [recognition],
+      },
+    ]);
+    const second = buildDirectGuidanceGraphV1(manifest, [
+      {
+        resolvedPath: "other/AGENTS.md",
+        contentDigest: sha256Utf8("second"),
+        directRecognitions: [recognition],
+      },
+    ]);
+    assert.throws(
+      () =>
+        finalizeGuidanceGraphV1({
+          schemaVersion: 1,
+          snapshotDigest: manifest.snapshotDigest,
+          baseCommit: manifest.source.baseCommit,
+          targets: first.targets,
+          nodes: [first.nodes[0], second.nodes[0]]
+            .filter((node): node is NonNullable<typeof node> => node !== undefined)
+            .sort((left, right) => left.sourceId.localeCompare(right.sourceId)),
+          occurrences: [],
+          edges: [],
+          diagnostics: [],
+        }),
+      /recognition slot has multiple owners/,
+    );
+  });
+
+  it("builds canonical import-only nodes, occurrences, and propagated target edges", async () => {
+    const manifest = await manifestFixture();
+    const target = projectGuidanceTargetsV1(manifest)[0];
+    assert.ok(target);
+    const rootDigest = sha256Utf8("Read @docs/review.md\n");
+    const importedDigest = sha256Utf8("# Imported review rules\n");
+    const sources = [
+      {
+        resolvedPath: "CLAUDE.md",
+        contentDigest: rootDigest,
+        directRecognitions: [
+          {
+            familyId: "CLAUDE" as const,
+            sourceKind: "CLAUDE_MD" as const,
+            nativeOrder: 0,
+            applicableTargetId: target.targetId,
+            discoveredPath: "CLAUDE.md",
+          },
+        ],
+      },
+      {
+        resolvedPath: "docs/review.md",
+        contentDigest: importedDigest,
+        directRecognitions: [],
+      },
+    ];
+    const imports = [
+      {
+        familyId: "CLAUDE" as const,
+        syntaxKind: "CLAUDE_AT_PATH" as const,
+        importerPath: "CLAUDE.md",
+        importerContentDigest: rootDigest,
+        importedPath: "docs/review.md",
+        importedContentDigest: importedDigest,
+        requestedSpecifier: "docs/review.md",
+        startUtf16: 6,
+        endUtf16: 20,
+        applicableTargetIds: [target.targetId],
+      },
+    ];
+
+    const forward = buildGuidanceGraphV1(manifest, sources, imports);
+    const reversed = buildGuidanceGraphV1(manifest, [...sources].reverse(), [...imports].reverse());
+
+    assert.deepEqual(forward, reversed);
+    assert.equal(forward.nodes.length, 2);
+    assert.equal(forward.occurrences.length, 1);
+    assert.equal(forward.edges.length, 1);
+    const imported = forward.nodes.find(({ resolvedPath }) => resolvedPath === "docs/review.md");
+    assert.ok(imported);
+    assert.deepEqual(imported.directRecognitions, []);
+    assert.deepEqual(imported.applicableTargetIds, [target.targetId]);
+    assert.equal(verifyGuidanceGraphIdentityV1(forward), true);
+
+    const unrelatedTarget = projectGuidanceTargetsV1(manifest)[1];
+    const importInput = imports[0];
+    assert.ok(unrelatedTarget);
+    assert.ok(importInput);
+    assert.throws(
+      () =>
+        buildGuidanceGraphV1(manifest, sources, [
+          { ...importInput, applicableTargetIds: [unrelatedTarget.targetId] },
+        ]),
+      /derived import edge/,
+    );
   });
 
   it("rejects graph, source, target, ordering, and derived-field tampering", async () => {

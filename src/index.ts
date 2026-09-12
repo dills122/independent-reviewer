@@ -8,6 +8,12 @@ export {
   TreeSitterContextAnalyzerV1,
 } from "./context/tree-sitter-analyzer.js";
 export * from "./contracts/index.js";
+export type { CapturedClaudeGuidanceV1 } from "./guidance/claude-discovery.js";
+export { captureClaudeGuidanceV1 } from "./guidance/claude-discovery.js";
+export type { CapturedCodexGuidanceV1 } from "./guidance/codex-discovery.js";
+export { captureCodexGuidanceV1 } from "./guidance/codex-discovery.js";
+export type { CapturedRepositoryGuidanceV1 } from "./guidance/repository-guidance.js";
+export { captureRepositoryGuidanceV1 } from "./guidance/repository-guidance.js";
 export type {
   CapturedReviewerRulesGuidanceV1,
   GuidanceCaptureErrorCode,

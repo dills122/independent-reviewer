@@ -3,7 +3,8 @@
 Status: first local release implemented and exercised with controlled live smoke fixtures.
 Friendly operations implementation is in progress: simple settings, explicit
 reviewer rules, guidance admission, and identity binding are complete; broader
-harness discovery, inspection/lint, and interactive author input remain pending.
+Codex and Claude harness discovery are implemented; remaining harness adapters,
+inspection/lint, and interactive author input remain pending.
 
 Current milestone: complete friendly reviewer operations using repository
 Markdown steering, steering-budget inspection, and first-class author

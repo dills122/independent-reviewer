@@ -11,6 +11,14 @@ import {
   SnapshotPathV1Schema,
 } from "./snapshot-manifest.js";
 
+export const MAX_GUIDANCE_TARGETS_V1 = 8_192;
+export const MAX_GUIDANCE_NODES_V1 = 256;
+export const MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1 = 65_536;
+export const MAX_GUIDANCE_APPLICABILITY_PAIRS_V1 = 65_536;
+export const MAX_GUIDANCE_OCCURRENCES_V1 = 2_048;
+export const MAX_GUIDANCE_EDGES_V1 = 512;
+export const MAX_GUIDANCE_DIAGNOSTICS_V1 = 256;
+
 export const GuidanceFamilyV1Schema = z.enum([
   "CODEX",
   "CLAUDE",
@@ -70,8 +78,10 @@ export const GuidanceSourceNodeV1Schema = z.strictObject({
   resolvedPath: SnapshotPathV1Schema,
   contentDigest: DigestV1Schema,
   semanticTier: z.enum(["REPOSITORY_PEER", "REVIEWER_SPECIFIC"]),
-  applicableTargetIds: z.array(prefixedIdentifier("guidance_target")),
-  directRecognitions: z.array(DirectRecognitionV1Schema),
+  applicableTargetIds: z
+    .array(prefixedIdentifier("guidance_target"))
+    .max(MAX_GUIDANCE_APPLICABILITY_PAIRS_V1),
+  directRecognitions: z.array(DirectRecognitionV1Schema).max(MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1),
 });
 
 export const GuidanceOccurrenceV1Schema = z.strictObject({
@@ -123,11 +133,11 @@ const GuidanceGraphBaseV1Schema = z.strictObject({
   graphId: prefixedIdentifier("guidance"),
   snapshotDigest: DigestV1Schema,
   baseCommit: GitObjectIdSchema,
-  targets: z.array(GuidanceTargetV1Schema),
-  nodes: z.array(GuidanceSourceNodeV1Schema),
-  occurrences: z.array(GuidanceOccurrenceV1Schema),
-  edges: z.array(GuidanceEdgeV1Schema),
-  diagnostics: z.array(GuidanceDiagnosticV1Schema),
+  targets: z.array(GuidanceTargetV1Schema).max(MAX_GUIDANCE_TARGETS_V1),
+  nodes: z.array(GuidanceSourceNodeV1Schema).max(MAX_GUIDANCE_NODES_V1),
+  occurrences: z.array(GuidanceOccurrenceV1Schema).max(MAX_GUIDANCE_OCCURRENCES_V1),
+  edges: z.array(GuidanceEdgeV1Schema).max(MAX_GUIDANCE_EDGES_V1),
+  diagnostics: z.array(GuidanceDiagnosticV1Schema).max(MAX_GUIDANCE_DIAGNOSTICS_V1),
 });
 
 function identifier(prefix: string, value: unknown): string {
@@ -143,7 +153,7 @@ function expectedTargetId(
 
 function sourceIdentityInput(
   baseCommit: string,
-  source: z.infer<typeof GuidanceSourceNodeV1Schema>,
+  source: Pick<z.infer<typeof GuidanceSourceNodeV1Schema>, "resolvedPath" | "contentDigest">,
 ): unknown {
   return {
     schemaVersion: 1,
@@ -297,8 +307,14 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
   });
   const nodeIds = new Set(graph.nodes.map(({ sourceId }) => sourceId));
   const occurrenceIds = new Set(graph.occurrences.map(({ occurrenceId }) => occurrenceId));
+  const sourceIdentityByPath = new Map<string, string>();
+  const recognitionSlots = new Map<string, string>();
+  let directRecognitionCount = 0;
+  let applicabilityPairCount = 0;
 
   graph.nodes.forEach((node, index) => {
+    directRecognitionCount += node.directRecognitions.length;
+    applicabilityPairCount += node.applicableTargetIds.length;
     if (
       node.sourceId !== identifier("guidance_source", sourceIdentityInput(graph.baseCommit, node))
     )
@@ -307,6 +323,15 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         path: ["nodes", index, "sourceId"],
         message: "must match source identity",
       });
+    const sourceIdentity = canonicalizeJson(node.contentDigest);
+    const priorSourceIdentity = sourceIdentityByPath.get(node.resolvedPath);
+    if (priorSourceIdentity !== undefined && priorSourceIdentity !== sourceIdentity)
+      context.addIssue({
+        code: "custom",
+        path: ["nodes", index, "resolvedPath"],
+        message: "one BASE path must have one content identity",
+      });
+    sourceIdentityByPath.set(node.resolvedPath, sourceIdentity);
     if (!alreadyCanonical(node.directRecognitions, recognitionOrder))
       context.addIssue({
         code: "custom",
@@ -326,6 +351,24 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
           path: ["nodes", index, "directRecognitions", recognitionIndex, "applicableTargetId"],
           message: "must identify a graph target",
         });
+      const slot = canonicalizeJson({
+        familyId: recognition.familyId,
+        applicableTargetId: recognition.applicableTargetId,
+        discoveredPath: recognition.discoveredPath,
+      });
+      const owner = canonicalizeJson({
+        sourceId: node.sourceId,
+        sourceKind: recognition.sourceKind,
+        nativeOrder: recognition.nativeOrder,
+      });
+      const priorOwner = recognitionSlots.get(slot);
+      if (priorOwner !== undefined && priorOwner !== owner)
+        context.addIssue({
+          code: "custom",
+          path: ["nodes", index, "directRecognitions", recognitionIndex],
+          message: "recognition slot has multiple owners",
+        });
+      recognitionSlots.set(slot, owner);
     });
     const derivedTier = node.directRecognitions.some(
       ({ sourceKind }) => sourceKind === "REVIEWER_RULES",
@@ -352,6 +395,18 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         message: "must equal derived applicability",
       });
   });
+  if (directRecognitionCount > MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1)
+    context.addIssue({
+      code: "custom",
+      path: ["nodes"],
+      message: `must contain at most ${MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1} direct recognitions`,
+    });
+  if (applicabilityPairCount > MAX_GUIDANCE_APPLICABILITY_PAIRS_V1)
+    context.addIssue({
+      code: "custom",
+      path: ["nodes"],
+      message: `must contain at most ${MAX_GUIDANCE_APPLICABILITY_PAIRS_V1} applicability pairs`,
+    });
 
   const syntaxFamily = {
     CLAUDE_AT_PATH: "CLAUDE",
@@ -392,6 +447,8 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         message: "must match occurrence identity",
       });
   });
+  const resolutionByOccurrence = new Map<string, string>();
+  const actualEdgeSlots = new Map<string, string>();
   graph.edges.forEach((edge, index) => {
     if (
       !occurrenceIds.has(edge.occurrenceId) ||
@@ -412,7 +469,98 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         path: ["edges", index, "edgeId"],
         message: "must match edge identity",
       });
+    const priorResolution = resolutionByOccurrence.get(edge.occurrenceId);
+    if (priorResolution !== undefined && priorResolution !== edge.importedSourceId)
+      context.addIssue({
+        code: "custom",
+        path: ["edges", index, "importedSourceId"],
+        message: "one occurrence must resolve to one source",
+      });
+    resolutionByOccurrence.set(edge.occurrenceId, edge.importedSourceId);
+    const slot = canonicalizeJson({
+      occurrenceId: edge.occurrenceId,
+      applicableTargetId: edge.applicableTargetId,
+    });
+    const priorSlotResolution = actualEdgeSlots.get(slot);
+    if (priorSlotResolution !== undefined && priorSlotResolution !== edge.importedSourceId)
+      context.addIssue({
+        code: "custom",
+        path: ["edges", index],
+        message: "one occurrence/target slot must resolve to one source",
+      });
+    actualEdgeSlots.set(slot, edge.importedSourceId);
   });
+
+  const applicability = new Map<string, Set<string>>();
+  const occurrenceIdsByImporterFamily = new Map<string, string[]>();
+  const queue: Array<{ sourceId: string; familyId: string; targetId: string }> = [];
+  const applicabilityKey = (sourceId: string, familyId: string) =>
+    canonicalizeJson({ sourceId, familyId });
+  const addApplicability = (sourceId: string, familyId: string, targetId: string) => {
+    const key = applicabilityKey(sourceId, familyId);
+    const targets = applicability.get(key) ?? new Set<string>();
+    if (targets.has(targetId)) return;
+    targets.add(targetId);
+    applicability.set(key, targets);
+    queue.push({ sourceId, familyId, targetId });
+  };
+  for (const node of graph.nodes) {
+    for (const recognition of node.directRecognitions)
+      addApplicability(node.sourceId, recognition.familyId, recognition.applicableTargetId);
+  }
+  graph.occurrences.forEach((occurrence, occurrenceIndex) => {
+    const key = applicabilityKey(occurrence.importerSourceId, occurrence.familyId);
+    const ids = occurrenceIdsByImporterFamily.get(key) ?? [];
+    ids.push(occurrence.occurrenceId);
+    occurrenceIdsByImporterFamily.set(key, ids);
+    if (!resolutionByOccurrence.has(occurrence.occurrenceId))
+      context.addIssue({
+        code: "custom",
+        path: ["occurrences", occurrenceIndex],
+        message: "must resolve to exactly one imported source",
+      });
+  });
+  const expectedEdgeSlots = new Map<string, string>();
+  let derivedEdgeLimitExceeded = false;
+  for (let index = 0; index < queue.length && !derivedEdgeLimitExceeded; index += 1) {
+    const current = queue[index];
+    if (!current) continue;
+    const key = applicabilityKey(current.sourceId, current.familyId);
+    for (const occurrenceId of occurrenceIdsByImporterFamily.get(key) ?? []) {
+      const importedSourceId = resolutionByOccurrence.get(occurrenceId);
+      if (!importedSourceId) continue;
+      expectedEdgeSlots.set(
+        canonicalizeJson({ occurrenceId, applicableTargetId: current.targetId }),
+        importedSourceId,
+      );
+      if (expectedEdgeSlots.size > MAX_GUIDANCE_EDGES_V1) {
+        context.addIssue({
+          code: "custom",
+          path: ["edges"],
+          message: `derived import closure must contain at most ${MAX_GUIDANCE_EDGES_V1} edges`,
+        });
+        derivedEdgeLimitExceeded = true;
+        break;
+      }
+      addApplicability(importedSourceId, current.familyId, current.targetId);
+    }
+  }
+  for (const [slot, importedSourceId] of expectedEdgeSlots) {
+    if (actualEdgeSlots.get(slot) !== importedSourceId)
+      context.addIssue({
+        code: "custom",
+        path: ["edges"],
+        message: "must include every derived import edge",
+      });
+  }
+  for (const [slot, importedSourceId] of actualEdgeSlots) {
+    if (expectedEdgeSlots.get(slot) !== importedSourceId)
+      context.addIssue({
+        code: "custom",
+        path: ["edges"],
+        message: "must not include non-derived import edges",
+      });
+  }
   graph.diagnostics.forEach((diagnostic, index) => {
     const excluded =
       diagnostic.code === "UNSELECTED_MANUAL_MODE" ||
@@ -459,6 +607,26 @@ export const GuidanceGraphV1Schema = GuidanceGraphBaseV1Schema.superRefine(valid
 export type GuidanceGraphV1 = z.infer<typeof GuidanceGraphV1Schema>;
 export type GuidanceTargetV1 = z.infer<typeof GuidanceTargetV1Schema>;
 export type GuidanceDiagnosticV1 = z.infer<typeof GuidanceDiagnosticV1Schema>;
+export type DirectGuidanceRecognitionV1 = z.infer<typeof DirectRecognitionV1Schema>;
+
+export interface DirectGuidanceSourceInputV1 {
+  resolvedPath: string;
+  contentDigest: DigestV1;
+  directRecognitions: DirectGuidanceRecognitionV1[];
+}
+
+export interface GuidanceImportInputV1 {
+  familyId: z.infer<typeof GuidanceFamilyV1Schema>;
+  syntaxKind: z.infer<typeof GuidanceOccurrenceV1Schema>["syntaxKind"];
+  importerPath: string;
+  importerContentDigest: DigestV1;
+  importedPath: string;
+  importedContentDigest: DigestV1;
+  requestedSpecifier: string;
+  startUtf16: number;
+  endUtf16: number;
+  applicableTargetIds: string[];
+}
 
 /** Creates one content-free, digest-identified guidance diagnostic. */
 export function createGuidanceDiagnosticV1(
@@ -511,6 +679,187 @@ export function finalizeGuidanceGraphV1(value: Omit<GuidanceGraphV1, "graphId">)
   });
 }
 
+/** Builds canonical direct/import guidance without adapter or traversal-order authority. */
+export function buildGuidanceGraphV1(
+  manifest: SnapshotManifestV1,
+  inputSources: readonly DirectGuidanceSourceInputV1[],
+  inputImports: readonly GuidanceImportInputV1[] = [],
+  diagnostics: GuidanceDiagnosticV1[] = [],
+): GuidanceGraphV1 {
+  const targets = projectGuidanceTargetsV1(manifest);
+  const targetIds = new Set(targets.map(({ targetId }) => targetId));
+  const sourcesByIdentity = new Map<
+    string,
+    Omit<
+      z.infer<typeof GuidanceSourceNodeV1Schema>,
+      "sourceId" | "semanticTier" | "applicableTargetIds"
+    >
+  >();
+  const identityByResolvedPath = new Map<string, string>();
+  const recognitionSlots = new Map<string, string>();
+
+  for (const input of inputSources) {
+    const parsedPath = SnapshotPathV1Schema.parse(input.resolvedPath);
+    const contentDigest = DigestV1Schema.parse(input.contentDigest);
+    const sourceIdentity = canonicalizeJson({ parsedPath, contentDigest });
+    const priorIdentity = identityByResolvedPath.get(parsedPath);
+    if (priorIdentity !== undefined && priorIdentity !== sourceIdentity)
+      throw new Error(`Guidance source ${parsedPath} has conflicting BASE content identity.`);
+    identityByResolvedPath.set(parsedPath, sourceIdentity);
+    const existing = sourcesByIdentity.get(sourceIdentity) ?? {
+      resolvedPath: parsedPath,
+      contentDigest,
+      directRecognitions: [],
+    };
+    const recognitions = new Map(
+      existing.directRecognitions.map((recognition) => [
+        canonicalizeJson(recognition),
+        recognition,
+      ]),
+    );
+    for (const candidate of input.directRecognitions) {
+      const recognition = DirectRecognitionV1Schema.parse(candidate);
+      if (!targetIds.has(recognition.applicableTargetId))
+        throw new Error(
+          `Guidance recognition identifies unknown target ${recognition.applicableTargetId}.`,
+        );
+      const slot = canonicalizeJson({
+        familyId: recognition.familyId,
+        applicableTargetId: recognition.applicableTargetId,
+        discoveredPath: recognition.discoveredPath,
+      });
+      const owner = canonicalizeJson({
+        sourceIdentity,
+        sourceKind: recognition.sourceKind,
+        nativeOrder: recognition.nativeOrder,
+      });
+      const priorOwner = recognitionSlots.get(slot);
+      if (priorOwner !== undefined && priorOwner !== owner)
+        throw new Error("GUIDANCE_RECOGNITION_CONFLICT: one recognition slot has multiple owners.");
+      recognitionSlots.set(slot, owner);
+      recognitions.set(canonicalizeJson(recognition), recognition);
+    }
+    existing.directRecognitions = [...recognitions.values()].sort(recognitionOrder);
+    sourcesByIdentity.set(sourceIdentity, existing);
+  }
+
+  const sourceIdsByIdentity = new Map(
+    [...sourcesByIdentity.entries()].map(([identity, source]) => [
+      identity,
+      identifier("guidance_source", sourceIdentityInput(manifest.source.baseCommit, source)),
+    ]),
+  );
+  const occurrencesById = new Map<string, z.infer<typeof GuidanceOccurrenceV1Schema>>();
+  const edgesBySlot = new Map<string, z.infer<typeof GuidanceEdgeV1Schema>>();
+  for (const input of inputImports) {
+    const importerIdentity = canonicalizeJson({
+      parsedPath: SnapshotPathV1Schema.parse(input.importerPath),
+      contentDigest: DigestV1Schema.parse(input.importerContentDigest),
+    });
+    const importedIdentity = canonicalizeJson({
+      parsedPath: SnapshotPathV1Schema.parse(input.importedPath),
+      contentDigest: DigestV1Schema.parse(input.importedContentDigest),
+    });
+    const importerSourceId = sourceIdsByIdentity.get(importerIdentity);
+    const importedSourceId = sourceIdsByIdentity.get(importedIdentity);
+    if (!importerSourceId || !importedSourceId)
+      throw new Error("Guidance import must reference exact input source identities.");
+    const occurrenceDraft = {
+      familyId: input.familyId,
+      syntaxKind: input.syntaxKind,
+      importerSourceId,
+      requestedSpecifier: input.requestedSpecifier,
+      startUtf16: input.startUtf16,
+      endUtf16: input.endUtf16,
+    };
+    const occurrence = GuidanceOccurrenceV1Schema.parse({
+      ...occurrenceDraft,
+      occurrenceId: identifier("guidance_occurrence", {
+        schemaVersion: 1,
+        ...occurrenceDraft,
+      }),
+    });
+    occurrencesById.set(occurrence.occurrenceId, occurrence);
+    for (const candidateTargetId of input.applicableTargetIds) {
+      const applicableTargetId = prefixedIdentifier("guidance_target").parse(candidateTargetId);
+      if (!targetIds.has(applicableTargetId))
+        throw new Error(`Guidance import identifies unknown target ${applicableTargetId}.`);
+      const edgeDraft = {
+        occurrenceId: occurrence.occurrenceId,
+        importedSourceId,
+        applicableTargetId,
+      };
+      const edge = GuidanceEdgeV1Schema.parse({
+        ...edgeDraft,
+        edgeId: identifier("guidance_edge", { schemaVersion: 1, ...edgeDraft }),
+      });
+      const slot = canonicalizeJson({ occurrenceId: occurrence.occurrenceId, applicableTargetId });
+      const prior = edgesBySlot.get(slot);
+      if (prior && prior.importedSourceId !== importedSourceId)
+        throw new Error("GUIDANCE_IMPORT_CONFLICT: one import slot has multiple resolved sources.");
+      edgesBySlot.set(slot, edge);
+    }
+  }
+  const occurrences = [...occurrencesById.values()].sort((left, right) =>
+    compareUtf16(left.occurrenceId, right.occurrenceId),
+  );
+  const edges = [...edgesBySlot.values()].sort((left, right) =>
+    compareUtf16(left.edgeId, right.edgeId),
+  );
+
+  const nodes = [...sourcesByIdentity.entries()]
+    .map(([sourceIdentity, source]) => {
+      const sourceId = sourceIdsByIdentity.get(sourceIdentity);
+      if (!sourceId) throw new Error(`Guidance source ${source.resolvedPath} has no identity.`);
+      const applicableTargetIds = [
+        ...new Set([
+          ...source.directRecognitions.map(({ applicableTargetId }) => applicableTargetId),
+          ...edges
+            .filter(({ importedSourceId }) => importedSourceId === sourceId)
+            .map(({ applicableTargetId }) => applicableTargetId),
+        ]),
+      ].sort(compareUtf16);
+      if (applicableTargetIds.length === 0)
+        throw new Error(`Guidance source ${source.resolvedPath} has no applicable target.`);
+      const semanticTier = source.directRecognitions.some(
+        ({ sourceKind }) => sourceKind === "REVIEWER_RULES",
+      )
+        ? ("REVIEWER_SPECIFIC" as const)
+        : ("REPOSITORY_PEER" as const);
+      return {
+        sourceId,
+        ...source,
+        semanticTier,
+        applicableTargetIds,
+      };
+    })
+    .sort((left, right) => compareUtf16(left.sourceId, right.sourceId));
+
+  return finalizeGuidanceGraphV1({
+    schemaVersion: 1,
+    snapshotDigest: manifest.snapshotDigest,
+    baseCommit: manifest.source.baseCommit,
+    targets,
+    nodes,
+    occurrences,
+    edges,
+    diagnostics: [
+      ...new Map(diagnostics.map((diagnostic) => [diagnostic.diagnosticId, diagnostic])).values(),
+    ].sort(diagnosticOrder),
+  });
+}
+
+/** Merges direct adapter output into canonical source nodes without adapter-order authority. */
+export function buildDirectGuidanceGraphV1(
+  manifest: SnapshotManifestV1,
+  inputSources: readonly DirectGuidanceSourceInputV1[],
+  diagnostics: GuidanceDiagnosticV1[] = [],
+): GuidanceGraphV1 {
+  if (inputSources.some(({ directRecognitions }) => directRecognitions.length === 0))
+    throw new Error("Direct guidance source must contain at least one recognition.");
+  return buildGuidanceGraphV1(manifest, inputSources, [], diagnostics);
+}
+
 /** Builds the no-import graph for the explicit BASE reviewer-rules source. */
 export function buildReviewerRulesGuidanceGraphV1(
   manifest: SnapshotManifestV1,
@@ -518,47 +867,25 @@ export function buildReviewerRulesGuidanceGraphV1(
   diagnostics: GuidanceDiagnosticV1[] = [],
 ): GuidanceGraphV1 {
   const targets = projectGuidanceTargetsV1(manifest);
-  const nodes = contentDigest
-    ? [
-        (() => {
-          const directRecognitions = targets
-            .map((target) => ({
-              familyId: "INDEPENDENT_REVIEWER" as const,
-              sourceKind: "REVIEWER_RULES" as const,
+  return buildDirectGuidanceGraphV1(
+    manifest,
+    contentDigest
+      ? [
+          {
+            resolvedPath: ".independent-reviewer/rules.md",
+            contentDigest,
+            directRecognitions: targets.map((target) => ({
+              familyId: "INDEPENDENT_REVIEWER",
+              sourceKind: "REVIEWER_RULES",
               nativeOrder: 0,
               applicableTargetId: target.targetId,
               discoveredPath: ".independent-reviewer/rules.md",
-            }))
-            .sort(recognitionOrder);
-          const source = {
-            resolvedPath: ".independent-reviewer/rules.md",
-            contentDigest,
-            semanticTier: "REVIEWER_SPECIFIC" as const,
-            applicableTargetIds: targets.map(({ targetId }) => targetId).sort(compareUtf16),
-            directRecognitions,
-          };
-          return {
-            sourceId: identifier("guidance_source", {
-              schemaVersion: 1,
-              baseCommit: manifest.source.baseCommit,
-              resolvedPath: source.resolvedPath,
-              contentDigest,
-            }),
-            ...source,
-          };
-        })(),
-      ]
-    : [];
-  return finalizeGuidanceGraphV1({
-    schemaVersion: 1,
-    snapshotDigest: manifest.snapshotDigest,
-    baseCommit: manifest.source.baseCommit,
-    targets,
-    nodes,
-    occurrences: [],
-    edges: [],
-    diagnostics: [...diagnostics].sort(diagnosticOrder),
-  });
+            })),
+          },
+        ]
+      : [],
+    diagnostics,
+  );
 }
 
 export function guidanceGraphDigestV1(graph: GuidanceGraphV1): DigestV1 {

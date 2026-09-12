@@ -34,6 +34,9 @@ export {
 } from "./json-document.js";
 export { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 export type {
+  DirectGuidanceRecognitionV1,
+  DirectGuidanceSourceInputV1,
+  GuidanceImportInputV1,
   GuidanceDiagnosticV1,
   GuidanceGraphV1,
   GuidanceTargetV1,
@@ -47,6 +50,8 @@ export {
 } from "./guidance-presentation.js";
 export {
   assertGuidanceGraphMatchesSnapshotV1,
+  buildDirectGuidanceGraphV1,
+  buildGuidanceGraphV1,
   buildReviewerRulesGuidanceGraphV1,
   createGuidanceDiagnosticV1,
   finalizeGuidanceGraphV1,

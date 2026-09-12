@@ -619,6 +619,21 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
     const request = JSON.parse(await readFile(f.requestPath, "utf8"));
     const profilePath = join(f.repo, "standards.json");
     const overviewPath = join(f.repo, "author.md");
+    await writeFile(
+      join(f.repo, "AGENTS.md"),
+      "# Harness guidance\n\nKeep error paths explicit.\n",
+    );
+    await writeFile(
+      join(f.repo, "CLAUDE.md"),
+      "# Claude guidance\n\nPreserve retry state transitions. Read @docs/review-guidance.md.\n",
+    );
+    await mkdir(join(f.repo, "docs"), { recursive: true });
+    await writeFile(
+      join(f.repo, "docs", "review-guidance.md"),
+      "# Shared review guidance\n\nTrace failures across module boundaries.\n",
+    );
+    await exec("git", ["-C", f.repo, "add", "AGENTS.md", "CLAUDE.md", "docs/review-guidance.md"]);
+    await exec("git", ["-C", f.repo, "commit", "-m", "add harness guidance"]);
     await writeFile(profilePath, request.canonicalInputs.standards[0].content);
     await writeFile(overviewPath, request.authorPacket.overview);
     assert.equal(
@@ -655,8 +670,20 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
     );
 
     const inspected = await inspectSnapshotPacket(f.packet);
-    assert.equal(inspected.guidanceGraph?.nodes[0]?.resolvedPath, ".independent-reviewer/rules.md");
+    assert.deepEqual(
+      inspected.guidanceGraph?.nodes.map(({ resolvedPath }) => resolvedPath).sort(),
+      [".independent-reviewer/rules.md", "AGENTS.md", "CLAUDE.md", "docs/review-guidance.md"],
+    );
+    assert.equal(inspected.guidanceGraph?.occurrences.length, 1);
+    const claudeRoot = inspected.guidanceGraph?.nodes.find(
+      ({ resolvedPath }) => resolvedPath === "CLAUDE.md",
+    );
+    assert.ok(claudeRoot);
+    assert.equal(inspected.guidanceGraph?.edges.length, claudeRoot.applicableTargetIds.length);
     assert.match(JSON.stringify(requests[0]?.messages), /Never hide a fallback/);
+    assert.match(JSON.stringify(requests[0]?.messages), /Keep error paths explicit/);
+    assert.match(JSON.stringify(requests[0]?.messages), /Preserve retry state transitions/);
+    assert.match(JSON.stringify(requests[0]?.messages), /Trace failures across module boundaries/);
     assert.doesNotMatch(JSON.stringify(requests[0]?.messages), /AUTHOR_PRIVATE/);
     assert.match(JSON.stringify(requests.at(-1)?.messages), /AUTHOR_PRIVATE/);
     const metadata = JSON.parse(
