@@ -69,20 +69,20 @@
     "remark-parse": "11.0.0",
     "tree-sitter-go": "0.25.0",
     "tree-sitter-java": "0.23.5",
-    "tree-sitter-javascript": "0.23.1",
+    "tree-sitter-javascript": "0.25.0",
     "tree-sitter-python": "0.25.0",
     "tree-sitter-typescript": "0.23.2",
     "unified": "11.0.5",
     "web-tree-sitter": "0.27.0",
-    "yaml": "2.8.4",
+    "yaml": "2.9.0",
     "zod": "4.5.4"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.12",
     "@types/braces": "3.0.5",
     "@types/emscripten": "1.41.6",
-    "@types/node": "24.13.3",
+    "@types/node": "26.5.0",
     "@types/picomatch": "4.0.3",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   }
 }
