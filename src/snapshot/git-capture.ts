@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat, readFile, readlink, realpath } from "node:fs/promises";
+import { access, lstat, readFile, readlink, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, matchesGlob, relative } from "node:path";
 import {
   compareUtf16,
@@ -115,6 +115,7 @@ const DIRTY_PROBE_EXIT_CODES_V1 = [0, 1, GIT_UNREADABLE_CONTENT_EXIT_V1] as cons
 
 /** Omission scope for a repository-wide probe, which names no single path. */
 const DIRTY_STATE_PROBE_SCOPE_V1 = "repository:working-tree-state";
+const PER_CLONE_ATTRIBUTES_SCOPE_V1 = "repository:per-clone-attributes";
 const DEFAULT_MAX_FILE_BYTES = 512 * 1024;
 const DEFAULT_MAX_ATTEMPTS = 2;
 
@@ -616,10 +617,32 @@ async function captureReferencedSources(
 }
 
 /**
+ * Reports whether this clone carries `.git/info/attributes`.
+ *
+ * The one attribute source with no lever. Global and system configuration are pinned away by the
+ * capture environment, and `--exclude-per-directory` replaces the ignore equivalent, but
+ * `check-attr` always reads this file and offers no way to decline it. It is per-clone and
+ * invisible in the tree, so two clones of one commit can classify differently. Recording its
+ * presence turns a silent non-determinism into a stated one (#129).
+ */
+async function hasPerCloneAttributesV1(repositoryPath: string): Promise<boolean> {
+  try {
+    const gitDirectory = await gitText(repositoryPath, ["rev-parse", "--absolute-git-dir"]);
+    await access(join(gitDirectory, "info", "attributes"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Resolves the project's own `.gitattributes` answers for a batch of paths.
  *
  * `git check-attr` is the only correct reader of the attribute stack: it applies the repository
- * root file, nested directory files, and the user's global configuration in the right order.
+ * root file and nested directory files with the right precedence and pattern semantics. The
+ * capture environment pins global and system configuration away, so `core.attributesFile` no
+ * longer participates; `.git/info/attributes` still does, and its presence is recorded as an
+ * omission because no flag can decline it (#129).
  *
  * A failing batch used to be skipped outright, so up to 200 paths silently lost their
  * `.gitattributes` answers and a vendored or generated file could be admitted as SOURCE and shipped
@@ -820,8 +843,19 @@ async function collectChangeSpecs(
   );
   const changes = parseTrackedChanges(tracked);
   if (captureWorkingTree && includeUntracked) {
+    // In-tree ignore sources only. `--exclude-standard` additionally honours the user's global
+    // `core.excludesFile` and this clone's `.git/info/exclude`, neither of which is part of the
+    // frozen tree -- a personal ignore rule silently dropped an untracked file from the snapshot
+    // while the run reported success (#129).
     const untracked = decodeNulFields(
-      (await runGit(repositoryPath, ["ls-files", "--others", "--exclude-standard", "-z"])).stdout,
+      (
+        await runGit(repositoryPath, [
+          "ls-files",
+          "--others",
+          "--exclude-per-directory=.gitignore",
+          "-z",
+        ])
+      ).stdout,
     );
     for (const path of untracked.map(validateSnapshotPath)) {
       const deletedIndex = changes.findIndex(
@@ -929,6 +963,13 @@ async function collectState(
       reason: "OTHER",
       detail:
         "Git could not resolve .gitattributes for this path, so its role comes from heuristics rather than the project's own declarations.",
+    });
+  if (await hasPerCloneAttributesV1(repositoryPath))
+    omissions.push({
+      scope: PER_CLONE_ATTRIBUTES_SCOPE_V1,
+      reason: "OTHER",
+      detail:
+        "This clone carries .git/info/attributes, which check-attr always applies and no flag can suppress. Path roles in this snapshot may not be reproducible from the committed tree alone.",
     });
 
   for (const spec of specs) {

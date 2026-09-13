@@ -5,6 +5,12 @@
  * it twice and requiring the two state digests to match, and every artifact identity is a digest
  * over captured content, so a classifier that could answer differently on two runs would break the
  * freeze, the race check, and final-stage resume.
+ *
+ * That holds for the inputs, not only the tree. Attribute answers come from `git check-attr`,
+ * which once read the developer's global configuration and so could answer differently on two
+ * machines; capture now isolates global and system configuration. The one remaining exception is
+ * `.git/info/attributes`, which is per-clone and cannot be suppressed, so capture records its
+ * presence rather than pretending the result is reproducible (#129).
  */
 
 export type PathRoleV1 =
