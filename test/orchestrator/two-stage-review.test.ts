@@ -205,13 +205,17 @@ function confirmedFindingVerificationResponse(
 ): ReviewProviderResponseV1 {
   const input = JSON.parse(request.messages[1]?.content ?? "{}");
   return response({
-    schemaVersion: 1,
+    schemaVersion: 3,
     stage: "FINDING_VERIFICATION",
     snapshotDigest: input.blindReviewEvidence.snapshotManifest.snapshotDigest,
     briefDigest: input.blindReviewEvidence.briefDigest,
     assessments: input.preliminaryFindings.map(() => ({
-      status: "CONFIRMED",
+      status: "VIOLATION_DEMONSTRATED",
       rationale: "The cited changed evidence supports this in-scope finding.",
+    })),
+    concernAssessments: input.preliminaryConcerns.map(() => ({
+      status: "BLOCKING_UNCERTAINTY_DEMONSTRATED",
+      rationale: "The named unavailable evidence blocks an in-scope judgment.",
     })),
   });
 }
@@ -285,7 +289,7 @@ function collectArrayLimits(schema: unknown, propertyName: string): number[] {
 }
 
 describe("two-stage review orchestrator", () => {
-  it("uses a fresh blind verifier and enforces rejection before author reconciliation", async () => {
+  it("uses a fresh blind verifier and enforces no-violation judgments before author reconciliation", async () => {
     const { repositoryPath, packetPath } = await arrangePacket(
       false,
       "AUTHOR_SECRET",
@@ -344,21 +348,33 @@ describe("two-stage review orchestrator", () => {
             /preliminaryFindingId/,
           );
           assert.equal(providerRequest.messages.length, 2);
+          assert.equal(providerRequest.responseSchema.name, "finding_verification_candidate_v3");
+          assert.match(
+            JSON.stringify(providerRequest.responseSchema.schema),
+            /VIOLATION_DEMONSTRATED/,
+          );
+          assert.doesNotMatch(JSON.stringify(providerRequest.responseSchema.schema), /CONFIRMED/);
+          assert.match(
+            providerRequest.messages[0]?.content ?? "",
+            /Never choose VIOLATION_DEMONSTRATED because code complies/,
+          );
           const input = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+          assert.equal(input.schemaVersion, 3);
           assert.equal(input.preliminaryFindings.length, 1);
           assert.doesNotMatch(JSON.stringify(input.preliminaryFindings), /finding_invalid_domain/);
           return response({
-            schemaVersion: 1,
+            schemaVersion: 3,
             stage: "FINDING_VERIFICATION",
             snapshotDigest: input.blindReviewEvidence.snapshotManifest.snapshotDigest,
             briefDigest: input.blindReviewEvidence.briefDigest,
             assessments: [
               {
-                status: "REJECTED",
+                status: "NO_VIOLATION",
                 rationale:
                   "Page zero is outside the stated valid input domain and no validation behavior is required.",
               },
             ],
+            concernAssessments: [],
           });
         }
         assert.match(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
@@ -412,7 +428,7 @@ describe("two-stage review orchestrator", () => {
         assert.match(JSON.stringify(providerRequest.messages), /FINAL_OUTPUT_REPAIR/);
         assert.match(
           JSON.stringify(providerRequest.messages),
-          /Adversarially rejected preliminary finding must be withdrawn/,
+          /Adversarial verifier found no violation; preliminary finding must be withdrawn/,
         );
         return response({
           schemaVersion: 3,
@@ -450,6 +466,113 @@ describe("two-stage review orchestrator", () => {
         "utf8",
       );
       await readFile(join(packetPath, "review", "final-repair-provider-response.json"), "utf8");
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("verifies limitation-only preliminary claims and prevents final free-form reintroduction", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket(
+      false,
+      "AUTHOR_SECRET",
+      undefined,
+      undefined,
+      false,
+      false,
+      "export function page(items, pageNumber, pageSize) { return items.slice(0, pageSize); }\n",
+      "export function page(items, pageNumber, pageSize) { const end = pageSize; return items.slice(0, end); }\n",
+    );
+    const calls: ReviewProviderRequestV1[] = [];
+    let finalCalls = 0;
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls.push(providerRequest);
+        const input = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        const brief = input.blindReviewEvidence ?? input;
+        if (providerRequest.stage === "PRELIMINARY") {
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "The specified pagination behavior is preserved.",
+            inspectedPaths: ["reviewed.ts"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: [],
+            limitations: ["The function does not validate inputs outside the stated valid domain."],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        if (providerRequest.stage === "FINDING_VERIFICATION") {
+          assert.equal(providerRequest.responseSchema.name, "finding_verification_candidate_v3");
+          assert.equal(input.schemaVersion, 3);
+          assert.deepEqual(input.preliminaryFindings, []);
+          assert.deepEqual(input.preliminaryConcerns, [
+            {
+              kind: "LIMITATION",
+              text: "The function does not validate inputs outside the stated valid domain.",
+            },
+          ]);
+          assert.doesNotMatch(JSON.stringify(providerRequest), /AUTHOR_SECRET|concernIndex/);
+          return response({
+            schemaVersion: 3,
+            stage: "FINDING_VERIFICATION",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            assessments: [],
+            concernAssessments: [
+              {
+                status: "NO_BLOCKING_UNCERTAINTY",
+                rationale: "Out-of-domain behavior is not required evidence.",
+              },
+            ],
+          });
+        }
+        assert.match(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
+        assert.match(JSON.stringify(providerRequest), /NO_BLOCKING_UNCERTAINTY/);
+        finalCalls += 1;
+        const candidate = {
+          schemaVersion: 3,
+          stage: "FINAL",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "No in-scope defect or blocking uncertainty remains.",
+          findings: [],
+          withdrawnPreliminaryFindings: [],
+          authorClaims: [],
+          authorVerificationClaims: finalCoverage().authorVerificationClaims,
+          preliminaryConcernDispositions: [
+            {
+              kind: "LIMITATION",
+              concernIndex: 0,
+              disposition: "RESOLVED",
+              rationale: "The concern asks for behavior outside the stated valid domain.",
+            },
+          ],
+          verdict: "READY",
+          nextActions: { blockers: [], fastFollows: [] },
+        };
+        if (finalCalls === 1) {
+          return response({
+            ...candidate,
+            limitations: ["Input validation is still not implemented."],
+          });
+        }
+        assert.match(JSON.stringify(providerRequest.messages), /FINAL_OUTPUT_REPAIR/);
+        return response({ ...candidate, limitations: [] });
+      },
+    };
+
+    try {
+      const result = await runTwoStageReviewV1(packetPath, config, provider);
+      assert.equal(result.report.verdict, "READY");
+      assert.deepEqual(result.report.limitations, []);
+      assert.deepEqual(
+        calls.map((call) => call.stage),
+        ["PRELIMINARY", "FINDING_VERIFICATION", "FINAL", "FINAL"],
+      );
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
@@ -500,11 +623,12 @@ describe("two-stage review orchestrator", () => {
         assert.equal(providerRequest.stage, "FINDING_VERIFICATION");
         assert.doesNotMatch(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
         return response({
-          schemaVersion: 1,
+          schemaVersion: 3,
           stage: "FINDING_VERIFICATION",
           snapshotDigest: input.blindReviewEvidence.snapshotManifest.snapshotDigest,
           briefDigest: input.blindReviewEvidence.briefDigest,
           assessments: [],
+          concernAssessments: [],
         });
       },
     };
@@ -1168,7 +1292,7 @@ describe("two-stage review orchestrator", () => {
         );
         assert.equal(
           valueAtPath(call.responseSchema.schema, ["properties", "limitations", "maxItems"]),
-          12,
+          call.stage === "FINAL" ? 0 : 12,
         );
         // The final report's findings are a oneOf union, so evidence arrays are collected by name
         // rather than by a single fixed path.
@@ -1845,7 +1969,7 @@ describe("two-stage review orchestrator", () => {
     }
   });
 
-  it("reuses persisted finding verification when resuming a failed final stage", async () => {
+  it("reuses persisted finding and concern verification when resuming a failed final stage", async () => {
     const { repositoryPath, packetPath } = await arrangePacket();
     const finding = {
       id: "finding_resume",
@@ -1882,12 +2006,30 @@ describe("two-stage review orchestrator", () => {
             canonicalInputCoverage: canonicalInputCoverage(),
             findings: [finding],
             evidenceGaps: [],
-            limitations: [],
+            limitations: ["Optional out-of-domain validation is not required by the inputs."],
             nextAction: "REQUEST_AUTHOR_PACKET",
           });
         }
         if (request.stage === "FINDING_VERIFICATION") {
-          return confirmedFindingVerificationResponse(request);
+          const evidence = input.blindReviewEvidence;
+          return response({
+            schemaVersion: 3,
+            stage: "FINDING_VERIFICATION",
+            snapshotDigest: evidence.snapshotManifest.snapshotDigest,
+            briefDigest: evidence.briefDigest,
+            assessments: [
+              {
+                status: "VIOLATION_DEMONSTRATED",
+                rationale: "The changed behavior demonstrates the finding.",
+              },
+            ],
+            concernAssessments: [
+              {
+                status: "NO_BLOCKING_UNCERTAINTY",
+                rationale: "Optional out-of-domain behavior does not block review.",
+              },
+            ],
+          });
         }
         throw new ProviderCallError("PROVIDER_ERROR", "OpenRouter rate limit exceeded.", {
           diagnostic: {
@@ -1946,6 +2088,14 @@ describe("two-stage review orchestrator", () => {
               },
             ],
             ...finalCoverage(),
+            preliminaryConcernDispositions: [
+              {
+                kind: "LIMITATION",
+                concernIndex: 0,
+                disposition: "RESOLVED",
+                rationale: "The verifier found no blocking uncertainty.",
+              },
+            ],
             authorClaims: [],
             limitations: [],
             verdict: "READY_WITH_FOLLOW_UPS",
@@ -1982,6 +2132,7 @@ describe("two-stage review orchestrator", () => {
         ["FINAL"],
       );
       assert.match(JSON.stringify(resumedCalls[0]?.messages), /finding_resume/);
+      assert.match(JSON.stringify(resumedCalls[0]?.messages), /NO_BLOCKING_UNCERTAINTY/);
       assert.equal(
         await readFile(join(packetPath, "review", "finding-verification.json"), "utf8"),
         persistedVerification,
@@ -2381,6 +2532,7 @@ describe("two-stage review orchestrator", () => {
 
   it("derives Unable to verify when changed evidence was excluded", async () => {
     const { repositoryPath, packetPath } = await arrangePacket(true);
+    let finalCalls = 0;
     const provider: ReviewProviderV1 = {
       auditRequest: mockAuditRequest,
       complete: async (providerRequest) => {
@@ -2400,6 +2552,21 @@ describe("two-stage review orchestrator", () => {
             nextAction: "REQUEST_AUTHOR_PACKET",
           });
         }
+        if (providerRequest.stage === "FINDING_VERIFICATION") {
+          const evidence = brief.blindReviewEvidence;
+          return response({
+            schemaVersion: 3,
+            stage: "FINDING_VERIFICATION",
+            snapshotDigest: evidence.snapshotManifest.snapshotDigest,
+            briefDigest: evidence.briefDigest,
+            assessments: [],
+            concernAssessments: brief.preliminaryConcerns.map((_: unknown, index: number) => ({
+              status: index === 0 ? "BLOCKING_UNCERTAINTY_DEMONSTRATED" : "INCONCLUSIVE",
+              rationale: "Excluded changed evidence prevents complete in-scope review.",
+            })),
+          });
+        }
+        finalCalls += 1;
         return response({
           schemaVersion: 1,
           stage: "FINAL",
@@ -2413,14 +2580,14 @@ describe("two-stage review orchestrator", () => {
             {
               kind: "EVIDENCE_GAP",
               concernIndex: 0,
-              disposition: "RESOLVED",
-              rationale: "The reviewer incorrectly claimed the gap was resolved.",
+              disposition: finalCalls === 1 ? "RESOLVED" : "REMAINS",
+              rationale: "The excluded path remains unavailable.",
             },
             {
               kind: "LIMITATION",
               concernIndex: 0,
-              disposition: "RESOLVED",
-              rationale: "The reviewer incorrectly claimed the limitation was resolved.",
+              disposition: finalCalls === 1 ? "RESOLVED" : "REMAINS",
+              rationale: "The excluded path still limits the review.",
             },
           ],
           authorClaims: [],
@@ -2438,6 +2605,7 @@ describe("two-stage review orchestrator", () => {
         result.report.limitations.join("\n"),
         /Runner snapshot coverage constraint \(EXCLUDED_PATH\)/,
       );
+      assert.equal(finalCalls, 2);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
@@ -2679,6 +2847,10 @@ function successfulEmptyResponse(request: ReviewProviderRequestV1) {
 
 it("charges persisted transport retries when admitting a final-stage resume", async () => {
   const { repositoryPath, packetPath } = await arrangePacket();
+  const retryAccountingConfig = {
+    ...config,
+    budgets: { ...config.budgets, maxTotalTokens: 110_000 },
+  };
   let finalAttempts = 0;
   const firstProvider: ReviewProviderV1 = {
     auditRequest: mockAuditRequest,
@@ -2730,11 +2902,14 @@ it("charges persisted transport retries when admitting a final-stage resume", as
   };
 
   try {
-    await assert.rejects(() => runTwoStageReviewV1(packetPath, config, firstProvider), /rate/i);
+    await assert.rejects(
+      () => runTwoStageReviewV1(packetPath, retryAccountingConfig, firstProvider),
+      /rate/i,
+    );
     let resumeCalls = 0;
     await assert.rejects(
       () =>
-        resumeFinalReviewV1(packetPath, config, {
+        resumeFinalReviewV1(packetPath, retryAccountingConfig, {
           auditRequest: mockAuditRequest,
           complete: async (request) => {
             resumeCalls += 1;

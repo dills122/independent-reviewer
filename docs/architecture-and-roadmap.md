@@ -36,6 +36,9 @@ Fresh blind finding verification is recorded in
 [ADR-012](decisions/012-adversarially-verify-preliminary-findings.md).
 The versioned run-record event contract is recorded in
 [ADR-015](decisions/015-version-the-run-record-as-a-contract.md).
+Fresh verification of preliminary adverse claims and runner-owned final
+limitations is recorded in
+[ADR-016](decisions/016-verify-every-verdict-affecting-review-claim.md).
 
 ## Planned operator experience
 
@@ -182,9 +185,9 @@ SDK. See [ADR-002](decisions/002-use-typescript-node-runtime.md).
 2. **Validate.** Hash captured content and write the manifest. Check scope, file policy, size limits, and model capabilities. Produce a local dry-run packet showing exactly what will be sent. Never silently truncate a diff or silently exclude relevant files.
 3. **Blind review.** Start an external conversation containing trusted review policy, neutral requirements, scope, diff, tests, and initial surrounding code. Withhold the author packet at the orchestrator boundary. The shipped model receives one fixed payload; on-demand evidence reads remain deferred under ADR-005.
 4. **Persist preliminary assessment.** Require a structured preliminary findings and coverage ledger before unlocking the author packet. Persist the response and its input identity. This is a durable artifact; it cannot be overwritten by reconciliation.
-5. **Challenge findings.** When the preliminary contains findings, send the frozen blind evidence and persisted assessment to a fresh verifier with no author context. Persist exactly one confirmed, rejected, or inconclusive assessment per preliminary finding. For an empty finding set, persist an empty local ledger without a provider call.
-6. **Reconcile author claims.** Continue the original external review conversation with the verification ledger and author packet. Ask the reviewer to confirm, contradict, or mark claims unverified and explain any changes to preliminary findings. Every verifier-rejected finding must be withdrawn. Record missing author explanation explicitly if absent.
-7. **Validate and report.** Validate report shape, snapshot identity, path/line anchors, verification provenance, and required coverage fields. Preserve limitations; invalid output, incomplete scope, or exhausted context cannot become an empty successful review. An evidence anchor proves a location exists, not that a finding is true.
+5. **Challenge preliminary adverse claims.** When the preliminary contains a finding, evidence gap, or limitation, send frozen blind evidence and ordered claims to a fresh verifier with no author context. Persist one category-specific judgment per claim. Only a preliminary with no adverse claims receives a local empty ledger without a provider call.
+6. **Reconcile author claims.** Continue the original external review conversation with the verification ledger and author packet. Ask the reviewer to confirm, contradict, or mark claims unverified and explain any changes to preliminary findings. Every finding with a verifier `NO_VIOLATION` judgment must be withdrawn. A concern with `NO_BLOCKING_UNCERTAINTY` must resolve; demonstrated or inconclusive blocking uncertainty must remain. Record missing author explanation explicitly if absent.
+7. **Validate and report.** Validate report shape, snapshot identity, path/line anchors, verification provenance, and required coverage fields. Final provider limitations must be empty; runner derives formal limitations from verified preliminary concerns and deterministic coverage or standards state. Invalid output, incomplete scope, or exhausted context cannot become an empty successful review. An evidence anchor proves a location exists, not that a finding is true.
 8. **Return control.** The implementation workflow accepts, disputes with evidence, or defers each finding. A materially changed target needs a new snapshot and review instance within the original flow limit. The reviewer cannot dispatch fixes or start new reviews.
 
 Both author-visibility stages and the selective verifier call belong to one review instance. Transport retries do not create new review instances and must not be used to shop for a favorable verdict. A resumed run uses persisted stage state; it must not leak the author packet into a restarted blind stage or verifier.
@@ -315,17 +318,23 @@ brief from the packet, classifies changed paths, sends bounded unified hunks or
 justified whole-file diffs, distinguishes visible out-of-scope paths from
 blocking missing coverage, and fails rather than clipping an oversized initial
 evidence set. It persists the raw and validated preliminary result, then persists
-a fresh author-blind assessment of every preliminary finding before author
-delivery. Finding-free reviews create the empty verification ledger locally;
-finding-bearing reviews make one schema-constrained verifier call. Final
-reconciliation must withdraw every verifier-rejected finding. It permits at most
+a fresh author-blind assessment of every preliminary finding, evidence gap, and
+limitation before author delivery. Adverse-claim-free reviews create the empty
+verification ledger locally; other reviews make one schema-constrained verifier
+call. Final reconciliation must withdraw every finding with a verifier
+`NO_VIOLATION` judgment, resolve every concern with
+`NO_BLOCKING_UNCERTAINTY`, and retain demonstrated or inconclusive blocking
+uncertainty. It permits at most
 one separately recorded same-model repair when a complete final candidate fails local validation,
 assembles `final-review-candidate-v3` judgments into the unchanged final report,
 projects exact final path and canonical-input coverage from the frozen manifest and persisted
 blind assessment instead of asking the model to repeat those ledgers,
 derives blockers from blocking finding corrections, derives fast follows from
 non-blocking corrections and reviewer suggestions, and assigns the final verdict from
-those actions plus runner-owned coverage and unresolved limitations. Candidate-v3
+those actions plus runner-owned coverage and verified unresolved concerns.
+Provider-authored Candidate-v3 limitations are constrained empty; runner derives
+report limitations from verified concern dispositions, coverage constraints, and
+standards state. Candidate-v3
 verdict and blocker fields remain wire-compatible but have no authority. This prevents
 bookkeeping contradictions from buying a repair call or inventing work,
 using exact original author-claim and preliminary-concern text, validates
@@ -411,7 +420,7 @@ not a separate product milestone.[^openai-evals][^anthropic-evals]
 
 ## Initial product scope
 
-First useful release: local CLI, one primary reviewer conversation, selective fresh-context finding verification, enforced author withholding, bounded snapshot reads, static inspection, structured findings, local audit artifacts, and AI Central invocation. Preserve module boundaries for a bot while keeping hosting-specific APIs outside the core.
+First useful release: local CLI, one primary reviewer conversation, selective fresh-context preliminary adverse-claim verification, enforced author withholding, bounded snapshot reads, static inspection, structured findings, local audit artifacts, and AI Central invocation. Preserve module boundaries for a bot while keeping hosting-specific APIs outside the core.
 
 Proposed future command surface:
 
@@ -436,9 +445,10 @@ The initial scope now includes cumulative working-tree snapshots. The base
 resolves from an explicit value, repository configuration, branch upstream, or
 remote default branch in that order and fails when still ambiguous. The shipped
 local engine uses one external reviewer conversation, an immutable blind
-assessment, a selective fresh-context finding verifier, and a separately delivered
-author packet. Clean reviews use two provider calls; finding-bearing reviews use
-three. At most one same-model output repair remains available for preliminary and
+assessment, a selective fresh-context preliminary-claim verifier, and a separately delivered
+author packet. Reviews whose preliminary has no adverse claims use two provider
+calls; reviews with findings, evidence gaps, or limitations use three. At most one
+same-model output repair remains available for preliminary and
 final stages; verification output fails closed without repair. Preliminary repair
 remains blind, persists both candidates, and must reserve its own call plus the
 still-possible verifier and mandatory final call before spending.

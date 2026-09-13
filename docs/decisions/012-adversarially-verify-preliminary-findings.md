@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; judgment vocabulary superseded by ADR-015
 
 ## Date
 

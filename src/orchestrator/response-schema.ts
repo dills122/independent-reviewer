@@ -380,8 +380,18 @@ export function constrainResponseSchemaV1(
         node.maxItems = options.ruleIds?.length;
       }
     });
+  const rootFields = optionalProperties(root);
+  const activeFinalCandidate =
+    optionalNode(rootFields.schemaVersion)?.const === 3 &&
+    optionalNode(rootFields.stage)?.const === "FINAL";
+  if (activeFinalCandidate) {
+    const limitations = requireNode(rootFields.limitations, "limitations");
+    limitations.minItems = 0;
+    limitations.maxItems = 0;
+  }
   const appliedArrayLimits = boundUnspecifiedProse(root, Math.max(options.evidencePaths.length, 1));
   if (hasRunnerOwnedFastFollows) appliedArrayLimits.fastFollows = 0;
+  if (activeFinalCandidate) appliedArrayLimits.limitations = 0;
   const concerns = optionalNode(optionalProperties(root).preliminaryConcernDispositions);
   if (concerns) {
     // Reserve the widest count/index digits now; actual scope only shrinks after call one.
@@ -411,6 +421,28 @@ export function constrainFindingVerificationCandidateSchemaV1(
   assessments.maxItems = findingCount;
   const appliedArrayLimits = boundUnspecifiedProse(root, 1);
   appliedArrayLimits.assessments = findingCount;
+  return { schema: root, appliedArrayLimits };
+}
+
+/** Pins ordered V3 finding and concern judgments to runner-owned identity counts. */
+export function constrainFindingVerificationCandidateSchemaV3(
+  schema: unknown,
+  findingCount: number,
+  concernCount: number,
+  identities: ConstrainResponseSchemaOptionsV1["identities"],
+): ConstrainedResponseSchemaV1 {
+  const root = requireNode(structuredClone(schema), "(root)");
+  pinIdentityConstants(root, identities);
+  const properties = requireProperties(root, "(root)");
+  const assessments = requireNode(properties.assessments, "assessments");
+  assessments.minItems = findingCount;
+  assessments.maxItems = findingCount;
+  const concernAssessments = requireNode(properties.concernAssessments, "concernAssessments");
+  concernAssessments.minItems = concernCount;
+  concernAssessments.maxItems = concernCount;
+  const appliedArrayLimits = boundUnspecifiedProse(root, 1);
+  appliedArrayLimits.assessments = findingCount;
+  appliedArrayLimits.concernAssessments = concernCount;
   return { schema: root, appliedArrayLimits };
 }
 

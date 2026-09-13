@@ -1,0 +1,3 @@
+# Local review fixtures and provider artifacts are validation output, not source context.
+# CCE normalizes leading dots from relative paths before pattern matching.
+review-runs/

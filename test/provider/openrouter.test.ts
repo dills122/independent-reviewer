@@ -131,6 +131,39 @@ describe("OpenRouterProviderV1", () => {
     );
   });
 
+  it("keeps the head endpoint when a later pinned provider fails", () => {
+    const pinned = new OpenRouterProviderV1(
+      "secret-key",
+      {
+        ...providerRouting,
+        order: ["coreweave/fp4", "deepinfra/bf16"],
+        pinToOrder: true,
+      },
+      async () => Response.json({}),
+    );
+    const retry = pinned.forRetry(
+      new ProviderCallError("INVALID_RESPONSE", "Missing completion content.", {
+        retryable: true,
+        responseMetadata: {
+          responseId: "generation-empty",
+          model: "vendor/model",
+          provider: "DeepInfra",
+          finishReason: "stop",
+          usage: {
+            promptTokens: null,
+            completionTokens: null,
+            totalTokens: null,
+            cost: null,
+          },
+        },
+      }),
+      request,
+    );
+
+    assert.ok(retry);
+    assert.deepEqual(retry.auditRequest(request).preferredProviderEndpoints, ["coreweave/fp4"]);
+  });
+
   it("retries a missing finish reason but not an explicit one", async () => {
     const outcomes: Array<[unknown, boolean]> = [
       [undefined, true],

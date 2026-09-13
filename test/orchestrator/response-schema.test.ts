@@ -4,12 +4,14 @@ import { describe, it } from "node:test";
 import {
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
-  FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
+  FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
+  FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
 } from "../../src/index.js";
 import {
   constrainFinalConcernScopeV1,
   constrainFindingVerificationCandidateSchemaV1,
+  constrainFindingVerificationCandidateSchemaV3,
   constrainRepairReferencesV1,
   constrainResponseSchemaV1,
   ResponseSchemaShapeError,
@@ -116,7 +118,7 @@ function rootProperty(schema: unknown, name: string): Record<string, unknown> {
 describe("constrainResponseSchemaV1", () => {
   it("keeps finding IDs out of provider verification output and binds judgment count", () => {
     const verification = constrainFindingVerificationCandidateSchemaV1(
-      FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
+      FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
       2,
       options.identities,
     );
@@ -153,12 +155,29 @@ describe("constrainResponseSchemaV1", () => {
     assert.equal(summary.maxLength, 400);
   });
 
+  it("binds V3 finding and concern judgment counts without provider-owned identities", () => {
+    const verification = constrainFindingVerificationCandidateSchemaV3(
+      FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
+      2,
+      3,
+      options.identities,
+    );
+    assert.equal(rootProperty(verification.schema, "assessments").minItems, 2);
+    assert.equal(rootProperty(verification.schema, "assessments").maxItems, 2);
+    assert.equal(rootProperty(verification.schema, "concernAssessments").minItems, 3);
+    assert.equal(rootProperty(verification.schema, "concernAssessments").maxItems, 3);
+    assert.doesNotMatch(JSON.stringify(verification.schema), /preliminaryFindingId|concernIndex/);
+  });
+
   it("requires provider fast follows to stay empty because runner derives next actions", () => {
     const final = constrainResponseSchemaV1(FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA, options);
     const nextActions = rootProperty(final.schema, "nextActions");
     const fastFollows = rootProperty(nextActions, "fastFollows");
     assert.equal(fastFollows.minItems, 0);
     assert.equal(fastFollows.maxItems, 0);
+    const limitations = rootProperty(final.schema, "limitations");
+    assert.equal(limitations.minItems, 0);
+    assert.equal(limitations.maxItems, 0);
   });
 
   it("pins repair concern indices and counts without mutating the first-final schema", () => {
