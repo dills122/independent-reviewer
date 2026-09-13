@@ -1,7 +1,8 @@
 # Friendly reviewer operations implementation plan
 
 Status: accepted by maintainer; implementation in progress. Slices 1 and 2 are
-complete and verified; Slices 3–6 remain pending. Owner: project maintainer.
+complete and verified; Slice 3 has Codex and Claude support but not the remaining
+harness adapters; Slices 4–6 remain pending. Owner: project maintainer.
 Decision records: [ADR-013](../decisions/013-separate-simple-settings-from-resolved-review-policy.md)
 and [ADR-014](../decisions/014-discover-repository-markdown-steering.md).
 Research basis:

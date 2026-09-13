@@ -233,6 +233,14 @@ retry selection offline, then replay only the five incomplete cases after
 provider capacity stabilizes. No change to review prompts or verdict policy is
 supported by this run.
 
+The pinned-selection defect was fixed at `5ffcec6`. Retry construction now
+removes the endpoint identified by normalized response metadata, even when that
+endpoint is not first in configured order, while retaining the conservative
+head-drop fallback when provider identity is unavailable or unmatched. The new
+non-head regression, all 27 provider tests, the 496-test application gate, and
+the 30-test provider-free E2E gate pass. This is offline confirmation only; the
+five incomplete paid cases have not been replayed after the fix.
+
 Private run evidence:
 
 - `.review-runs/full-matrix-2026-09-11/post-rebase-rimraf-full-dry-2026-09-13/`
