@@ -1,5 +1,11 @@
 # Streaming decoder selection plan
 
+Status: completed, then superseded on 2026-09-10 by
+[ADR-006](../decisions/006-route-for-availability-not-pinning.md). The product no
+longer streams and `eventsource-parser` was removed. Retained as historical
+selection evidence; see the
+[recorded decision](../research/2026-09-09-stream-decoder-selection.md).
+
 ## Objective
 
 Select a maintained SSE decoder for an eventual OpenRouter streaming progress
