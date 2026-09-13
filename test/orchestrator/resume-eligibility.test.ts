@@ -196,6 +196,16 @@ describe("evaluateResumeShapeV1", () => {
     assert.deepEqual(refusalsOf(events), []);
   });
 
+  it("admits a definite final 429 when the terminal failure event was not durably appended", () => {
+    const events = eligibleEvents();
+    events.pop();
+
+    const result = evaluateResumeShapeV1(events);
+    assert.equal(result.eligible, true);
+    assert.ok(result.eligible);
+    assert.equal(result.shape.runFailed, undefined);
+  });
+
   it("refuses a run that already completed, and names why", () => {
     const events = eligibleEvents();
     events.push(event({ type: "RUN_COMPLETED", terminalState: "READY" }));

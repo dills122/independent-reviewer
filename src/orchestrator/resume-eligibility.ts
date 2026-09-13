@@ -17,7 +17,7 @@ import type { RunRecordEventOfTypeV1, RunRecordEventV1 } from "../contracts/run-
 /** The events a resume needs, once the shape has been admitted. */
 export interface ResumeShapeV1 {
   started: RunRecordEventOfTypeV1<"RUN_STARTED">;
-  runFailed: RunRecordEventOfTypeV1<"RUN_FAILED">;
+  runFailed: RunRecordEventOfTypeV1<"RUN_FAILED"> | undefined;
   startedCalls: RunRecordEventOfTypeV1<"CALL_STARTED">[];
   preliminaryStarted: RunRecordEventOfTypeV1<"CALL_STARTED">;
   preliminarySucceeded: RunRecordEventOfTypeV1<"CALL_SUCCEEDED">;
@@ -121,7 +121,12 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
     events.some((event) => event.type === "RUN_RESUMED"),
   );
   refuse("NO_RUN_STARTED", started === undefined);
-  refuse("NOT_TERMINALLY_FAILED", runFailed === undefined);
+  refuse(
+    "NOT_TERMINALLY_FAILED",
+    runFailed === undefined &&
+      (events.some((event) => event.type === "RUN_COMPLETED") ||
+        finalFailed?.error.diagnostic?.httpStatus !== 429),
+  );
   refuse(
     "UNEXPECTED_SUCCEEDED_CALL_STAGE",
     succeededCalls.length !==
@@ -185,7 +190,6 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
   if (
     refusals.length > 0 ||
     started === undefined ||
-    runFailed === undefined ||
     preliminaryStarted === undefined ||
     preliminarySucceeded === undefined ||
     preliminaryPersisted === undefined ||

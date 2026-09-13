@@ -362,7 +362,10 @@ making call one, then rechecks actual generated content before each later call.
 Its private run record binds each attempt to the provider-policy version and
 credential-free wire/body digests and records stage, identity, timing, route,
 valid usage, errors, and lifecycle-terminal events. That record is a versioned
-contract parsed on read rather than a log, recorded in
+contract parsed on read rather than a log. Every append is synced before the
+event is reported as persisted. Final resume may discard only a newline-less
+trailing write after rechecking the observed ledger, then records the recovery;
+malformed complete lines remain fatal. This contract is recorded in
 [ADR-015](decisions/015-version-the-run-record-as-a-contract.md). The OpenRouter adapter uses
 strict structured output, an explicit model, same-model fallback inside a
 configured provider allowlist, hard price ceilings, ZDR-only routing,

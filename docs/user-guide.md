@@ -428,6 +428,9 @@ Resume reuses the saved blind assessment and finding-verification ledger. It is
 refused after completion, after its single claim, for a mismatched configuration,
 or when required persisted state is absent. Never replay exit `4`: a
 transport-uncertain request may already have been processed and billed.
+If a crash left a newline-less tail in `run-record.jsonl`, eligible resume
+discards only that observed tail and records `RUN_RECORD_TAIL_RECOVERED` before
+continuing. A malformed newline-terminated event remains a hard failure.
 
 ## Requirements mode
 
