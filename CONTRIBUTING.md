@@ -30,8 +30,14 @@ Install and check the exact dependency graph with Node.js 24:
 ```sh
 npm ci
 npm run check
-python3 -B scripts/check-ai-context.py --ci
 ```
+
+`npm run check` runs every check GitHub Actions requires, in the same order: the
+committed-context check, formatting, lint and the configured assist actions,
+strict type checking, the test suite with its coverage floor, the provider-free
+end-to-end dry runs, and the dependency audit. A test pins it to the workflow, so
+the two cannot drift apart. It needs Python 3.12 on PATH for the first step,
+matching CI.
 
 Run `npm run schemas:write` after a deliberate runtime-contract change and
 include the regenerated schema. Run

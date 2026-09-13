@@ -12,6 +12,7 @@ export type { CapturedClaudeGuidanceV1 } from "./guidance/claude-discovery.js";
 export { captureClaudeGuidanceV1 } from "./guidance/claude-discovery.js";
 export type { CapturedCodexGuidanceV1 } from "./guidance/codex-discovery.js";
 export { captureCodexGuidanceV1 } from "./guidance/codex-discovery.js";
+export { renderGuidancePromptPresentationV1 } from "./guidance/presentation.js";
 export type { CapturedRepositoryGuidanceV1 } from "./guidance/repository-guidance.js";
 export { captureRepositoryGuidanceV1 } from "./guidance/repository-guidance.js";
 export type {
@@ -24,7 +25,6 @@ export {
   MAX_GUIDANCE_SOURCE_BYTES_V1,
   REVIEWER_RULES_PATH_V1,
 } from "./guidance/reviewer-rules.js";
-export { renderGuidancePromptPresentationV1 } from "./guidance/presentation.js";
 export {
   evaluateGuidanceAdmissionV1,
   GUIDANCE_CONTENT_STOP_BYTES_V1,

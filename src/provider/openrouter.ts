@@ -1,12 +1,11 @@
 import * as z from "zod";
-import { ProviderCallPacerV1 } from "./call-pacing.js";
-
 import {
+  type OpenRouterProviderRoutingV2,
   OpenRouterProviderRoutingV2Schema,
   sha256Utf8,
-  type OpenRouterProviderRoutingV2,
 } from "../contracts/index.js";
 import { parseStrictJsonV1 } from "../contracts/strict-json.js";
+import { ProviderCallPacerV1 } from "./call-pacing.js";
 import {
   ProviderCallError,
   type ProviderErrorDiagnosticV1,
@@ -31,12 +30,12 @@ const MAX_REDACTION_DEPTH = 64;
 /** Below this length a credential is too short to search for without absurd false positives. */
 const MIN_CREDENTIAL_MATCH_LENGTH = 8;
 
-export { ProviderCallError } from "./review-provider.js";
 export type {
   ProviderCallErrorCode,
   ProviderCallErrorOptions,
   ProviderErrorDiagnosticV1,
 } from "./review-provider.js";
+export { ProviderCallError } from "./review-provider.js";
 
 const OpenRouterResponseSchema = z
   .object({

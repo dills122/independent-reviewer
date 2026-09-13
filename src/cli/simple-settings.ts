@@ -1,11 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-
+import { jsonDocument } from "../contracts/json-document.js";
 import {
   type SimpleReviewSettingsV1,
   SimpleReviewSettingsV1Schema,
 } from "../contracts/simple-review-settings.js";
-import { jsonDocument } from "../contracts/json-document.js";
 import { readStrictJsonFileV1 } from "../contracts/strict-json.js";
 import { localReviewDirectory, MAX_LOCAL_JSON_BYTES_V1 } from "./standards-input.js";
 

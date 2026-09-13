@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { RunRecordEventV1Schema } from "../src/contracts/run-record.js";
 import { formatRunCost, terminalText } from "../src/cli/review-output.js";
+import { RunRecordEventV1Schema } from "../src/contracts/run-record.js";
 import { emitReviewProgress, withReviewProgress } from "../src/orchestrator/progress.js";
 
 test("progress observers cannot interrupt work and receive no author or raw response data", async () => {

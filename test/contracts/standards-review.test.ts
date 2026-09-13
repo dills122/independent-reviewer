@@ -1,17 +1,17 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
-import { ReviewRequestV1Schema } from "../../src/contracts/review-request.js";
 import {
   StandardsReviewBriefV2Schema,
   StandardsReviewBriefV3Schema,
 } from "../../src/contracts/neutral-review-brief.js";
+import { ReviewRequestV1Schema } from "../../src/contracts/review-request.js";
 import {
   contractJsonSchema,
+  STANDARDS_PROFILE_V2_JSON_SCHEMA,
   StandardsCanonicalInputsV2Schema,
   StandardsProfileSchema,
   StandardsProfileV1Schema,
-  STANDARDS_PROFILE_V2_JSON_SCHEMA,
   StandardsProfileV2Schema,
   StandardsReviewRequestV2Schema,
 } from "../../src/contracts/standards-review.js";

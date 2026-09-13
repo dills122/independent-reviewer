@@ -7,15 +7,15 @@ import * as z from "zod";
 import { buildReviewContextMapV1 } from "../context/build-review-context-map.js";
 import { sha256Utf8 } from "../contracts/canonical-json.js";
 import {
-  assertGuidanceGraphMatchesSnapshotV1,
   type AuthorPacketV1,
   AuthorPacketV1Schema,
+  assertGuidanceGraphMatchesSnapshotV1,
   canonicalizeJson,
   computeCanonicalInputDigestV1,
   DigestV1Schema,
   type GuidanceGraphV1,
-  guidanceGraphDigestV1,
   GuidanceGraphV1Schema,
+  guidanceGraphDigestV1,
   jsonDocument,
   PersistedCanonicalInputsV1Schema,
   type ReviewContextMapV1,
@@ -27,9 +27,6 @@ import {
   verifyReviewContextMapIdentityV1,
   verifySnapshotManifestIdentityV1,
 } from "../contracts/index.js";
-import type { CapturedReviewerRulesGuidanceV1 } from "../guidance/reviewer-rules.js";
-import { assertGuidanceImportOccurrencesV1 } from "../guidance/import-verification.js";
-import { readStrictJsonFileV1 } from "../contracts/strict-json.js";
 import {
   canonicalInputList,
   type ReviewAuthor,
@@ -38,6 +35,9 @@ import {
   ReviewCanonicalInputsSchema,
   ReviewRequestSchema,
 } from "../contracts/standards-review.js";
+import { readStrictJsonFileV1 } from "../contracts/strict-json.js";
+import { assertGuidanceImportOccurrencesV1 } from "../guidance/import-verification.js";
+import type { CapturedReviewerRulesGuidanceV1 } from "../guidance/reviewer-rules.js";
 import { buildFallbackReviewContextMapV1 } from "../planning/fallback-context-map.js";
 import { mapWithConcurrencyV1 } from "./concurrency.js";
 import type { CapturedGitSnapshotV1 } from "./git-capture.js";

@@ -6,13 +6,13 @@ import { jsonDocument } from "../contracts/json-document.js";
 import { NonEmptyTextSchema } from "../contracts/primitives.js";
 import { FlowIdSchema } from "../contracts/review-request.js";
 import { ReviewRunConfigV3Schema } from "../contracts/review-run-config.js";
-import { readStrictJsonFileV1 } from "../contracts/strict-json.js";
 import {
   MAX_EXTERNAL_JSON_BYTES_V1,
   ReviewAuthorSchema,
   StandardsProfileSchema,
   StandardsReviewRequestV2Schema,
 } from "../contracts/standards-review.js";
+import { readStrictJsonFileV1 } from "../contracts/strict-json.js";
 import { resolveRepositoryRootV1 } from "../snapshot/git-capture.js";
 import { runGit } from "../snapshot/git-command.js";
 

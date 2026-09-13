@@ -1,20 +1,21 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
-  INSPECTION_REPORT_V1_JSON_SCHEMA,
-  StandardsInspectionReportV2Schema,
-} from "../src/contracts/inspection-report.js";
-import {
   FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
   FINDING_VERIFICATION_V1_JSON_SCHEMA,
 } from "../src/contracts/finding-verification.js";
 import { GUIDANCE_GRAPH_V1_JSON_SCHEMA } from "../src/contracts/guidance-graph.js";
+import {
+  INSPECTION_REPORT_V1_JSON_SCHEMA,
+  StandardsInspectionReportV2Schema,
+} from "../src/contracts/inspection-report.js";
 import {
   NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,
   StandardsReviewBriefV2Schema,
   StandardsReviewBriefV3Schema,
 } from "../src/contracts/neutral-review-brief.js";
 import { REVIEW_CONTEXT_MAP_V1_JSON_SCHEMA } from "../src/contracts/review-context-map.js";
+import { REVIEW_REPORT_METADATA_V1_JSON_SCHEMA } from "../src/contracts/review-report-metadata.js";
 import { REVIEW_REQUEST_V1_JSON_SCHEMA } from "../src/contracts/review-request.js";
 import {
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
@@ -24,13 +25,12 @@ import {
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
 } from "../src/contracts/review-results.js";
 import { REVIEW_RUN_CONFIG_V3_JSON_SCHEMA } from "../src/contracts/review-run-config.js";
-import { REVIEW_REPORT_METADATA_V1_JSON_SCHEMA } from "../src/contracts/review-report-metadata.js";
+import { REVIEW_UNIT_PLAN_V1_JSON_SCHEMA } from "../src/contracts/review-unit-plan.js";
 import { RUN_RECORD_EVENT_V1_JSON_SCHEMA } from "../src/contracts/run-record.js";
 import {
   RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
   SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
 } from "../src/contracts/simple-review-settings.js";
-import { REVIEW_UNIT_PLAN_V1_JSON_SCHEMA } from "../src/contracts/review-unit-plan.js";
 import { SNAPSHOT_MANIFEST_V1_JSON_SCHEMA } from "../src/contracts/snapshot-manifest.js";
 import {
   STANDARDS_CANDIDATE_V2_JSON_SCHEMA,

@@ -3,7 +3,7 @@ import { posix } from "node:path";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
 
-import { sha256BytesDigestV1, type DigestV1, SnapshotPathV1Schema } from "../contracts/index.js";
+import { type DigestV1, SnapshotPathV1Schema, sha256BytesDigestV1 } from "../contracts/index.js";
 import { isSecretPathV1, secretContentScanV1 } from "../snapshot/git-capture.js";
 import { runGit } from "../snapshot/git-command.js";
 

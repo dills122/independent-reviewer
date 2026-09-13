@@ -1,11 +1,11 @@
 import {
-  MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
-  MAX_GUIDANCE_NODES_V1,
-  MAX_GUIDANCE_TARGETS_V1,
   buildDirectGuidanceGraphV1,
   createGuidanceDiagnosticV1,
   type DirectGuidanceSourceInputV1,
   type GuidanceGraphV1,
+  MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
+  MAX_GUIDANCE_NODES_V1,
+  MAX_GUIDANCE_TARGETS_V1,
   projectGuidanceTargetsV1,
   type SnapshotManifestV1,
 } from "../contracts/index.js";

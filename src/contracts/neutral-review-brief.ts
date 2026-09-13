@@ -19,8 +19,8 @@ import {
 import {
   canonicalInputList,
   type ReviewCanonicalInputs,
-  selectedReferences,
   StandardsCanonicalInputsV2Schema,
+  selectedReferences,
 } from "./standards-review.js";
 
 const CanonicalStatementV1Schema = z.strictObject({

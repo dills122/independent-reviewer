@@ -8,8 +8,8 @@ import {
   parseStrictJsonV1,
   readStrictJsonFileV1,
   readStrictJsonLinesFileV1,
-  StrictJsonErrorV1,
   type StrictJsonErrorCode,
+  StrictJsonErrorV1,
 } from "../../src/contracts/strict-json.js";
 
 function assertStrictJsonError(

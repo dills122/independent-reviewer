@@ -18,12 +18,15 @@ function declaredEventTypes(): string[] {
  * Scans the orchestrator source the way `strict-json.test.ts` scans for `JSON.parse`. Matching
  * the emitted set against the declared set is what makes the contract binding: an event added to
  * the orchestrator without a schema member fails here rather than at a user's resume (#122).
+ *
+ * The run-record path reaches `appendRunEvent` as a bare identifier at some call sites and as a
+ * property access at others, so the pattern admits both rather than silently skipping a caller.
  */
 async function emittedEventTypes(): Promise<string[]> {
   const source = await readFile(ORCHESTRATOR_SOURCE, "utf8");
   const emitted = new Set<string>();
   for (const call of source.matchAll(
-    /appendRunEvent\(\s*\w+\s*,\s*\{([\s\S]{0,200}?)type:\s*"(\w+)"/g,
+    /appendRunEvent\(\s*[\w.]+\s*,\s*\{([\s\S]{0,200}?)type:\s*"(\w+)"/g,
   )) {
     emitted.add(call[2] as string);
   }

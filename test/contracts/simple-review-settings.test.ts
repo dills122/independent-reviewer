@@ -5,8 +5,8 @@ import { describe, it } from "node:test";
 
 import {
   RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
-  resolveSimpleReviewSettingsV1,
   ResolvedSimpleReviewSettingsV1Schema,
+  resolveSimpleReviewSettingsV1,
   SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
   SimpleReviewSettingsV1Schema,
   supportedReviewModelsV1,

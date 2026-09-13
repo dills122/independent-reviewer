@@ -3,8 +3,8 @@ import * as z from "zod";
 import { canonicalizeJson, digestCanonicalJson } from "./canonical-json.js";
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 import {
-  type ReviewRunConfigV3,
   ReviewModelSlugV1Schema,
+  type ReviewRunConfigV3,
   ReviewRunConfigV3Schema,
 } from "./review-run-config.js";
 import { DigestV1Schema } from "./snapshot-manifest.js";

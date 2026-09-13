@@ -5,8 +5,8 @@ import {
   assembleFindingVerificationV1,
   assertFindingVerificationScopeV1,
   FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
-  FindingVerificationCandidateV1Schema,
   FINDING_VERIFICATION_V1_JSON_SCHEMA,
+  FindingVerificationCandidateV1Schema,
   FindingVerificationV1Schema,
 } from "../../src/contracts/finding-verification.js";
 

@@ -1,8 +1,8 @@
 import * as z from "zod";
 import { canonicalizeJson } from "./canonical-json.js";
 import { DirectRecognitionV1Schema, GuidanceFamilyV1Schema } from "./guidance-graph.js";
-import { DigestV1Schema, SnapshotPathV1Schema } from "./snapshot-manifest.js";
 import { NonEmptyTextSchema, prefixedIdentifier } from "./primitives.js";
+import { DigestV1Schema, SnapshotPathV1Schema } from "./snapshot-manifest.js";
 import { parseStrictJsonV1 } from "./strict-json.js";
 
 const MAX_GUIDANCE_PRESENTATION_BYTES_V1 = 64 * 1024 * 1024;
