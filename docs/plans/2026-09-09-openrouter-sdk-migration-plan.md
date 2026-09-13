@@ -2,6 +2,11 @@
 
 ## Status and scope
 
+Completed as an offline compatibility spike; production migration was rejected.
+See the
+[recorded decision](../research/2026-09-09-openrouter-sdk-compatibility-spike.md).
+This file retains the evaluated migration sequence and acceptance criteria.
+
 Offline compatibility spike for replacing the hand-written HTTP invocation in
 `src/provider/openrouter.ts` with the official `@openrouter/sdk`. Preserve the
 `ReviewProviderV1` boundary and all product policy. Do not make a paid provider

@@ -1,5 +1,11 @@
 # Whitespace generation diagnostic plan
 
+Status: historical. Initial diagnostic evidence is recorded in
+[the whitespace investigation](../validation/2026-09-09-whitespace-isolation.md),
+and later streaming-guard work was superseded by
+[ADR-006](../decisions/006-route-for-availability-not-pinning.md). The sequencing
+below records the bounded investigation; its final “Next action” is not current.
+
 ## Objective
 
 Identify a reproducible trigger or verified mitigation for final-stage whitespace
