@@ -160,3 +160,34 @@ Private run evidence:
 
 - `.review-runs/full-matrix-2026-09-11/v3-preliminary-claim-dry-2026-09-13/`
 - `.review-runs/full-matrix-2026-09-11/v3-preliminary-claim-live-2026-09-13/`
+
+## Post-rebase paid confirmation — 2026-09-13
+
+Rebased the V3 branch onto `582fe23`, incorporating the merged capture,
+run-record, resume-eligibility, schema-bound, and guidance-limit fixes from
+PRs #139, #140, #141, and #143. The rebased checkpoint was `1b11572`. Contract
+schema generation, the 495-test application gate, coverage thresholds, and the
+committed repository-context gate all passed before provider access. The exact
+`requirements/wrong_concern` dry-run again admitted with zero calls and zero
+cost.
+
+The separately approved paid replay completed exact `READY` in 56,971 ms with
+two successful CoreWeave calls, 8,214 reported tokens, and `$0.0005288`
+provider-reported cost. It produced zero findings, zero limitations, zero
+repairs, and zero transport retries. This time the preliminary assessment was
+clean, so the V3 verifier correctly persisted an empty local artifact without
+buying a third call. The final provider still returned the contradictory raw
+compatibility verdict `NOT_READY` alongside no findings, limitations, or
+blockers; runner-owned assembly correctly derived `READY`.
+
+This replay confirms the rebased fixes did not regress capture, typed ledger
+events, local empty verification, author-stage ordering, or final bookkeeping.
+It complements the prior three-call sample: the earlier run exercised provider-
+backed rejection of a false finding, while this run exercised the lower-cost
+clean-preliminary path. A non-empty concern-verification response remains
+covered deterministically offline rather than by this stochastic paid sample.
+
+Private run evidence:
+
+- `.review-runs/full-matrix-2026-09-11/v3-rebased-bugfix-dry-2026-09-13/`
+- `.review-runs/full-matrix-2026-09-11/v3-rebased-bugfix-live-2026-09-13/`
