@@ -29,6 +29,7 @@ import {
 } from "./contracts/index.js";
 import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
 import { jsonDocument } from "./contracts/json-document.js";
+import { type RunRecordEventV1, RunRecordEventV1Schema } from "./contracts/run-record.js";
 import { readStrictJsonFileV1, readStrictJsonLinesFileV1 } from "./contracts/strict-json.js";
 import {
   canonicalInputList,
@@ -63,6 +64,16 @@ export interface CliIoV1 {
 const CLI_VERSION_V1 = "0.0.0";
 const MAX_CLI_RUN_RECORD_BYTES_V1 = 64 * 1024 * 1024;
 const MAX_CLI_RUN_RECORD_LINE_BYTES_V1 = 8 * 1024 * 1024;
+
+/** Reads a run record as typed events, the same contract the orchestrator writes and resumes on. */
+async function readRunRecordEventsV1(path: string): Promise<RunRecordEventV1[]> {
+  const lines = await readStrictJsonLinesFileV1(path, {
+    maxTotalBytes: MAX_CLI_RUN_RECORD_BYTES_V1,
+    maxLineBytes: MAX_CLI_RUN_RECORD_LINE_BYTES_V1,
+    source: "review run record",
+  });
+  return lines.map((line) => RunRecordEventV1Schema.parse(line));
+}
 
 const processIo: CliIoV1 = {
   stdout: (message) => process.stdout.write(`${message}\n`),
@@ -763,13 +774,7 @@ async function review(
     );
     io.stdout(`Report: ${result.markdownPath}`);
     if (prepared.standards) {
-      const events = (
-        await readStrictJsonLinesFileV1(result.runRecordPath, {
-          maxTotalBytes: MAX_CLI_RUN_RECORD_BYTES_V1,
-          maxLineBytes: MAX_CLI_RUN_RECORD_LINE_BYTES_V1,
-          source: "review run record",
-        })
-      ).map((event) => event as Record<string, unknown>);
+      const events = await readRunRecordEventsV1(result.runRecordPath);
       io.stdout(formatRunCost(events));
     }
     return reviewOutcomeExitCodeV1(result.report.verdict);
@@ -781,18 +786,11 @@ async function review(
           "Provider outcome and cost may be unknown. This submission cannot be safely replayed automatically.",
         );
       else {
-        let events: Record<string, unknown>[] = [];
+        let events: RunRecordEventV1[] = [];
         try {
-          events = (
-            await readStrictJsonLinesFileV1(
-              join(prepared.packetPath, "review", "run-record.jsonl"),
-              {
-                maxTotalBytes: MAX_CLI_RUN_RECORD_BYTES_V1,
-                maxLineBytes: MAX_CLI_RUN_RECORD_LINE_BYTES_V1,
-                source: "review run record",
-              },
-            )
-          ).map((event) => event as Record<string, unknown>);
+          events = await readRunRecordEventsV1(
+            join(prepared.packetPath, "review", "run-record.jsonl"),
+          );
         } catch {
           /* Input/preflight may have failed before a ledger exists. */
         }

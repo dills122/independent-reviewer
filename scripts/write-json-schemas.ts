@@ -25,6 +25,7 @@ import {
 } from "../src/contracts/review-results.js";
 import { REVIEW_RUN_CONFIG_V3_JSON_SCHEMA } from "../src/contracts/review-run-config.js";
 import { REVIEW_REPORT_METADATA_V1_JSON_SCHEMA } from "../src/contracts/review-report-metadata.js";
+import { RUN_RECORD_EVENT_V1_JSON_SCHEMA } from "../src/contracts/run-record.js";
 import {
   RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
   SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
@@ -88,6 +89,7 @@ const schemaArtifacts = [
   ["snapshot-manifest-v1.schema.json", SNAPSHOT_MANIFEST_V1_JSON_SCHEMA],
   ["review-context-map-v1.schema.json", REVIEW_CONTEXT_MAP_V1_JSON_SCHEMA],
   ["review-unit-plan-v1.schema.json", REVIEW_UNIT_PLAN_V1_JSON_SCHEMA],
+  ["run-record-event-v1.schema.json", RUN_RECORD_EVENT_V1_JSON_SCHEMA],
 ] as const;
 
 await Promise.all(

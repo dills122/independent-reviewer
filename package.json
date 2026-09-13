@@ -36,7 +36,8 @@
     "./schemas/review-run-config-v3": "./schemas/review-run-config-v3.schema.json",
     "./schemas/review-report-metadata-v1": "./schemas/review-report-metadata-v1.schema.json",
     "./schemas/simple-review-settings-v1": "./schemas/simple-review-settings-v1.schema.json",
-    "./schemas/resolved-simple-review-settings-v1": "./schemas/resolved-simple-review-settings-v1.schema.json"
+    "./schemas/resolved-simple-review-settings-v1": "./schemas/resolved-simple-review-settings-v1.schema.json",
+    "./schemas/run-record-event-v1": "./schemas/run-record-event-v1.schema.json"
   },
   "files": [
     "dist/src",

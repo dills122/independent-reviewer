@@ -1,4 +1,5 @@
 import { stripVTControlCharacters } from "node:util";
+import type { RunRecordEventV1 } from "../contracts/run-record.js";
 import type { ReviewReport } from "../contracts/standards-results.js";
 import type { ReviewProgress } from "../orchestrator/progress.js";
 import { reviewVerdictLabel } from "../report/markdown.js";
@@ -71,21 +72,24 @@ export function terminalReviewSummary(report: ReviewReport): string {
     .join("\n");
 }
 
-export function formatRunCost(events: Record<string, unknown>[]): string {
+/**
+ * Sums what the provider said each call cost, and counts the calls it said nothing about.
+ *
+ * The two are never added together. A run's internal ledger charges an unpriced call the
+ * unit-price ceiling over a byte-denominated reservation, which is deliberately several times the
+ * real figure; presenting that as spend would misreport the bill. So this reports only confirmed
+ * charges and says plainly how many calls are unaccounted for.
+ */
+export function formatRunCost(events: readonly RunRecordEventV1[]): string {
   let reported = 0;
   let unknown = 0;
   for (const event of events) {
     if (event.type !== "CALL_SUCCEEDED" && event.type !== "CALL_FAILED") continue;
-    const metadata = event.responseMetadata;
-    const usage =
-      event.type === "CALL_SUCCEEDED"
-        ? event.usage
-        : metadata && typeof metadata === "object"
-          ? (metadata as Record<string, unknown>).usage
-          : undefined;
     const cost =
-      usage && typeof usage === "object" ? (usage as Record<string, unknown>).cost : undefined;
-    if (typeof cost === "number" && Number.isFinite(cost) && cost >= 0) reported += cost;
+      event.type === "CALL_SUCCEEDED"
+        ? event.usage.cost
+        : (event.responseMetadata?.usage.cost ?? null);
+    if (cost !== null && Number.isFinite(cost) && cost >= 0) reported += cost;
     else unknown++;
   }
   return `Provider-reported cost: $${reported.toFixed(6)}${unknown ? `; ${unknown} call(s) have unknown cost.` : "."} Budget reservations are not confirmed charges.`;

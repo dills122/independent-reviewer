@@ -1,0 +1,1359 @@
+{
+  "$id": "urn:independent-reviewer:schema:run-record-event:v1",
+  "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "RUN_STARTED"
+        },
+        "snapshotDigest": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "briefDigest": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "guidanceGraphDigest": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "contextMapDigest": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "planDigest": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "configId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "configDigest": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "requestedModels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "promptVersion": {
+          "type": "string"
+        },
+        "preliminarySchema": {
+          "type": "string"
+        },
+        "finalSchema": {
+          "type": "string"
+        },
+        "findingVerificationSchema": {
+          "type": "string"
+        },
+        "findingVerificationPromptVersion": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "snapshotDigest",
+        "briefDigest",
+        "contextMapDigest",
+        "planDigest",
+        "configId",
+        "configDigest",
+        "requestedModels",
+        "promptVersion",
+        "preliminarySchema",
+        "finalSchema",
+        "findingVerificationSchema",
+        "findingVerificationPromptVersion"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "GUIDANCE_ADMISSION"
+        },
+        "contentBytes": {
+          "type": "number"
+        },
+        "wireBytesByStage": {
+          "type": "object",
+          "properties": {
+            "preliminary": {
+              "type": "number"
+            },
+            "findingVerification": {
+              "type": "number"
+            },
+            "final": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "preliminary",
+            "findingVerification",
+            "final"
+          ],
+          "additionalProperties": false
+        },
+        "capacityBytes": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ACCEPTED",
+            "WARNING",
+            "STOP"
+          ]
+        },
+        "warningReasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "stopReasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "contentBytes",
+        "wireBytesByStage",
+        "capacityBytes",
+        "status",
+        "warningReasons",
+        "stopReasons"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "CALL_STARTED"
+        },
+        "attemptNumber": {
+          "type": "number"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "PRELIMINARY",
+            "FINDING_VERIFICATION",
+            "FINAL"
+          ]
+        },
+        "inputDigest": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "providerPolicyVersion": {
+          "type": "string"
+        },
+        "preferredProviderEndpoints": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "excludedProviderEndpoints": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wireBodyDigest": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "wireBodyBytes": {
+          "type": "number"
+        },
+        "credentialFreeWireRequestDigest": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "requestedModels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "promptVersion": {
+          "type": "string"
+        },
+        "responseSchemaName": {
+          "type": "string"
+        },
+        "responseArrayLimits": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "maxOutputTokens": {
+          "type": "number"
+        },
+        "timeoutMs": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "attemptNumber",
+        "stage",
+        "inputDigest",
+        "providerPolicyVersion",
+        "preferredProviderEndpoints",
+        "excludedProviderEndpoints",
+        "wireBodyDigest",
+        "wireBodyBytes",
+        "credentialFreeWireRequestDigest",
+        "requestedModels",
+        "promptVersion",
+        "responseSchemaName",
+        "responseArrayLimits",
+        "maxOutputTokens",
+        "timeoutMs"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "CALL_SUCCEEDED"
+        },
+        "attemptNumber": {
+          "type": "number"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "PRELIMINARY",
+            "FINDING_VERIFICATION",
+            "FINAL"
+          ]
+        },
+        "durationMs": {
+          "type": "number"
+        },
+        "responseId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "returnedModel": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "returnedProvider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "usage": {
+          "type": "object",
+          "properties": {
+            "promptTokens": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "completionTokens": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "totalTokens": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "cost": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "promptTokens",
+            "completionTokens",
+            "totalTokens",
+            "cost"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "attemptNumber",
+        "stage",
+        "durationMs",
+        "responseId",
+        "returnedModel",
+        "returnedProvider",
+        "usage"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "CALL_FAILED"
+        },
+        "attemptNumber": {
+          "type": "number"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "PRELIMINARY",
+            "FINDING_VERIFICATION",
+            "FINAL"
+          ]
+        },
+        "durationMs": {
+          "type": "number"
+        },
+        "responseMetadata": {
+          "type": "object",
+          "properties": {
+            "responseId": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "model": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "provider": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "finishReason": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "usage": {
+              "type": "object",
+              "properties": {
+                "promptTokens": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "completionTokens": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "totalTokens": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "cost": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "promptTokens",
+                "completionTokens",
+                "totalTokens",
+                "cost"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "responseId",
+            "model",
+            "provider",
+            "finishReason",
+            "usage"
+          ],
+          "additionalProperties": false
+        },
+        "error": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "diagnostic": {
+              "type": "object",
+              "properties": {
+                "httpStatus": {
+                  "type": "number"
+                },
+                "providerErrorCode": {
+                  "type": "string"
+                },
+                "providerMessage": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "errorType": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "providerCode": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "providerName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "responseId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "retryAfter": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "limitSource": {
+                  "type": "string"
+                },
+                "previousErrors": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "code": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "provider",
+                      "code"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "httpStatus",
+                "providerErrorCode",
+                "providerMessage",
+                "errorType",
+                "providerCode",
+                "providerName",
+                "model",
+                "responseId",
+                "retryAfter"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "name",
+            "code",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "attemptNumber",
+        "stage",
+        "durationMs",
+        "error"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "PROVIDER_RETRY_REQUESTED"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "PRELIMINARY",
+            "FINDING_VERIFICATION",
+            "FINAL"
+          ]
+        },
+        "failedAttemptNumber": {
+          "type": "number"
+        },
+        "retryAttemptNumber": {
+          "type": "number"
+        },
+        "retriesUsed": {
+          "type": "number"
+        },
+        "maxRetries": {
+          "type": "number"
+        },
+        "delayMs": {
+          "type": "number"
+        },
+        "chargedFailedTokens": {
+          "type": "number"
+        },
+        "chargedFailedCostUsd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "stage",
+        "failedAttemptNumber",
+        "retryAttemptNumber",
+        "retriesUsed",
+        "maxRetries",
+        "delayMs",
+        "chargedFailedTokens",
+        "chargedFailedCostUsd"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "BUDGET_EXHAUSTED"
+        },
+        "budget": {
+          "type": "string",
+          "const": "COST"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "PRELIMINARY",
+            "FINDING_VERIFICATION",
+            "FINAL"
+          ]
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "RESERVATION",
+            "REPORTED"
+          ]
+        },
+        "spentUsd": {
+          "type": "number"
+        },
+        "additionalUsd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "budget",
+        "stage",
+        "phase",
+        "spentUsd",
+        "additionalUsd"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "PRELIMINARY_CANDIDATE_REJECTED"
+        },
+        "attemptNumber": {
+          "type": "number"
+        },
+        "validationError": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "attemptNumber",
+        "validationError"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "PRELIMINARY_REPAIR_REQUESTED"
+        },
+        "rejectedAttemptNumber": {
+          "type": "number"
+        },
+        "repairAttemptNumber": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "rejectedAttemptNumber",
+        "repairAttemptNumber"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "PRELIMINARY_PERSISTED"
+        },
+        "preliminaryDigest": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "acceptedAttemptNumber": {
+          "type": "number"
+        },
+        "responseArtifact": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "preliminaryDigest",
+        "acceptedAttemptNumber",
+        "responseArtifact"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "FINDING_VERIFICATION_PERSISTED"
+        },
+        "verificationDigest": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        "providerCall": {
+          "type": "boolean"
+        },
+        "acceptedAttemptNumber": {
+          "type": "number"
+        },
+        "responseArtifact": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "verificationDigest",
+        "providerCall",
+        "responseArtifact"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "AUTHOR_DELIVERED"
+        },
+        "authorPacketDigest": {
+          "type": "object",
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "const": "SHA256"
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
+          },
+          "required": [
+            "algorithm",
+            "value"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "authorPacketDigest"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "FINAL_CANDIDATE_REJECTED"
+        },
+        "attemptNumber": {
+          "type": "number"
+        },
+        "validationError": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "attemptNumber",
+        "validationError"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "FINAL_REPAIR_REQUESTED"
+        },
+        "rejectedAttemptNumber": {
+          "type": "number"
+        },
+        "repairAttemptNumber": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "rejectedAttemptNumber",
+        "repairAttemptNumber"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "RUN_RESUMED"
+        },
+        "stage": {
+          "type": "string",
+          "const": "FINAL"
+        },
+        "failedAttemptNumber": {
+          "type": "number"
+        },
+        "nextAttemptNumber": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "stage",
+        "failedAttemptNumber",
+        "nextAttemptNumber"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "RUN_COMPLETED"
+        },
+        "terminalState": {
+          "type": "string",
+          "enum": [
+            "READY",
+            "READY_WITH_FOLLOW_UPS",
+            "NOT_READY",
+            "UNABLE_TO_VERIFY"
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "terminalState"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "type": {
+          "type": "string",
+          "const": "RUN_FAILED"
+        },
+        "terminalState": {
+          "type": "string",
+          "enum": [
+            "FAILED",
+            "TRANSPORT_UNCERTAIN"
+          ]
+        },
+        "error": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "diagnostic": {
+              "type": "object",
+              "properties": {
+                "httpStatus": {
+                  "type": "number"
+                },
+                "providerErrorCode": {
+                  "type": "string"
+                },
+                "providerMessage": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "errorType": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "providerCode": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "providerName": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "model": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "responseId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "retryAfter": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "limitSource": {
+                  "type": "string"
+                },
+                "previousErrors": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "code": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "provider",
+                      "code"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "httpStatus",
+                "providerErrorCode",
+                "providerMessage",
+                "errorType",
+                "providerCode",
+                "providerName",
+                "model",
+                "responseId",
+                "retryAfter"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "name",
+            "code",
+            "message"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "type",
+        "terminalState",
+        "error"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}
