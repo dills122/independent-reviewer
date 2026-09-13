@@ -352,8 +352,9 @@ cannot be promoted to runner-confirmed evidence. Each stage specializes its prov
 schema with the frozen snapshot's permitted evidence paths, exact identities,
 coverage sizes, and author-verification indices, while retaining
 local semantic and anchor validation. Compact project guidance preserves every
-non-empty heading/list/prose block and fails before a provider call if the full
-digest cannot fit. It conservatively reserves preliminary, possible verifier,
+non-empty heading/list/prose block, divides its UTF-8 byte budget evenly among
+guidance inputs so source order cannot starve later rules, and fails before a
+provider call if any source cannot fit its share. It conservatively reserves preliminary, possible verifier,
 and final message/schema inputs and outputs before the first submission, uses that same
 token-unit reservation when retransmitting the preliminary result, and retains
 reservations when usage is missing or malformed. It also rejects a known
