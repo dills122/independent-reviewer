@@ -119,6 +119,34 @@ function redactCredential(value: unknown, credential: string, depth = 0): unknow
 }
 
 /**
+ * Failures that prove the request never left this process, keyed by syscall and error code.
+ *
+ * The pair matters, not the code alone. `ECONNRESET` arrives both from a TLS handshake that never
+ * sent a request and from a socket dropped mid-response, and only the second may have been
+ * generated and billed -- so it carries no syscall here and stays uncertain. Name resolution and
+ * TCP connect are the two stages that cannot have submitted anything, and Node reports both with
+ * a syscall (#134).
+ *
+ * Anything not listed stays `TRANSPORT_UNCERTAIN`. Being wrong in that direction costs a refused
+ * retry; being wrong in the other direction reissues an inference call that may already have run.
+ */
+const UNSENT_CONNECTION_FAILURES_V1: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["getaddrinfo", new Set(["ENOTFOUND", "EAI_AGAIN", "EAI_NODATA", "EAI_NONAME"])],
+  [
+    "connect",
+    new Set(["ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH", "ETIMEDOUT", "EADDRNOTAVAIL"]),
+  ],
+]);
+
+function unsentConnectionFailureV1(error: unknown): boolean {
+  const cause = (error as { cause?: unknown } | null)?.cause;
+  if (cause === null || typeof cause !== "object") return false;
+  const { code, syscall } = cause as { code?: unknown; syscall?: unknown };
+  if (typeof code !== "string" || typeof syscall !== "string") return false;
+  return UNSENT_CONNECTION_FAILURES_V1.get(syscall)?.has(code) === true;
+}
+
+/**
  * Reads a response body with a hard byte ceiling instead of buffering whatever arrives.
  *
  * The request direction is bounded by the token budget and the Git side caps its reads; this was
@@ -514,6 +542,13 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
     } catch (error) {
       if (error instanceof ProviderCallError) {
         throw error;
+      }
+      if (unsentConnectionFailureV1(error)) {
+        throw new ProviderCallError(
+          "TRANSPORT_UNSENT",
+          "OpenRouter could not be reached, so the request was never submitted.",
+          { cause: error, retryable: true },
+        );
       }
       throw new ProviderCallError(
         "TRANSPORT_UNCERTAIN",

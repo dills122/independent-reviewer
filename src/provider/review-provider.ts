@@ -4,6 +4,16 @@ export type ProviderCallErrorCode =
   | "INVALID_CONFIGURATION"
   | "PROVIDER_ERROR"
   | "INVALID_RESPONSE"
+  /**
+   * The request provably never left this process: name resolution or the TCP connect failed.
+   *
+   * Distinct from `TRANSPORT_UNCERTAIN` because the two cost different things. Nothing was
+   * submitted, so nothing was generated and nothing was billed; the attempt is free to charge at
+   * zero and safe to reissue. Only failures that can be proven pre-connection belong here -- a
+   * failure that merely looks early, such as the `ECONNRESET` a TLS handshake produces, stays
+   * uncertain (#134).
+   */
+  | "TRANSPORT_UNSENT"
   | "TRANSPORT_UNCERTAIN";
 
 export interface ProviderErrorDiagnosticV1 {

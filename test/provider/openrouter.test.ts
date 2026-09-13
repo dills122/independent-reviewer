@@ -356,6 +356,67 @@ describe("OpenRouterProviderV1", () => {
     );
   });
 
+  it("separates a request that never reached the network from one that may have", async () => {
+    // Regression for #134. Every fetch-layer failure was TRANSPORT_UNCERTAIN, so a DNS failure or
+    // a refused connection -- which provably submitted nothing -- was charged a full review's
+    // tokens and cost by `failedAttemptChargeV1`, and the CLI told the user their outcome and
+    // spend might be unknown. The shapes below are what Node actually produces; verified against
+    // a live resolver, a closed port, a plaintext listener spoken to over TLS, and a socket
+    // dropped mid-response.
+    const unsent = [
+      ["dns", { code: "ENOTFOUND", syscall: "getaddrinfo" }],
+      ["dns retryable", { code: "EAI_AGAIN", syscall: "getaddrinfo" }],
+      ["connection refused", { code: "ECONNREFUSED", syscall: "connect" }],
+      ["host unreachable", { code: "EHOSTUNREACH", syscall: "connect" }],
+      ["connect timeout", { code: "ETIMEDOUT", syscall: "connect" }],
+    ] as const;
+
+    for (const [label, cause] of unsent) {
+      const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () => {
+        throw Object.assign(new TypeError("fetch failed"), {
+          cause: Object.assign(new Error(label), cause),
+        });
+      });
+
+      await assert.rejects(
+        () => provider.complete(request),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderCallError, label);
+          assert.equal(error.code, "TRANSPORT_UNSENT", label);
+          assert.equal(error.retryable, true, label);
+          return true;
+        },
+      );
+    }
+
+    // Ambiguous shapes stay uncertain. A TLS handshake failure reports ECONNRESET with no
+    // syscall, and so does nothing else that can be proven pre-connection; a socket dropped
+    // mid-response reports UND_ERR_SOCKET. Treating either as unsent would let the runner
+    // reissue an inference call that may already have been generated and billed.
+    const uncertain = [
+      ["tls handshake", { code: "ECONNRESET" }],
+      ["socket closed mid-body", { code: "UND_ERR_SOCKET" }],
+      ["reset carrying no syscall", { code: "ECONNREFUSED" }],
+    ] as const;
+
+    for (const [label, cause] of uncertain) {
+      const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () => {
+        throw Object.assign(new TypeError("fetch failed"), {
+          cause: Object.assign(new Error(label), cause),
+        });
+      });
+
+      await assert.rejects(
+        () => provider.complete(request),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderCallError, label);
+          assert.equal(error.code, "TRANSPORT_UNCERTAIN", label);
+          return true;
+        },
+      );
+    }
+  });
+
   it("treats a fetch failure after submission as transport-uncertain", async () => {
     const provider = new OpenRouterProviderV1("secret-key", providerRouting, async () => {
       throw new TypeError("connection lost");
