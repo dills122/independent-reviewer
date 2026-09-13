@@ -501,12 +501,22 @@ it("resumes a definite failed final stage without preparing or buying another pr
         });
       },
     };
+    const firstRunStderr: string[] = [];
     const firstExit = await runCliV1(
       ["review", "--request", requestPath, "--config", configPath, "--output", packetPath],
-      { stdout: () => undefined, stderr: () => undefined },
+      { stdout: () => undefined, stderr: (message) => firstRunStderr.push(message) },
       { readOpenRouterApiKey: () => "test-api-key", createProvider: () => firstProvider },
     );
     assert.equal(firstExit, 1);
+    // Regression for #142. This is a requirements-mode run, and the whole post-failure guidance
+    // block used to sit inside `if (prepared.standards)`. Its users were told only "Rate
+    // limited." -- no packet path, no spend, and no offer of the resume this very test then
+    // performs successfully on the next line.
+    const firstRun = firstRunStderr.join("\n");
+    assert.match(firstRun, /Review did not complete\. Saved packet:/, firstRun);
+    assert.match(firstRun, /Initial assessment is saved/, firstRun);
+    assert.match(firstRun, /A final-only retry may be available/, firstRun);
+    assert.match(firstRun, /Provider-reported cost:/, firstRun);
 
     let resumedCalls = 0;
     const resumedProvider: ReviewProviderV1 = {
