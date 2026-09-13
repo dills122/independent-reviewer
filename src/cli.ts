@@ -29,17 +29,18 @@ import {
 } from "./contracts/index.js";
 import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
 import { jsonDocument } from "./contracts/json-document.js";
-import { type RunRecordEventV1, RunRecordEventV1Schema } from "./contracts/run-record.js";
+import type { RunRecordEventV1 } from "./contracts/run-record.js";
 import {
   canonicalInputList,
   MAX_EXTERNAL_JSON_BYTES_V1,
   type ReviewRequest,
   ReviewRequestSchema,
 } from "./contracts/standards-review.js";
-import { readStrictJsonFileV1, readStrictJsonLinesFileV1 } from "./contracts/strict-json.js";
+import { readStrictJsonFileV1 } from "./contracts/strict-json.js";
 import { captureRepositoryGuidanceV1 } from "./guidance/repository-guidance.js";
 import { withReviewProgress } from "./orchestrator/progress.js";
 import { evaluateResumeShapeV1 } from "./orchestrator/resume-eligibility.js";
+import { readRunRecordEventsV1 as readDurableRunRecordEventsV1 } from "./orchestrator/run-record.js";
 import {
   preflightReview,
   resumeFinalReview,
@@ -68,12 +69,11 @@ const MAX_CLI_RUN_RECORD_LINE_BYTES_V1 = 8 * 1024 * 1024;
 
 /** Reads a run record as typed events, the same contract the orchestrator writes and resumes on. */
 async function readRunRecordEventsV1(path: string): Promise<RunRecordEventV1[]> {
-  const lines = await readStrictJsonLinesFileV1(path, {
+  const record = await readDurableRunRecordEventsV1(path, {
     maxTotalBytes: MAX_CLI_RUN_RECORD_BYTES_V1,
     maxLineBytes: MAX_CLI_RUN_RECORD_LINE_BYTES_V1,
-    source: "review run record",
   });
-  return lines.map((line) => RunRecordEventV1Schema.parse(line));
+  return [...record.events];
 }
 
 const processIo: CliIoV1 = {

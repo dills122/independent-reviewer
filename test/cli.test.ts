@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
@@ -518,6 +518,10 @@ it("resumes a definite failed final stage without preparing or buying another pr
     assert.match(firstRun, /A final-only retry may be available/, firstRun);
     assert.match(firstRun, /Provider-reported cost:/, firstRun);
 
+    const runRecordPath = join(packetPath, "review", "run-record.jsonl");
+    const tornTail = '{"type":"RUN_FAILED"';
+    await appendFile(runRecordPath, tornTail, "utf8");
+
     let resumedCalls = 0;
     const resumedProvider: ReviewProviderV1 = {
       auditRequest: firstProvider.auditRequest,
@@ -569,6 +573,14 @@ it("resumes a definite failed final stage without preparing or buying another pr
     assert.equal(resumedCalls, 1);
     assert.match(output.join("\n"), /Verdict: Ready/);
     assert.doesNotMatch(output.join("\n"), /AUTHOR_RESUME_CONTEXT/);
+    const recoveredEvents = (await readFile(runRecordPath, "utf8"))
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.equal(
+      recoveredEvents.find((event) => event.type === "RUN_RECORD_TAIL_RECOVERED")?.discardedBytes,
+      Buffer.byteLength(tornTail),
+    );
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });
   }

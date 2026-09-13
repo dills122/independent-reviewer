@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 
 import {
   parseStrictJsonV1,
+  readRecoverableStrictJsonLinesFileV1,
   readStrictJsonFileV1,
   readStrictJsonLinesFileV1,
   type StrictJsonErrorCode,
@@ -290,6 +291,40 @@ describe("bounded strict JSON file readers", () => {
           error.code === "JSON_DUPLICATE_PROPERTY" &&
           error.line === 1 &&
           error.column === 8 &&
+          error.physicalLine === 2,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("isolates an incomplete trailing JSONL write without weakening complete-line parsing", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "strict-jsonl-tail-"));
+    try {
+      const recoverablePath = join(directory, "recoverable.jsonl");
+      const malformedPath = join(directory, "malformed.jsonl");
+      const validLine = '{"ok":true}\n';
+      const tornTail = Buffer.from([0x7b, 0x22, 0x78, 0x22, 0x3a, 0xff]);
+      await writeFile(recoverablePath, Buffer.concat([Buffer.from(validLine), tornTail]));
+      await writeFile(malformedPath, `${validLine}{"broken":}\n`, "utf8");
+
+      assert.deepEqual(
+        await readRecoverableStrictJsonLinesFileV1(recoverablePath, {
+          maxTotalBytes: 64,
+          maxLineBytes: 32,
+          source: "recoverable JSONL fixture",
+        }),
+        { values: [{ ok: true }], completeBytes: Buffer.byteLength(validLine), tailBytes: 6 },
+      );
+      await assert.rejects(
+        readRecoverableStrictJsonLinesFileV1(malformedPath, {
+          maxTotalBytes: 64,
+          maxLineBytes: 32,
+          source: "malformed complete JSONL fixture",
+        }),
+        (error: unknown) =>
+          error instanceof StrictJsonErrorV1 &&
+          error.code === "JSON_SYNTAX" &&
           error.physicalLine === 2,
       );
     } finally {

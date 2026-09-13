@@ -160,11 +160,7 @@ export function parseStrictJsonV1(text: string, options: StrictJsonParseOptionsV
   }
 }
 
-async function readBoundedUtf8FileV1(
-  path: string,
-  maxBytes: number,
-  source: string,
-): Promise<string> {
+async function readBoundedFileV1(path: string, maxBytes: number, source: string): Promise<Buffer> {
   assertSafeSourceLabel(source);
   assertByteCap(maxBytes, "maxBytes");
 
@@ -186,30 +182,24 @@ async function readBoundedUtf8FileV1(
       throw strictJsonError("JSON_TOO_LARGE", source);
     }
 
-    try {
-      return new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks, bytesRead));
-    } catch {
-      throw strictJsonError("JSON_SYNTAX", source);
-    }
+    return Buffer.concat(chunks, bytesRead);
   } finally {
     await handle.close();
   }
 }
 
-export async function readStrictJsonFileV1(
-  path: string,
-  options: StrictJsonParseOptionsV1,
-): Promise<unknown> {
-  const text = await readBoundedUtf8FileV1(path, options.maxBytes, options.source);
-  return parseStrictJsonV1(text, options);
+function decodeUtf8V1(bytes: Uint8Array, source: string): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw strictJsonError("JSON_SYNTAX", source);
+  }
 }
 
-export async function readStrictJsonLinesFileV1(
-  path: string,
+function parseStrictJsonLinesTextV1(
+  text: string,
   options: StrictJsonLinesFileOptionsV1,
-): Promise<readonly unknown[]> {
-  assertByteCap(options.maxLineBytes, "maxLineBytes");
-  const text = await readBoundedUtf8FileV1(path, options.maxTotalBytes, options.source);
+): readonly unknown[] {
   const values: unknown[] = [];
   let lineStart = 0;
   let physicalLine = 1;
@@ -253,4 +243,52 @@ export async function readStrictJsonLinesFileV1(
   }
 
   return values;
+}
+
+export async function readStrictJsonFileV1(
+  path: string,
+  options: StrictJsonParseOptionsV1,
+): Promise<unknown> {
+  const bytes = await readBoundedFileV1(path, options.maxBytes, options.source);
+  const text = decodeUtf8V1(bytes, options.source);
+  return parseStrictJsonV1(text, options);
+}
+
+export async function readStrictJsonLinesFileV1(
+  path: string,
+  options: StrictJsonLinesFileOptionsV1,
+): Promise<readonly unknown[]> {
+  assertByteCap(options.maxLineBytes, "maxLineBytes");
+  const bytes = await readBoundedFileV1(path, options.maxTotalBytes, options.source);
+  return parseStrictJsonLinesTextV1(decodeUtf8V1(bytes, options.source), options);
+}
+
+export interface RecoverableStrictJsonLinesV1 {
+  readonly values: readonly unknown[];
+  readonly completeBytes: number;
+  readonly tailBytes: number;
+}
+
+/**
+ * Reads only newline-terminated JSONL records. A non-terminated suffix is reported as an
+ * incomplete write; malformed newline-terminated records remain fatal.
+ */
+export async function readRecoverableStrictJsonLinesFileV1(
+  path: string,
+  options: StrictJsonLinesFileOptionsV1,
+): Promise<RecoverableStrictJsonLinesV1> {
+  assertByteCap(options.maxLineBytes, "maxLineBytes");
+  const bytes = await readBoundedFileV1(path, options.maxTotalBytes, options.source);
+  const lastNewline = bytes.lastIndexOf(0x0a);
+  const completeBytes = lastNewline + 1;
+  const tailBytes = bytes.length - completeBytes;
+  if (tailBytes > options.maxLineBytes) {
+    throw strictJsonError("JSON_TOO_LARGE", options.source, { line: 1, column: 1 });
+  }
+  const text = decodeUtf8V1(bytes.subarray(0, completeBytes), options.source);
+  return {
+    values: parseStrictJsonLinesTextV1(text, options),
+    completeBytes,
+    tailBytes,
+  };
 }

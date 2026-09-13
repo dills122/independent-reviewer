@@ -1891,6 +1891,8 @@ describe("two-stage review orchestrator", () => {
       await assert.rejects(readFile(join(packetPath, "review", "final-resume-claim.json")));
       await writeFile(acceptedProviderPath, acceptedProviderDocument);
 
+      const tornTail = '{"partialRunEvent":';
+      await writeFile(runRecordPath, `${originalRunRecord}${tornTail}`, "utf8");
       const result = await resumeFinalReviewV1(packetPath, config, resumedProvider);
 
       assert.equal(result.report.verdict, "READY");
@@ -1940,6 +1942,7 @@ describe("two-stage review orchestrator", () => {
           "CALL_STARTED",
           "CALL_FAILED",
           "RUN_FAILED",
+          "RUN_RECORD_TAIL_RECOVERED",
           "RUN_RESUMED",
           "CALL_STARTED",
           "CALL_SUCCEEDED",
@@ -1949,6 +1952,11 @@ describe("two-stage review orchestrator", () => {
       assert.deepEqual(
         events.filter((event) => event.type === "CALL_STARTED").map((event) => event.attemptNumber),
         [1, 2, 3, 4],
+      );
+      assert.equal((await readFile(result.runRecordPath, "utf8")).includes(tornTail), false);
+      assert.equal(
+        events.find((event) => event.type === "RUN_RECORD_TAIL_RECOVERED")?.discardedBytes,
+        Buffer.byteLength(tornTail),
       );
 
       let repeatCalls = 0;
