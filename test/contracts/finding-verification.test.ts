@@ -4,14 +4,19 @@ import { describe, it } from "node:test";
 import {
   assembleFindingVerificationV1,
   assembleFindingVerificationV2,
+  assembleFindingVerificationV3,
   assertFindingVerificationScopeV1,
   assertFindingVerificationScopeV2,
+  assertFindingVerificationScopeV3,
   FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
   FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
+  FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
   FindingVerificationCandidateV1Schema,
   FindingVerificationCandidateV2Schema,
+  FindingVerificationCandidateV3Schema,
   FINDING_VERIFICATION_V1_JSON_SCHEMA,
   FINDING_VERIFICATION_V2_JSON_SCHEMA,
+  FINDING_VERIFICATION_V3_JSON_SCHEMA,
   FindingVerificationV1Schema,
 } from "../../src/contracts/finding-verification.js";
 
@@ -119,6 +124,70 @@ describe("finding verification contract", () => {
     );
   });
 
+  it("binds V3 judgments to findings and preliminary concerns without provider-owned identities", () => {
+    const candidate = FindingVerificationCandidateV3Schema.parse({
+      schemaVersion: 3,
+      stage: "FINDING_VERIFICATION",
+      snapshotDigest: digest,
+      briefDigest: digest,
+      assessments: [
+        {
+          status: "NO_VIOLATION",
+          rationale: "The scenario is outside the stated valid input domain.",
+        },
+      ],
+      concernAssessments: [
+        {
+          status: "NO_BLOCKING_UNCERTAINTY",
+          rationale: "Out-of-domain behavior is not required evidence.",
+        },
+        {
+          status: "BLOCKING_UNCERTAINTY_DEMONSTRATED",
+          rationale: "The required dependency contract is unavailable.",
+        },
+      ],
+    });
+    const concerns = [
+      { kind: "EVIDENCE_GAP" as const, concernIndex: 0 },
+      { kind: "LIMITATION" as const, concernIndex: 0 },
+    ];
+
+    const assembled = assembleFindingVerificationV3(candidate, ["finding_domain"], concerns);
+
+    assert.deepEqual(assembled.assessments[0], {
+      preliminaryFindingId: "finding_domain",
+      status: "NO_VIOLATION",
+      rationale: "The scenario is outside the stated valid input domain.",
+    });
+    assert.deepEqual(
+      assembled.concernAssessments.map(({ kind, concernIndex, status }) => ({
+        kind,
+        concernIndex,
+        status,
+      })),
+      [
+        { kind: "EVIDENCE_GAP", concernIndex: 0, status: "NO_BLOCKING_UNCERTAINTY" },
+        {
+          kind: "LIMITATION",
+          concernIndex: 0,
+          status: "BLOCKING_UNCERTAINTY_DEMONSTRATED",
+        },
+      ],
+    );
+    assert.doesNotMatch(JSON.stringify(candidate), /preliminaryFindingId|concernIndex/);
+    assert.doesNotThrow(() =>
+      assertFindingVerificationScopeV3(assembled, ["finding_domain"], concerns),
+    );
+    assert.throws(
+      () => assertFindingVerificationScopeV3(assembled, ["finding_domain"], concerns.slice(0, 1)),
+      /every preliminary concern exactly once/i,
+    );
+    assert.throws(
+      () => assembleFindingVerificationV3(candidate, ["finding_domain"], concerns.slice(0, 1)),
+      /one judgment per frozen concern/i,
+    );
+  });
+
   it("rejects duplicate, missing, and unknown preliminary finding IDs", () => {
     const duplicate = {
       ...verification(),
@@ -151,6 +220,14 @@ describe("finding verification contract", () => {
     assert.deepEqual(
       JSON.parse(await readFile("schemas/finding-verification-v2.schema.json", "utf8")),
       FINDING_VERIFICATION_V2_JSON_SCHEMA,
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile("schemas/finding-verification-candidate-v3.schema.json", "utf8")),
+      FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile("schemas/finding-verification-v3.schema.json", "utf8")),
+      FINDING_VERIFICATION_V3_JSON_SCHEMA,
     );
   });
 });

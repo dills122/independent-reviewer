@@ -22,22 +22,31 @@ export {
 export type {
   FindingVerificationCandidateV1,
   FindingVerificationCandidateV2,
+  FindingVerificationCandidateV3,
   FindingVerificationV1,
   FindingVerificationV2,
+  FindingVerificationV3,
+  PreliminaryConcernIdentityV3,
 } from "./finding-verification.js";
 export {
   assembleFindingVerificationV1,
   assembleFindingVerificationV2,
+  assembleFindingVerificationV3,
   assertFindingVerificationScopeV1,
   assertFindingVerificationScopeV2,
+  assertFindingVerificationScopeV3,
   FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
   FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
+  FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
   FINDING_VERIFICATION_V1_JSON_SCHEMA,
   FINDING_VERIFICATION_V2_JSON_SCHEMA,
+  FINDING_VERIFICATION_V3_JSON_SCHEMA,
   FindingVerificationCandidateV1Schema,
   FindingVerificationCandidateV2Schema,
+  FindingVerificationCandidateV3Schema,
   FindingVerificationV1Schema,
   FindingVerificationV2Schema,
+  FindingVerificationV3Schema,
 } from "./finding-verification.js";
 export type {
   DirectGuidanceRecognitionV1,
