@@ -11,12 +11,12 @@ import {
   FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
   FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
   FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
-  FindingVerificationCandidateV1Schema,
-  FindingVerificationCandidateV2Schema,
-  FindingVerificationCandidateV3Schema,
   FINDING_VERIFICATION_V1_JSON_SCHEMA,
   FINDING_VERIFICATION_V2_JSON_SCHEMA,
   FINDING_VERIFICATION_V3_JSON_SCHEMA,
+  FindingVerificationCandidateV1Schema,
+  FindingVerificationCandidateV2Schema,
+  FindingVerificationCandidateV3Schema,
   FindingVerificationV1Schema,
 } from "../../src/contracts/finding-verification.js";
 

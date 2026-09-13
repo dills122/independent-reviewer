@@ -37,7 +37,7 @@ work remains governed by the
 
 ## Verification evidence
 
-At `5ffcec6`:
+After rebasing onto `af3f300`:
 
 - `npm run check`: 496 tests passed; configured line, branch, and function
   coverage thresholds passed.
@@ -46,12 +46,14 @@ At `5ffcec6`:
 - `npm run audit:dependencies`: zero vulnerabilities at audit level `high`.
 
 The full 14-case provider-free matrix admitted every case with zero calls and
-zero cost. Its separately approved paid run at `5fa4e84` completed 9/14 cases,
+zero cost. Its separately approved paid run at historical pre-#144/#145 commit
+`5fa4e84` completed 9/14 cases,
 and all nine completed reports matched expected human verdicts. It started 37
 calls: 27 succeeded, 10 failed, and successful calls reported `$0.007381112`.
 Failed-call cost remains unknown. Five cases ended without reports because of
 provider 429, 502, or null-content responses; one was amplified by the pinned
-retry-selection defect fixed at `5ffcec6`. No paid replay has confirmed that fix.
+retry-selection defect fixed at rebased commit `926ce00`. No paid replay has
+confirmed that fix.
 See [durable ledger live matrix](2026-09-12-durable-ledger-live-matrix.md) for
 case-level evidence.
 
