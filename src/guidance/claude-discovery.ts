@@ -1,27 +1,27 @@
 import {
-  MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
-  MAX_GUIDANCE_EDGES_V1,
-  MAX_GUIDANCE_NODES_V1,
-  MAX_GUIDANCE_OCCURRENCES_V1,
-  MAX_GUIDANCE_TARGETS_V1,
   buildGuidanceGraphV1,
   createGuidanceDiagnosticV1,
   type DirectGuidanceSourceInputV1,
   type GuidanceGraphV1,
   type GuidanceImportInputV1,
+  MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
+  MAX_GUIDANCE_EDGES_V1,
+  MAX_GUIDANCE_NODES_V1,
+  MAX_GUIDANCE_OCCURRENCES_V1,
+  MAX_GUIDANCE_TARGETS_V1,
   projectGuidanceTargetsV1,
   type SnapshotManifestV1,
 } from "../contracts/index.js";
 import {
-  baseGuidanceBlobMetadataV1,
   type BaseGuidanceBlobMetadataV1,
+  baseGuidanceBlobMetadataV1,
   GuidanceCaptureError,
   listBaseGuidanceBlobMetadataV1,
   readBaseMarkdownGuidanceSourceV1,
   resolveBaseGuidanceBlobV1,
 } from "./base-markdown-source.js";
-import { compileGuidancePatternsV1 } from "./conditional-patterns.js";
 import { resolveClaudeImportPathV1, scanClaudeImportOccurrencesV1 } from "./claude-imports.js";
+import { compileGuidancePatternsV1 } from "./conditional-patterns.js";
 import { guidanceAncestorDirectoriesV1, guidancePathInDirectoryV1 } from "./discovery-paths.js";
 import { parseGuidanceFrontmatterV1 } from "./frontmatter.js";
 

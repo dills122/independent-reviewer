@@ -5,9 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-
-import { buildReviewBrief, captureGitSnapshotV1, writeSnapshotPacketV1 } from "../../src/index.js";
 import { StandardsReviewBriefV2Schema } from "../../src/contracts/neutral-review-brief.js";
+import { buildReviewBrief, captureGitSnapshotV1, writeSnapshotPacketV1 } from "../../src/index.js";
 
 const exec = promisify(execFile);
 

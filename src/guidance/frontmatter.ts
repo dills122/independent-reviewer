@@ -1,8 +1,8 @@
 import type { Root } from "mdast";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkParse from "remark-parse";
-import { isAlias, isPair, isScalar, parseDocument, visit } from "yaml";
 import { unified } from "unified";
+import { isAlias, isPair, isScalar, parseDocument, visit } from "yaml";
 
 import { GuidanceCaptureError } from "./base-markdown-source.js";
 

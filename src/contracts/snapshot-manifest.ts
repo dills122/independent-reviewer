@@ -1,13 +1,13 @@
 import * as z from "zod";
 
 import { canonicalizeJson } from "./canonical-json.js";
+import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
+import { CanonicalInputIdSchema, NonEmptyTextSchema, prefixedIdentifier } from "./primitives.js";
 import {
   CanonicalInputProvenanceV1Schema,
   FlowIdSchema,
   PersistedReviewInstanceV1Schema,
 } from "./review-request.js";
-import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
-import { CanonicalInputIdSchema, NonEmptyTextSchema, prefixedIdentifier } from "./primitives.js";
 
 export const GitObjectIdSchema = z
   .string()

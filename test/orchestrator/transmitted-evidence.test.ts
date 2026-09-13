@@ -4,8 +4,8 @@ import { describe, it } from "node:test";
 import type { ReviewBrief } from "../../src/contracts/neutral-review-brief.js";
 import {
   assertFindingsUseTransmittedEvidenceV1,
-  transmittedLineEvidenceV1,
   transmittedEvidencePathsV1,
+  transmittedLineEvidenceV1,
 } from "../../src/orchestrator/transmitted-evidence.js";
 
 const diffBrief = {

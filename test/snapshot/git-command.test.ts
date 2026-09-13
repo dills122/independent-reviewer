@@ -3,8 +3,8 @@ import { execFile } from "node:child_process";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { describe, it } from "node:test";
+import { promisify } from "node:util";
 
 import { decodeGitText, runGit } from "../../src/snapshot/git-command.js";
 

@@ -32,11 +32,6 @@ import {
 } from "../contracts/index.js";
 import { type ReviewBrief, ReviewBriefSchema } from "../contracts/neutral-review-brief.js";
 import {
-  parseStrictJsonV1,
-  readStrictJsonFileV1,
-  readStrictJsonLinesFileV1,
-} from "../contracts/strict-json.js";
-import {
   type ReviewPreliminary,
   type ReviewReport,
   STANDARDS_CANDIDATE_V3_JSON_SCHEMA,
@@ -45,6 +40,11 @@ import {
 } from "../contracts/standards-results.js";
 import type { ReviewAuthor } from "../contracts/standards-review.js";
 import { selectedRules } from "../contracts/standards-review.js";
+import {
+  parseStrictJsonV1,
+  readStrictJsonFileV1,
+  readStrictJsonLinesFileV1,
+} from "../contracts/strict-json.js";
 import { planReviewUnitsV1 } from "../planning/review-unit-planner.js";
 import {
   ProviderCallError,
@@ -65,7 +65,6 @@ import {
   evaluateGuidanceAdmissionV1,
   type GuidanceAdmissionResultV1,
 } from "./guidance-admission.js";
-import { describeResumeRefusalsV1, evaluateResumeShapeV1 } from "./resume-eligibility.js";
 import { emitReviewProgress } from "./progress.js";
 import {
   type ConstrainedResponseSchemaV1,
@@ -74,6 +73,7 @@ import {
   constrainRepairReferencesV1,
   constrainResponseSchemaV1,
 } from "./response-schema.js";
+import { describeResumeRefusalsV1, evaluateResumeShapeV1 } from "./resume-eligibility.js";
 import {
   applyRunnerOwnedStandardsSeverityV1,
   assertStandardsChangedPathScope,

@@ -2,16 +2,16 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
+  FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
 } from "../../src/index.js";
 import {
-  constrainFindingVerificationCandidateSchemaV1,
-  constrainResponseSchemaV1,
   constrainFinalConcernScopeV1,
+  constrainFindingVerificationCandidateSchemaV1,
   constrainRepairReferencesV1,
+  constrainResponseSchemaV1,
   ResponseSchemaShapeError,
 } from "../../src/orchestrator/response-schema.js";
 

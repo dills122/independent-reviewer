@@ -30,16 +30,16 @@ import {
 import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
 import { jsonDocument } from "./contracts/json-document.js";
 import { type RunRecordEventV1, RunRecordEventV1Schema } from "./contracts/run-record.js";
-import { evaluateResumeShapeV1 } from "./orchestrator/resume-eligibility.js";
-import { readStrictJsonFileV1, readStrictJsonLinesFileV1 } from "./contracts/strict-json.js";
 import {
   canonicalInputList,
   MAX_EXTERNAL_JSON_BYTES_V1,
   type ReviewRequest,
   ReviewRequestSchema,
 } from "./contracts/standards-review.js";
+import { readStrictJsonFileV1, readStrictJsonLinesFileV1 } from "./contracts/strict-json.js";
 import { captureRepositoryGuidanceV1 } from "./guidance/repository-guidance.js";
 import { withReviewProgress } from "./orchestrator/progress.js";
+import { evaluateResumeShapeV1 } from "./orchestrator/resume-eligibility.js";
 import {
   preflightReview,
   resumeFinalReview,

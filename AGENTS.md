@@ -47,7 +47,7 @@ warnings in the modules that use it; no configured gate reports them.
 
 - Verify repository setup: `python3 -B scripts/check-ai-context.py`
 - Install exact application dependencies: `npm ci`
-- Run all application gates: `npm run check`
+- Run every check CI requires: `npm run check` (needs Python 3.12 on PATH)
 - Regenerate committed contract schemas after deliberate contract changes: `npm run schemas:write`
 - Preview AI Central refresh: `sh scripts/setup-ai-context.sh --dry-run`
 - Apply non-overwriting refresh: `sh scripts/setup-ai-context.sh`
