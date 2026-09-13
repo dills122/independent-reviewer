@@ -25,6 +25,25 @@ const options = {
   ] as never,
 };
 
+/** Every declared maxLength in a schema, keyed by JSON pointer. */
+function maxLengths(schema: unknown): Map<string, number> {
+  const found = new Map<string, number>();
+  const visit = (value: unknown, path: string): void => {
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => {
+        visit(item, `${path}/${index}`);
+      });
+      return;
+    }
+    if (value === null || typeof value !== "object") return;
+    const node = value as Record<string, unknown>;
+    if (typeof node.maxLength === "number") found.set(path, node.maxLength);
+    for (const [key, child] of Object.entries(node)) visit(child, `${path}/${key}`);
+  };
+  visit(schema, "");
+  return found;
+}
+
 function nodesNamed(schema: unknown, propertyName: string): Record<string, unknown>[] {
   const found: Record<string, unknown>[] = [];
   const visit = (value: unknown, name?: string): void => {
@@ -104,6 +123,34 @@ describe("constrainResponseSchemaV1", () => {
     assert.equal(rootProperty(verification.schema, "assessments").minItems, 2);
     assert.equal(rootProperty(verification.schema, "assessments").maxItems, 2);
     assert.doesNotMatch(JSON.stringify(verification.schema), /preliminaryFindingId/);
+  });
+
+  it("keeps a contract's own maxLength instead of replacing it with the prose default", () => {
+    // Regression for #136. The string branch overwrote unconditionally while its sibling array
+    // branch respected an explicit maxItems, so every identifier the contract bounded at 128 was
+    // loosened to the generic 400. A model could then return an over-long id that the wire schema
+    // accepted and the persisted contract rejected -- a paid call spent to earn a repair.
+    for (const schema of [
+      PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
+      FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
+    ]) {
+      const before = maxLengths(schema);
+      const after = maxLengths(constrainResponseSchemaV1(schema, options).schema);
+      for (const [path, bound] of before) {
+        assert.equal(after.get(path), bound, `${path} lost its declared bound`);
+      }
+    }
+  });
+
+  it("still bounds prose the contract left unbounded", () => {
+    const { schema } = constrainResponseSchemaV1(FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA, options);
+    const summary = rootProperty(schema, "summary");
+
+    assert.equal(
+      maxLengths(FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA).has("/properties/summary"),
+      false,
+    );
+    assert.equal(summary.maxLength, 400);
   });
 
   it("requires provider fast follows to stay empty because runner derives next actions", () => {

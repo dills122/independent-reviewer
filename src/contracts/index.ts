@@ -49,6 +49,15 @@ export {
   GuidancePromptPresentationV1Schema,
 } from "./guidance-presentation.js";
 export {
+  MAX_GUIDANCE_APPLICABILITY_PAIRS_V1,
+  MAX_GUIDANCE_DIAGNOSTICS_V1,
+  MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
+  MAX_GUIDANCE_EDGES_V1,
+  MAX_GUIDANCE_NODES_V1,
+  MAX_GUIDANCE_OCCURRENCES_V1,
+  MAX_GUIDANCE_TARGETS_V1,
+} from "./guidance-graph.js";
+export {
   assertGuidanceGraphMatchesSnapshotV1,
   buildDirectGuidanceGraphV1,
   buildGuidanceGraphV1,
