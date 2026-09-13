@@ -191,3 +191,49 @@ Private run evidence:
 
 - `.review-runs/full-matrix-2026-09-11/v3-rebased-bugfix-dry-2026-09-13/`
 - `.review-runs/full-matrix-2026-09-11/v3-rebased-bugfix-live-2026-09-13/`
+
+## Full post-rebase paid matrix — 2026-09-13
+
+Ran the complete 14-case matrix at `5fa4e84` after the build-output cleanup.
+The provider-free pass admitted 14/14 cases with zero calls and zero cost. The
+paid pass completed 9/14 cases; every completed verdict matched its human label.
+Those nine reports contained the expected two pagination/shipping defects,
+misleading-author access defect, mandatory and advisory naming findings,
+missing-context limitations, and clean outcomes. Only one raw provider verdict
+matched its human label, while runner-owned assembly produced 9/9 correct final
+verdicts.
+
+The run started 37 calls: 27 succeeded (16 CoreWeave, 11 DeepInfra) and 10
+failed. Successful calls reported `$0.007381112` total across 961,359 ms of
+aggregate per-case elapsed time. Failed-call cost was not reported and must not
+be inferred as zero.
+
+Five cases produced no report:
+
+- `requirements/cross_file`: both configured providers first returned an
+  aggregate shared-pool 429; the retry received a DeepInfra 200 response with
+  null completion content.
+- `standards/clean`: both preliminary attempts received DeepInfra 200 responses
+  with null completion content.
+- `standards/exception`, `standards/unsupported-defense`, and
+  `standards/conflicting-rules`: preliminary/verification work persisted, but
+  final calls exhausted the bounded retry after CoreWeave 429 and DeepInfra 502
+  responses.
+
+This is an availability failure, not evidence of wrong review semantics or a
+regression caused by the build cleanup. One internal recovery weakness did
+amplify `standards/clean`: in pinned mode, retry drops the first configured
+endpoint rather than the endpoint named by response metadata. DeepInfra was the
+actual failed provider, but the retry reduced the route to DeepInfra and never
+tried CoreWeave. Add a regression for a non-head pinned-provider failure and
+select the remaining configured endpoint by normalized provider identity.
+
+Do not repeat the full paid matrix to diagnose this result. Fix and test pinned
+retry selection offline, then replay only the five incomplete cases after
+provider capacity stabilizes. No change to review prompts or verdict policy is
+supported by this run.
+
+Private run evidence:
+
+- `.review-runs/full-matrix-2026-09-11/post-rebase-rimraf-full-dry-2026-09-13/`
+- `.review-runs/full-matrix-2026-09-11/post-rebase-rimraf-full-live-2026-09-13/`
