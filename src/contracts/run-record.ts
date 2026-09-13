@@ -219,6 +219,11 @@ export const RunRecordEventV1Schema = z.discriminatedUnion("type", [
   }),
   z.strictObject({
     ...eventBase,
+    type: z.literal("RUN_RECORD_TAIL_RECOVERED"),
+    discardedBytes: z.number().int().positive(),
+  }),
+  z.strictObject({
+    ...eventBase,
     type: z.literal("RUN_COMPLETED"),
     terminalState: ReviewVerdictV1Schema,
   }),
@@ -231,6 +236,10 @@ export const RunRecordEventV1Schema = z.discriminatedUnion("type", [
 ]);
 
 export type RunRecordEventV1 = z.infer<typeof RunRecordEventV1Schema>;
+
+type WithoutRunRecordEnvelopeV1<T> = T extends unknown ? Omit<T, "schemaVersion" | "at"> : never;
+
+export type RunRecordEventPayloadV1 = WithoutRunRecordEnvelopeV1<RunRecordEventV1>;
 
 /** Narrowed views the readers actually want, so neither has to re-discriminate by hand. */
 export type RunRecordEventOfTypeV1<T extends RunRecordEventV1["type"]> = Extract<

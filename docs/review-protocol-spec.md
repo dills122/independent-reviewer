@@ -468,7 +468,10 @@ Transport ambiguity enters TRANSPORT_UNCERTAIN until explicitly resolved.
 
 A resume loads the persisted state and may only perform actions allowed from
 that state. It never reconstructs stage visibility from conversation history
-alone.
+alone. Run-record appends are synced before success. A resume can isolate and
+remove only an incomplete, newline-less final write after confirming the file
+has not changed; complete malformed records fail closed, and recovery is itself
+recorded as a typed event.
 
 ## Reviewer interaction protocol
 
@@ -751,7 +754,8 @@ proves that the preliminary result was valid and the final call received a
 definite provider HTTP 429. It reuses the exact config, model, packet, raw
 preliminary response, and author packet; it refuses completed, already-resumed,
 invalid-output, or transport-uncertain runs. An atomic private claim prevents
-concurrent processes from purchasing the same one-shot retry. Both live commands read
+concurrent processes from purchasing the same one-shot retry and serializes any
+tail recovery before `RUN_RESUMED`. Both live commands read
 `OPENROUTER_API_KEY` only from the environment. Exit `0` is a
 ready outcome, `2` is `Not ready`, `3` is `Unable to verify`, `4` is
 transport-uncertain, and other failures use `1`.

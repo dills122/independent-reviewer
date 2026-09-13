@@ -190,7 +190,11 @@ export {
   ReviewUnitPlanV1Schema,
   verifyReviewUnitPlanIdentityV1,
 } from "./review-unit-plan.js";
-export type { RunRecordEventOfTypeV1, RunRecordEventV1 } from "./run-record.js";
+export type {
+  RunRecordEventOfTypeV1,
+  RunRecordEventPayloadV1,
+  RunRecordEventV1,
+} from "./run-record.js";
 export { RUN_RECORD_EVENT_V1_JSON_SCHEMA, RunRecordEventV1Schema } from "./run-record.js";
 export type {
   ResolvedSimpleReviewSettingsV1,

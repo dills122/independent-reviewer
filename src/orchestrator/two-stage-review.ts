@@ -1,4 +1,4 @@
-import { access, appendFile, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import * as z from "zod";
 import { verifyReviewBriefIdentity } from "../contracts/artifact-identity.js";
@@ -25,8 +25,7 @@ import {
   ReviewRunConfigV3Schema,
   type ReviewUnitPlanV1,
   ReviewUnitPlanV1Schema,
-  type RunRecordEventV1,
-  RunRecordEventV1Schema,
+  type RunRecordEventPayloadV1,
   resolveSnapshotSourceContentV1,
   sha256Utf8,
   verifyReviewUnitPlanIdentityV1,
@@ -41,11 +40,7 @@ import {
 } from "../contracts/standards-results.js";
 import type { ReviewAuthor } from "../contracts/standards-review.js";
 import { selectedRules } from "../contracts/standards-review.js";
-import {
-  parseStrictJsonV1,
-  readStrictJsonFileV1,
-  readStrictJsonLinesFileV1,
-} from "../contracts/strict-json.js";
+import { parseStrictJsonV1, readStrictJsonFileV1 } from "../contracts/strict-json.js";
 import { planReviewUnitsV1 } from "../planning/review-unit-planner.js";
 import {
   ProviderCallError,
@@ -75,6 +70,12 @@ import {
   constrainResponseSchemaV1,
 } from "./response-schema.js";
 import { describeResumeRefusalsV1, evaluateResumeShapeV1 } from "./resume-eligibility.js";
+import {
+  appendRunRecordEventV1,
+  type ReadRunRecordResultV1,
+  readRunRecordEventsV1,
+  recoverRunRecordTailV1,
+} from "./run-record.js";
 import {
   applyRunnerOwnedStandardsSeverityV1,
   assertStandardsChangedPathScope,
@@ -248,14 +249,10 @@ function blindReviewEvidence(
 
 async function appendRunEvent(
   runRecordPath: string,
-  event: Record<string, unknown>,
+  event: RunRecordEventPayloadV1,
 ): Promise<void> {
-  await appendFile(
-    runRecordPath,
-    `${JSON.stringify({ schemaVersion: 1, at: new Date().toISOString(), ...event })}\n`,
-    { encoding: "utf8", mode: 0o600 },
-  );
-  emitReviewProgress(event);
+  const durableEvent = await appendRunRecordEventV1(runRecordPath, event);
+  emitReviewProgress(durableEvent);
 }
 
 function normalizedError(error: unknown): {
@@ -2258,20 +2255,10 @@ export async function runTwoStageReview(
  * field the gates below compare is declared in `RunRecordEventV1Schema`, so a renamed or
  * restructured event fails the build instead of quietly making every run ineligible (#122).
  */
-async function readRunEventsV1(runRecordPath: string): Promise<RunRecordEventV1[]> {
-  const events = await readStrictJsonLinesFileV1(runRecordPath, {
+async function readRunEventsV1(runRecordPath: string): Promise<ReadRunRecordResultV1> {
+  return readRunRecordEventsV1(runRecordPath, {
     maxTotalBytes: MAX_PERSISTED_REVIEW_JSON_BYTES_V1,
     maxLineBytes: MAX_RUN_RECORD_LINE_BYTES_V1,
-    source: "review run record",
-  });
-  return events.map((event, index) => {
-    const parsed = RunRecordEventV1Schema.safeParse(event);
-    if (!parsed.success) {
-      throw new Error(
-        `Run event ${index + 1} does not match the run-record contract: ${z.prettifyError(parsed.error)}`,
-      );
-    }
-    return parsed.data;
   });
 }
 
@@ -2464,7 +2451,8 @@ export async function resumeFinalReview(
     runRecordPath,
   } = paths;
 
-  const events = await readRunEventsV1(runRecordPath);
+  const runRecord = await readRunEventsV1(runRecordPath);
+  const events = runRecord.events;
   const eligibility = evaluateResumeShapeV1(events);
   if (!eligibility.eligible) {
     throw new Error(describeResumeRefusalsV1(eligibility.refusals));
@@ -2917,6 +2905,21 @@ export async function resumeFinalReview(
       throw new Error("The one permitted final-stage resume has already been claimed.");
     }
     throw error;
+  }
+  if (runRecord.tailBytes > 0) {
+    const confirmed = await readRunEventsV1(runRecordPath);
+    if (
+      confirmed.completeBytes !== runRecord.completeBytes ||
+      confirmed.tailBytes !== runRecord.tailBytes ||
+      JSON.stringify(confirmed.events) !== JSON.stringify(runRecord.events)
+    ) {
+      throw new Error("The review run record changed after it was inspected; refusing recovery.");
+    }
+    await recoverRunRecordTailV1(runRecordPath, runRecord);
+    await appendRunEvent(runRecordPath, {
+      type: "RUN_RECORD_TAIL_RECOVERED",
+      discardedBytes: runRecord.tailBytes,
+    });
   }
   await appendRunEvent(runRecordPath, {
     type: "RUN_RESUMED",
