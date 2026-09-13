@@ -81,9 +81,82 @@ Implemented the contract decision as versioned V2 artifacts with
 rejects V1/V2 protocol mixing. Runner final semantics require every
 `NO_VIOLATION` preliminary item to be withdrawn.
 
-The exact no-violation path is covered by a provider-mock regression. A
+The exact no-violation finding path is covered by a provider-mock regression. A
 correction-phrase denylist was deliberately not added: it would make the runner
 judge natural-language semantics, conflict with the general-tool requirement,
 and be brittle across languages. V2 status directly represents whether a
-correction-worthy violation exists. Focused paid confirmation remains pending
-separate approval.
+correction-worthy violation exists.
+
+## Focused V2 paid confirmation
+
+The separately approved focused confirmation ran at commit `d444a10`. Its
+provider-free dry-run admitted the exact `requirements/wrong_concern` case with
+zero calls. The paid run completed in 21,737 ms with two successful CoreWeave
+calls and `$0.00051348` provider-reported cost, but returned
+`UNABLE_TO_VERIFY` instead of expected `READY`.
+
+This run produced no preliminary findings, so the V2 finding verifier persisted
+an empty local ledger and made no provider call. Preliminary review correctly
+said the implementation preserved all specified positive-integer pagination
+behavior, then added a limitation asking for validation of inputs outside that
+stated valid domain. Final reconciliation retained and restated that limitation.
+Runner-owned bookkeeping correctly converted the two limitations into
+`UNABLE_TO_VERIFY`.
+
+The result does not disprove the V2 judgment vocabulary; it did not exercise a
+V2 judgment. It exposes a wider verification-boundary gap: preliminary findings
+are challenged, but agent-authored evidence gaps and limitations can affect the
+verdict without fresh verification. Final candidate limitations are also
+unbound free text and can restate the same unsupported concern. The same frozen
+snapshot and `review-policy-v21` had previously completed `READY` with no
+limitations, so one successful replay was not evidence of stable behavior.
+
+Further paid retries were stopped while the preliminary adverse-claim boundary
+was fixed and covered offline. Decision and scope are documented in ADR-016 and
+`docs/plans/2026-09-12-verdict-affecting-claim-verification-plan.md`.
+
+## Preliminary adverse-claim verification checkpoint
+
+Active runs now use `finding_verification_candidate_v3` and
+`finding-verification-policy-v5`. One author-blind verifier call runs when the
+preliminary contains any finding, evidence gap, or limitation; an entirely clean
+preliminary still receives a local empty artifact and makes no verifier call.
+Provider judgments remain ordered and identity-free. Runner binds concern
+kind/index, persists exact scope, and resume rejects V1/V2/V3 mixing.
+
+Final-candidate V3 no longer accepts provider-authored limitations. Runner
+derives formal limitations from verified preliminary concern dispositions,
+snapshot coverage, and standards state. `NO_BLOCKING_UNCERTAINTY` must resolve;
+demonstrated or inconclusive blocking uncertainty must remain. The exact
+limitation-only regression and genuine excluded-evidence control pass offline.
+At that checkpoint, no post-fix paid provider run had been performed.
+
+## Focused V3 paid confirmation — 2026-09-13
+
+Validated the V3 working tree based on
+`5fbfbb3ccfe1d3c83f738153ec011e82e1ceb468`; tracked patch digest before the
+run was
+`406c9d960f4b03bf17396279658cc3f2a5dbb30a88a9baf051f816e99f73e88e`.
+The exact `requirements/wrong_concern` dry-run admitted with zero calls and zero
+cost. The separately approved paid run then completed exact `READY` in 115,801
+ms with three successful CoreWeave calls and `$0.00090193`
+provider-reported cost. It produced zero final findings, zero limitations, zero
+repairs, and zero transport retries.
+
+Preliminary review again invented the non-positive-input validation obligation,
+this time as one P1 finding rather than a limitation. V3
+`finding-verification-policy-v5` returned `NO_VIOLATION`; final reconciliation
+withdrew the finding. Raw final provider verdict was `NOT_READY`, while
+runner-owned assembly correctly produced `READY`. Ledger order proves the V3
+verification artifact was persisted before `AUTHOR_DELIVERED`.
+
+This paid sample validates the V3 finding path and end-to-end runner projection.
+It does not empirically exercise a non-empty `concernAssessments` response because
+the preliminary model chose the finding category on this run. That exact
+limitation-only path remains covered offline; a deterministic paid concern
+canary would require separate approval.
+
+Private run evidence:
+
+- `.review-runs/full-matrix-2026-09-11/v3-preliminary-claim-dry-2026-09-13/`
+- `.review-runs/full-matrix-2026-09-11/v3-preliminary-claim-live-2026-09-13/`
