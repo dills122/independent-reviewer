@@ -402,6 +402,29 @@ interface ProviderRetryContextV1 {
 }
 
 /**
+ * Builds the retry budget for one logical call.
+ *
+ * Every call site differs only in its token reservations; the rest is policy that belongs in one
+ * place. It was written out five times, so "how many retries does a call get" was five statements
+ * that happened to agree (#89).
+ */
+function providerRetryContextV1(
+  state: ProviderRetryStateV1,
+  config: ReviewRunConfigV3,
+  costLedger: RunCostLedgerV1,
+  reservations: { requiredTokens: number; remainingTokens: number },
+): ProviderRetryContextV1 {
+  return {
+    state,
+    maxRetries: config.budgets.maxAttemptsPerCall - 1,
+    retriesUsed: 0,
+    config,
+    costLedger,
+    ...reservations,
+  };
+}
+
+/**
  * What a failed attempt costs the run.
  *
  * Charging every failure the full conservative reservation was the reason retries were refused
@@ -1417,15 +1440,10 @@ async function validatePreliminaryStageV1(
         promptVersion: promptVersionForBrief(brief),
         responseArrayLimits: preliminaryConstrained.appliedArrayLimits,
       },
-      {
-        state: retryState,
-        maxRetries: config.budgets.maxAttemptsPerCall - 1,
-        retriesUsed: 0,
-        config,
-        costLedger,
+      providerRetryContextV1(retryState, config, costLedger, {
         requiredTokens: initialCallTokens + repairCallReservation + remainingCallReservation,
         remainingTokens: repairCallReservation + remainingCallReservation,
-      },
+      }),
     );
     const acceptedAttemptNumber = retryState.lastAttempt;
     const responseArtifact = "preliminary-repair-provider-response.json";
@@ -1573,15 +1591,10 @@ async function completeFindingVerificationStageV1(
       promptVersion: FINDING_VERIFICATION_POLICY_VERSION_V1,
       responseArrayLimits: constrained.appliedArrayLimits,
     },
-    {
-      state: retryState,
-      maxRetries: config.budgets.maxAttemptsPerCall - 1,
-      retriesUsed: 0,
-      config,
-      costLedger,
+    providerRetryContextV1(retryState, config, costLedger, {
       requiredTokens: firstCallTokens + callReservation + finalCallReservation,
       remainingTokens: callReservation + finalCallReservation,
-    },
+    }),
   );
   const responseArtifact = "finding-verification-provider-response.json";
   await writeFile(join(reviewDirectory, responseArtifact), jsonDocument(providerRecord(response)), {
@@ -1665,16 +1678,11 @@ async function completeFinalStageV1(
       responseArrayLimits: finalConstrained.appliedArrayLimits,
     },
     retryState
-      ? {
-          state: retryState,
-          maxRetries: config.budgets.maxAttemptsPerCall - 1,
-          retriesUsed: 0,
-          config,
-          costLedger,
+      ? providerRetryContextV1(retryState, config, costLedger, {
           requiredTokens:
             firstCallTokens + finalInputTokens + config.budgets.maxOutputTokensPerCall,
           remainingTokens: finalInputTokens + config.budgets.maxOutputTokensPerCall,
-        }
+        })
       : undefined,
   );
   attemptNumber = retryState?.lastAttempt ?? attemptNumber;
@@ -1778,19 +1786,14 @@ async function completeFinalStageV1(
         responseArrayLimits: repairConstrained.appliedArrayLimits,
       },
       retryState
-        ? {
-            state: retryState,
-            maxRetries: config.budgets.maxAttemptsPerCall - 1,
-            retriesUsed: 0,
-            config,
-            costLedger,
+        ? providerRetryContextV1(retryState, config, costLedger, {
             requiredTokens:
               firstCallTokens +
               finalCallTokens +
               repairInputTokens +
               config.budgets.maxOutputTokensPerCall,
             remainingTokens: repairInputTokens + config.budgets.maxOutputTokensPerCall,
-          }
+          })
         : undefined,
     );
     await writeFile(
@@ -2028,16 +2031,9 @@ export async function runTwoStageReview(
     policyVersion: REVIEW_UNIT_POLICY_VERSION_V1,
     maxSupportingBytesPerUnit: config.budgets.maxInitialEvidenceBytes,
   });
-  const reviewDirectory = join(packetPath, "review");
+  const paths = reviewOutputPathsV1(packetPath);
+  const { reviewDirectory, briefPath, planPath, preliminaryPath, runRecordPath } = paths;
   await mkdir(reviewDirectory, { mode: 0o700 });
-  const briefPath = join(reviewDirectory, "neutral-review-brief.json");
-  const planPath = join(reviewDirectory, "review-unit-plan.json");
-  const preliminaryPath = join(reviewDirectory, "preliminary.json");
-  const findingVerificationPath = join(reviewDirectory, "finding-verification.json");
-  const finalPath = join(reviewDirectory, "final.json");
-  const markdownPath = join(reviewDirectory, "report.md");
-  const reportMetadataPath = join(reviewDirectory, "report-metadata.json");
-  const runRecordPath = join(reviewDirectory, "run-record.jsonl");
   await writeFile(briefPath, jsonDocument(brief), { flag: "wx", mode: 0o600 });
   await writeFile(planPath, jsonDocument(plan), { flag: "wx", mode: 0o600 });
   await appendRunEvent(runRecordPath, {
@@ -2112,15 +2108,10 @@ export async function runTwoStageReview(
         promptVersion: promptVersionForBrief(brief),
         responseArrayLimits: preliminaryConstrained.appliedArrayLimits,
       },
-      {
-        state: retryState,
-        maxRetries: config.budgets.maxAttemptsPerCall - 1,
-        retriesUsed: 0,
-        config,
-        costLedger,
+      providerRetryContextV1(retryState, config, costLedger, {
         requiredTokens,
         remainingTokens: requiredTokens,
-      },
+      }),
     );
     await writeFile(
       join(reviewDirectory, "preliminary-provider-response.json"),
@@ -2195,40 +2186,9 @@ export async function runTwoStageReview(
       costLedger,
       retryState,
     );
-    const reportDocument = jsonDocument(report);
-    await writeExclusive(finalPath, reportDocument);
-    await writeReportMetadataV1(reportMetadataPath, reportDocument, brief);
-    await writeExclusive(
-      markdownPath,
-      renderReviewMarkdown(
-        report,
-        isStandardsBrief(brief) ? selectedRules(brief.canonicalInputs) : [],
-        brief.coverageConstraints,
-      ),
-    );
-    await appendRunEvent(runRecordPath, {
-      type: "RUN_COMPLETED",
-      terminalState: report.verdict,
-    });
-
-    return {
-      report,
-      briefPath,
-      preliminaryPath,
-      findingVerificationPath,
-      finalPath,
-      markdownPath,
-      reportMetadataPath,
-      runRecordPath,
-    };
+    return await finishReviewV1(report, brief, paths);
   } catch (error) {
-    const normalized = normalizedError(error);
-    await appendRunEvent(runRecordPath, {
-      type: "RUN_FAILED",
-      terminalState: normalized.code === "TRANSPORT_UNCERTAIN" ? "TRANSPORT_UNCERTAIN" : "FAILED",
-      error: normalized,
-    });
-    throw error;
+    return await recordRunFailureV1(runRecordPath, error);
   }
 }
 
@@ -2288,6 +2248,102 @@ async function writeExclusive(path: string, contents: string): Promise<void> {
   }
 }
 
+/**
+ * Every path one review writes under a packet.
+ *
+ * Built once so the two entry points cannot disagree about where an artifact lives. They used to
+ * construct overlapping lists independently, and `resumeFinalReview` has to find exactly what
+ * `runTwoStageReview` wrote -- a mismatch would surface as a missing-file failure partway through
+ * a resume rather than as anything a reader could see (#123).
+ */
+interface ReviewOutputPathsV1 {
+  reviewDirectory: string;
+  briefPath: string;
+  planPath: string;
+  preliminaryPath: string;
+  findingVerificationPath: string;
+  finalPath: string;
+  markdownPath: string;
+  reportMetadataPath: string;
+  runRecordPath: string;
+  preliminaryProviderPath: string;
+  preliminaryRepairProviderPath: string;
+  findingVerificationProviderPath: string;
+  finalProviderPath: string;
+  finalResumeClaimPath: string;
+}
+
+function reviewOutputPathsV1(packetPath: string): ReviewOutputPathsV1 {
+  const reviewDirectory = join(packetPath, "review");
+  const at = (name: string): string => join(reviewDirectory, name);
+  return {
+    reviewDirectory,
+    briefPath: at("neutral-review-brief.json"),
+    planPath: at("review-unit-plan.json"),
+    preliminaryPath: at("preliminary.json"),
+    findingVerificationPath: at("finding-verification.json"),
+    finalPath: at("final.json"),
+    markdownPath: at("report.md"),
+    reportMetadataPath: at("report-metadata.json"),
+    runRecordPath: at("run-record.jsonl"),
+    preliminaryProviderPath: at("preliminary-provider-response.json"),
+    preliminaryRepairProviderPath: at("preliminary-repair-provider-response.json"),
+    findingVerificationProviderPath: at("finding-verification-provider-response.json"),
+    finalProviderPath: at("final-provider-response.json"),
+    finalResumeClaimPath: at("final-resume-claim.json"),
+  };
+}
+
+/**
+ * Writes a finished report and its rendered views, then records the run as completed.
+ *
+ * Identical for a first run and for a resumed one, and it was duplicated verbatim between them.
+ * A resumed review must produce the same artifacts as an unresumed one or its report is not
+ * interchangeable with one (#123).
+ */
+async function finishReviewV1(
+  report: ReviewReport,
+  brief: ReviewBrief,
+  paths: ReviewOutputPathsV1,
+): Promise<TwoStageReviewResult> {
+  const reportDocument = jsonDocument(report);
+  await writeExclusive(paths.finalPath, reportDocument);
+  await writeReportMetadataV1(paths.reportMetadataPath, reportDocument, brief);
+  await writeExclusive(
+    paths.markdownPath,
+    renderReviewMarkdown(
+      report,
+      isStandardsBrief(brief) ? selectedRules(brief.canonicalInputs) : [],
+      brief.coverageConstraints,
+    ),
+  );
+  await appendRunEvent(paths.runRecordPath, {
+    type: "RUN_COMPLETED",
+    terminalState: report.verdict,
+  });
+  return {
+    report,
+    briefPath: paths.briefPath,
+    preliminaryPath: paths.preliminaryPath,
+    findingVerificationPath: paths.findingVerificationPath,
+    finalPath: paths.finalPath,
+    markdownPath: paths.markdownPath,
+    reportMetadataPath: paths.reportMetadataPath,
+    runRecordPath: paths.runRecordPath,
+  };
+}
+
+/** Records a terminal failure against the run record and rethrows it unchanged. */
+async function recordRunFailureV1(runRecordPath: string, error: unknown): Promise<never> {
+  const normalized = normalizedError(error);
+  await appendRunEvent(runRecordPath, {
+    type: "RUN_FAILED",
+    terminalState: normalized.code === "TRANSPORT_UNCERTAIN" ? "TRANSPORT_UNCERTAIN" : "FAILED",
+    error: normalized,
+  });
+  throw error;
+}
+
 async function writeReportMetadataV1(
   path: string,
   reportDocument: string,
@@ -2331,26 +2387,23 @@ export async function resumeFinalReview(
     );
   }
 
-  const reviewDirectory = join(packetPath, "review");
-  const briefPath = join(reviewDirectory, "neutral-review-brief.json");
-  const planPath = join(reviewDirectory, "review-unit-plan.json");
-  const preliminaryPath = join(reviewDirectory, "preliminary.json");
-  const findingVerificationPath = join(reviewDirectory, "finding-verification.json");
-  const findingVerificationProviderPath = join(
+  const paths = reviewOutputPathsV1(packetPath);
+  const {
     reviewDirectory,
-    "finding-verification-provider-response.json",
-  );
-  const preliminaryProviderPath = join(reviewDirectory, "preliminary-provider-response.json");
-  const preliminaryRepairProviderPath = join(
-    reviewDirectory,
-    "preliminary-repair-provider-response.json",
-  );
-  const finalProviderPath = join(reviewDirectory, "final-provider-response.json");
-  const finalResumeClaimPath = join(reviewDirectory, "final-resume-claim.json");
-  const finalPath = join(reviewDirectory, "final.json");
-  const markdownPath = join(reviewDirectory, "report.md");
-  const reportMetadataPath = join(reviewDirectory, "report-metadata.json");
-  const runRecordPath = join(reviewDirectory, "run-record.jsonl");
+    briefPath,
+    planPath,
+    preliminaryPath,
+    findingVerificationPath,
+    findingVerificationProviderPath,
+    preliminaryProviderPath,
+    preliminaryRepairProviderPath,
+    finalProviderPath,
+    finalResumeClaimPath,
+    finalPath,
+    markdownPath,
+    reportMetadataPath,
+    runRecordPath,
+  } = paths;
 
   const events = await readRunEventsV1(runRecordPath);
   const eligibility = evaluateResumeShapeV1(events);
@@ -2824,39 +2877,9 @@ export async function resumeFinalReview(
       packet.authorPacket.claimedVerification,
       costLedger,
     );
-    const reportDocument = jsonDocument(report);
-    await writeExclusive(finalPath, reportDocument);
-    await writeReportMetadataV1(reportMetadataPath, reportDocument, brief);
-    await writeExclusive(
-      markdownPath,
-      renderReviewMarkdown(
-        report,
-        isStandardsBrief(brief) ? selectedRules(brief.canonicalInputs) : [],
-        brief.coverageConstraints,
-      ),
-    );
-    await appendRunEvent(runRecordPath, {
-      type: "RUN_COMPLETED",
-      terminalState: report.verdict,
-    });
-    return {
-      report,
-      briefPath,
-      preliminaryPath,
-      findingVerificationPath,
-      finalPath,
-      markdownPath,
-      reportMetadataPath,
-      runRecordPath,
-    };
+    return await finishReviewV1(report, brief, paths);
   } catch (error) {
-    const normalized = normalizedError(error);
-    await appendRunEvent(runRecordPath, {
-      type: "RUN_FAILED",
-      terminalState: normalized.code === "TRANSPORT_UNCERTAIN" ? "TRANSPORT_UNCERTAIN" : "FAILED",
-      error: normalized,
-    });
-    throw error;
+    return await recordRunFailureV1(runRecordPath, error);
   }
 }
 
