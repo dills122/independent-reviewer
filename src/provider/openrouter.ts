@@ -405,6 +405,10 @@ function providerSlug(value: string | null | undefined): string | null {
   return slug ? slug : null;
 }
 
+function normalizedProviderIdentity(value: string | null | undefined): string | null {
+  return providerSlug(value)?.toLowerCase() ?? null;
+}
+
 /**
  * OpenRouter adapter. Every call is a single non-streaming request: a review response is
  * structured JSON nobody watches arrive, so streaming only added SSE framing, partial-JSON and
@@ -470,7 +474,13 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       error.responseMetadata?.provider ?? error.diagnostic?.providerName ?? null,
     );
     if (this.#routing.pinToOrder) {
-      const remaining = (this.#routing.order ?? []).slice(1);
+      const order = this.#routing.order ?? [];
+      const failedIdentity = normalizedProviderIdentity(failed);
+      const withoutFailed =
+        failedIdentity === null
+          ? order
+          : order.filter((endpoint) => normalizedProviderIdentity(endpoint) !== failedIdentity);
+      const remaining = withoutFailed.length < order.length ? withoutFailed : order.slice(1);
       if (remaining.length === 0) return null;
       return new OpenRouterProviderV1(
         this.#apiKey,
