@@ -12,6 +12,9 @@
       "import": "./dist/src/index.js"
     },
     "./schemas/neutral-review-brief-v1": "./schemas/neutral-review-brief-v1.schema.json",
+    "./schemas/finding-verification-candidate-v1": "./schemas/finding-verification-candidate-v1.schema.json",
+    "./schemas/finding-verification-candidate-v2": "./schemas/finding-verification-candidate-v2.schema.json",
+    "./schemas/finding-verification-candidate-v3": "./schemas/finding-verification-candidate-v3.schema.json",
     "./schemas/finding-verification-v1": "./schemas/finding-verification-v1.schema.json",
     "./schemas/finding-verification-v2": "./schemas/finding-verification-v2.schema.json",
     "./schemas/finding-verification-v3": "./schemas/finding-verification-v3.schema.json",
@@ -31,6 +34,7 @@
     "./schemas/standards-inspection-report-v2": "./schemas/standards-inspection-report-v2.schema.json",
     "./schemas/standards-preliminary-v2": "./schemas/standards-preliminary-v2.schema.json",
     "./schemas/standards-profile-v1": "./schemas/standards-profile-v1.schema.json",
+    "./schemas/standards-profile-v2": "./schemas/standards-profile-v2.schema.json",
     "./schemas/standards-report-v2": "./schemas/standards-report-v2.schema.json",
     "./schemas/standards-review-brief-v2": "./schemas/standards-review-brief-v2.schema.json",
     "./schemas/standards-review-brief-v3": "./schemas/standards-review-brief-v3.schema.json",
