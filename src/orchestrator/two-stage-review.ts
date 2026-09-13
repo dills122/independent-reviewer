@@ -24,7 +24,6 @@ import {
   ReviewRunConfigV3Schema,
   type ReviewUnitPlanV1,
   ReviewUnitPlanV1Schema,
-  type RunRecordEventOfTypeV1,
   type RunRecordEventV1,
   RunRecordEventV1Schema,
   resolveSnapshotSourceContentV1,
@@ -66,6 +65,7 @@ import {
   evaluateGuidanceAdmissionV1,
   type GuidanceAdmissionResultV1,
 } from "./guidance-admission.js";
+import { describeResumeRefusalsV1, evaluateResumeShapeV1 } from "./resume-eligibility.js";
 import { emitReviewProgress } from "./progress.js";
 import {
   type ConstrainedResponseSchemaV1,
@@ -466,13 +466,27 @@ function retryDelayMs(error: ProviderCallError): number | null {
   return delay <= 30_000 ? Math.max(0, delay) : null;
 }
 
+/** Runner-owned provenance for one call, recorded alongside it rather than derived from it. */
+interface CallAuditV1 {
+  /**
+   * The policy version this call's system prompt came from.
+   *
+   * Passed in, never inferred. This used to be reconstructed inside `CALL_STARTED` by comparing
+   * `request.messages[0]?.content` against three multi-kilobyte prompt constants, with an
+   * unmatched prompt silently recorded as the requirements policy (#126). It was correct only
+   * because every repair path happens to preserve the first message.
+   */
+  promptVersion: string;
+  /** Array ceilings applied to the response schema, so a bounded review is auditable. */
+  responseArrayLimits?: Record<string, number>;
+}
+
 async function completeWithAudit(
   runRecordPath: string,
   attemptNumber: number,
   provider: ReviewProviderV1,
   request: Parameters<ReviewProviderV1["complete"]>[0],
-  /** Array ceilings applied to the response schema, so a bounded review is auditable. */
-  responseArrayLimits: Record<string, number> = {},
+  audit: CallAuditV1,
   retry?: ProviderRetryContextV1,
 ): Promise<ReviewProviderResponseV1> {
   if (retry) {
@@ -493,16 +507,9 @@ async function completeWithAudit(
     wireBodyBytes: requestAudit.wireBodyBytes,
     credentialFreeWireRequestDigest: requestAudit.credentialFreeWireRequestDigest,
     requestedModels: request.models,
-    promptVersion:
-      request.messages[0]?.content === FINDING_VERIFICATION_POLICY_V1
-        ? FINDING_VERIFICATION_POLICY_VERSION_V1
-        : request.messages[0]?.content === STANDARDS_GUIDANCE_SYSTEM_POLICY_V1
-          ? STANDARDS_GUIDANCE_POLICY_VERSION_V1
-          : request.messages[0]?.content === STANDARDS_SYSTEM_POLICY_V1
-            ? STANDARDS_POLICY_VERSION
-            : REVIEW_PROMPT_VERSION_V1,
+    promptVersion: audit.promptVersion,
     responseSchemaName: request.responseSchema.name,
-    responseArrayLimits,
+    responseArrayLimits: audit.responseArrayLimits ?? {},
     maxOutputTokens: request.maxOutputTokens,
     timeoutMs: request.timeoutMs,
   });
@@ -628,7 +635,7 @@ async function completeWithAudit(
           attemptNumber,
           retryProvider,
           request,
-          responseArrayLimits,
+          audit,
           retry,
         );
       }
@@ -1402,7 +1409,10 @@ async function validatePreliminaryStageV1(
           schema: responseSchema,
         },
       },
-      preliminaryConstrained.appliedArrayLimits,
+      {
+        promptVersion: promptVersionForBrief(brief),
+        responseArrayLimits: preliminaryConstrained.appliedArrayLimits,
+      },
       {
         state: retryState,
         maxRetries: config.budgets.maxAttemptsPerCall - 1,
@@ -1555,7 +1565,10 @@ async function completeFindingVerificationStageV1(
         schema: constrained.schema,
       },
     },
-    constrained.appliedArrayLimits,
+    {
+      promptVersion: FINDING_VERIFICATION_POLICY_VERSION_V1,
+      responseArrayLimits: constrained.appliedArrayLimits,
+    },
     {
       state: retryState,
       maxRetries: config.budgets.maxAttemptsPerCall - 1,
@@ -1643,7 +1656,10 @@ async function completeFinalStageV1(
         schema: finalResponseSchema,
       },
     },
-    finalConstrained.appliedArrayLimits,
+    {
+      promptVersion: promptVersionForBrief(brief),
+      responseArrayLimits: finalConstrained.appliedArrayLimits,
+    },
     retryState
       ? {
           state: retryState,
@@ -1753,7 +1769,10 @@ async function completeFinalStageV1(
           schema: repairConstrained.schema,
         },
       },
-      repairConstrained.appliedArrayLimits,
+      {
+        promptVersion: promptVersionForBrief(brief),
+        responseArrayLimits: repairConstrained.appliedArrayLimits,
+      },
       retryState
         ? {
             state: retryState,
@@ -2085,7 +2104,10 @@ export async function runTwoStageReview(
           schema: preliminaryResponseSchema,
         },
       },
-      preliminaryConstrained.appliedArrayLimits,
+      {
+        promptVersion: promptVersionForBrief(brief),
+        responseArrayLimits: preliminaryConstrained.appliedArrayLimits,
+      },
       {
         state: retryState,
         maxRetries: config.budgets.maxAttemptsPerCall - 1,
@@ -2204,20 +2226,6 @@ export async function runTwoStageReview(
     });
     throw error;
   }
-}
-
-/**
- * Selects every run event of one type, narrowed to that member of the union.
- *
- * `Array.prototype.filter` infers a predicate only for the simplest callbacks, and the resume
- * gates need to select on stage and attempt number as well. Narrowing once here keeps those
- * compound selections typed instead of reaching into `Record<string, unknown>` (#122).
- */
-function eventsOfTypeV1<T extends RunRecordEventV1["type"]>(
-  events: readonly RunRecordEventV1[],
-  type: T,
-): RunRecordEventOfTypeV1<T>[] {
-  return events.filter((event): event is RunRecordEventOfTypeV1<T> => event.type === type);
 }
 
 /**
@@ -2341,58 +2349,23 @@ export async function resumeFinalReview(
   const runRecordPath = join(reviewDirectory, "run-record.jsonl");
 
   const events = await readRunEventsV1(runRecordPath);
-  const eventTypes = events.map((event) => event.type);
-  if (eventTypes.includes("RUN_COMPLETED")) {
-    throw new Error("Final-stage resume is not allowed because the review is completed.");
+  const eligibility = evaluateResumeShapeV1(events);
+  if (!eligibility.eligible) {
+    throw new Error(describeResumeRefusalsV1(eligibility.refusals));
   }
-  if (eventTypes.includes("RUN_RESUMED")) {
-    throw new Error("The final stage has already been resumed once.");
-  }
-  // Eligibility is structural, not a literal event sequence: an in-run retry inserts extra
-  // CALL_STARTED/CALL_FAILED/PROVIDER_RETRY_REQUESTED events, and a retried run is exactly the
-  // kind of run resume exists for.
-  const startedCalls = eventsOfTypeV1(events, "CALL_STARTED");
-  const succeededCalls = eventsOfTypeV1(events, "CALL_SUCCEEDED");
-  const preliminarySucceededCalls = succeededCalls.filter((event) => event.stage === "PRELIMINARY");
-  const findingVerificationSucceededCalls = succeededCalls.filter(
-    (event) => event.stage === "FINDING_VERIFICATION",
-  );
-  const started = events[0];
-  const runFailed = events.at(-1);
-  const preliminaryStarted = startedCalls.find((event) => event.stage === "PRELIMINARY");
-  const preliminaryPersisted = eventsOfTypeV1(events, "PRELIMINARY_PERSISTED")[0];
-  const findingVerificationPersisted = eventsOfTypeV1(events, "FINDING_VERIFICATION_PERSISTED")[0];
-  const acceptedAttemptNumber = preliminaryPersisted?.acceptedAttemptNumber;
-  const preliminarySucceeded = preliminarySucceededCalls.at(-1);
-  const authorDelivered = eventsOfTypeV1(events, "AUTHOR_DELIVERED")[0];
-  const finalStarted = startedCalls.findLast((event) => event.stage === "FINAL");
-  const finalFailed = eventsOfTypeV1(events, "CALL_FAILED").at(-1);
+  const {
+    started,
+    startedCalls,
+    preliminarySucceededCalls,
+    preliminaryPersisted,
+    findingVerificationPersisted,
+    findingVerificationSucceededCalls,
+    authorDelivered,
+    finalStarted,
+    acceptedAttemptNumber,
+  } = eligibility.shape;
   if (
-    started?.type !== "RUN_STARTED" ||
-    runFailed?.type !== "RUN_FAILED" ||
-    succeededCalls.length !==
-      preliminarySucceededCalls.length + findingVerificationSucceededCalls.length ||
-    preliminarySucceededCalls.length < 1 ||
-    preliminarySucceededCalls.length > 2 ||
-    preliminarySucceeded?.stage !== "PRELIMINARY" ||
-    preliminarySucceeded.attemptNumber !== acceptedAttemptNumber ||
-    !Number.isSafeInteger(acceptedAttemptNumber) ||
-    !["preliminary-provider-response.json", "preliminary-repair-provider-response.json"].includes(
-      String(preliminaryPersisted?.responseArtifact),
-    ) ||
-    preliminaryStarted === undefined ||
-    preliminaryPersisted === undefined ||
-    findingVerificationPersisted === undefined ||
-    findingVerificationSucceededCalls.length > 1 ||
-    authorDelivered === undefined ||
-    finalStarted === undefined ||
-    finalFailed?.stage !== "FINAL" ||
-    events.indexOf(finalFailed) !== events.length - 2
-  ) {
-    throw new Error("The persisted run state is not eligible for a final-stage resume.");
-  }
-  if (
-    started?.promptVersion !==
+    started.promptVersion !==
       (packet.guidanceGraph
         ? STANDARDS_GUIDANCE_POLICY_VERSION_V1
         : "standards" in packet.canonicalInputs
@@ -2409,28 +2382,6 @@ export async function resumeFinalReview(
     throw new Error(
       "The persisted run uses an incompatible final response protocol; start a new review.",
     );
-  }
-  const failedError = finalFailed.error;
-  if (
-    failedError.code === "TRANSPORT_UNCERTAIN" ||
-    runFailed.terminalState === "TRANSPORT_UNCERTAIN"
-  ) {
-    throw new Error("A transport-uncertain final submission must not be retried.");
-  }
-  const lastPreFinalAttempt =
-    findingVerificationSucceededCalls.at(-1)?.attemptNumber ?? preliminarySucceeded.attemptNumber;
-  if (
-    preliminaryStarted.attemptNumber !== 1 ||
-    !Number.isSafeInteger(preliminarySucceeded.attemptNumber) ||
-    !Number.isSafeInteger(finalStarted.attemptNumber) ||
-    !Number.isSafeInteger(lastPreFinalAttempt) ||
-    finalStarted.attemptNumber <= lastPreFinalAttempt ||
-    finalStarted.attemptNumber !== finalFailed.attemptNumber ||
-    failedError.code !== "PROVIDER_ERROR" ||
-    failedError.diagnostic?.httpStatus !== 429 ||
-    runFailed.terminalState !== "FAILED"
-  ) {
-    throw new Error("Only a definite final-stage provider 429 may be resumed.");
   }
 
   const expectedConfigDigest = sha256Utf8(JSON.stringify(config));

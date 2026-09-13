@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import { runCliV1 } from "../src/cli.js";
-import type { ReviewProviderV1 } from "../src/provider/review-provider.js";
+import { ProviderCallError, type ReviewProviderV1 } from "../src/provider/review-provider.js";
 import { inspectSnapshotPacket } from "../src/snapshot/snapshot-packet.js";
 
 const exec = promisify(execFile);
@@ -811,6 +811,95 @@ test("saved settings never overwrite silently and direct inputs enforce three ex
     assert.notEqual(next.request.flowId, first.request.flowId);
     assert.equal(next.request.reviewInstance.number, 1);
     assert.match(await localReviewDirectory(f.repo), /\.git/);
+  } finally {
+    await rm(f.repo, { recursive: true, force: true });
+  }
+});
+
+test("a rate-limited final stage offers the resume that revalidates it", async () => {
+  // Regression for #121. The offer was gated on an exact eight-element event-type sequence that
+  // omitted FINDING_VERIFICATION_PERSISTED, which every run emits, so the comparison could never
+  // hold. A user whose final call was rate limited -- with a paid preliminary already saved --
+  // was told the opposite: that no final-only resume remained.
+  const f = await fixture();
+  const errors: string[] = [];
+  const provider: ReviewProviderV1 = {
+    auditRequest: () => ({
+      providerPolicyVersion: "test-provider-v1",
+      wireBodyDigest: digest,
+      wireBodyBytes: 10,
+      credentialFreeWireRequestDigest: digest,
+    }),
+    complete: async (request) => {
+      if (request.stage !== "PRELIMINARY") {
+        throw new ProviderCallError("PROVIDER_ERROR", "Rate limited.", {
+          diagnostic: {
+            httpStatus: 429,
+            providerErrorCode: "429",
+            providerMessage: "Rate limited",
+            errorType: "rate_limit_exceeded",
+            providerCode: null,
+            providerName: "test",
+            model: request.models[0] ?? null,
+            responseId: null,
+            // Longer than the in-run retry ceiling, so the run fails rather than retrying.
+            retryAfter: "45",
+          },
+        });
+      }
+      const brief = JSON.parse(request.messages[1]?.content ?? "{}");
+      const profile = JSON.parse(brief.canonicalInputs.standards[0].content);
+      const value = {
+        schemaVersion: 2,
+        stage: "PRELIMINARY",
+        snapshotDigest: brief.snapshotManifest.snapshotDigest,
+        briefDigest: brief.briefDigest,
+        summary: "Naming review",
+        ruleAssessments: profile.rules.map((rule: { id: string }) => ({
+          ruleId: rule.id,
+          status: "ASSESSED",
+          conflictingRuleIds: [],
+          explanation: "Applied selected rule.",
+        })),
+        inspectedPaths: ["code.ts"],
+        canonicalInputCoverage: [
+          {
+            canonicalInputId: brief.canonicalInputs.standards[0].id,
+            status: "ASSESSED",
+            explanation: "Applied naming rule.",
+          },
+        ],
+        // No findings, so finding verification is satisfied without a second paid call. The
+        // resulting record is the canonical resumable shape.
+        findings: [],
+        evidenceGaps: [],
+        limitations: [],
+        nextAction: "REQUEST_AUTHOR_PACKET",
+      };
+      return {
+        value,
+        rawContent: JSON.stringify(value),
+        responseId: "test",
+        model: request.models[0] as string,
+        provider: "test/fp4",
+        usage: { promptTokens: 100, completionTokens: 100, totalTokens: 200, cost: 0.00001 },
+      };
+    },
+  };
+
+  try {
+    const exit = await runCliV1(
+      ["review", "--request", f.requestPath, "--config", f.configPath, "--output", f.packet],
+      { stdout: () => undefined, stderr: (message) => errors.push(message) },
+      { readOpenRouterApiKey: () => "test", createProvider: () => provider },
+    );
+    const stderr = errors.join("\n");
+
+    assert.equal(exit, 1);
+    assert.match(stderr, /A final-only retry may be available/, stderr);
+    assert.match(stderr, /resume-final --packet/, stderr);
+    assert.doesNotMatch(stderr, /has no remaining final-only resume/);
+    assert.match(stderr, /Initial assessment is saved/, stderr);
   } finally {
     await rm(f.repo, { recursive: true, force: true });
   }
