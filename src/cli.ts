@@ -30,6 +30,7 @@ import {
 import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
 import { jsonDocument } from "./contracts/json-document.js";
 import { type RunRecordEventV1, RunRecordEventV1Schema } from "./contracts/run-record.js";
+import { evaluateResumeShapeV1 } from "./orchestrator/resume-eligibility.js";
 import { readStrictJsonFileV1, readStrictJsonLinesFileV1 } from "./contracts/strict-json.js";
 import {
   canonicalInputList,
@@ -800,21 +801,10 @@ async function review(
             ? "Initial assessment is saved; the final review did not complete."
             : "No valid initial assessment was saved. Correct the reported failure before starting another review.",
         );
-        const eligibleShape = [
-          "RUN_STARTED",
-          "CALL_STARTED",
-          "CALL_SUCCEEDED",
-          "PRELIMINARY_PERSISTED",
-          "AUTHOR_DELIVERED",
-          "CALL_STARTED",
-          "CALL_FAILED",
-          "RUN_FAILED",
-        ];
-        if (
-          error instanceof ProviderCallError &&
-          error.diagnostic?.httpStatus === 429 &&
-          JSON.stringify(events.map((event) => event.type)) === JSON.stringify(eligibleShape)
-        ) {
+        // The same predicate `resume-final` itself applies, rather than a second copy of the
+        // eligibility rules. The previous literal event-type sequence had not been updated when
+        // the finding-verification stage was added, so this offer was unreachable (#121).
+        if (evaluateResumeShapeV1(events).eligible) {
           const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
           const resumeConfig =
             typeof options.get("--config") === "string"
