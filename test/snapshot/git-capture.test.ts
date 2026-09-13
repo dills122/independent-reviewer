@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import { promisify } from "node:util";
 
 import { captureGitSnapshotV1, type ReviewRequestV1 } from "../../src/index.js";
+import { resetGitConfigIsolationCacheV1, runGit } from "../../src/snapshot/git-command.js";
 
 const execFileAsync = promisify(execFile);
 const syntheticAwsAccessKeyId = ["AKIA", "ABCDEFGHIJKLMNOP"].join("");
@@ -751,6 +752,204 @@ describe("captureGitSnapshotV1", () => {
       assert.equal(byPath.get("vendor/nested/bundle.js"), "USER_EXCLUDED");
       assert.equal(byPath.get("notes.md"), "USER_EXCLUDED");
       assert.equal(capturedPaths.has("kept.ts"), true);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("capture is isolated from configuration outside the repository", () => {
+  /**
+   * Runs `capture` with HOME pointed at a throwaway directory holding a hostile global config.
+   *
+   * The environment `runGit` builds inherits HOME, so this is the same path a developer's real
+   * `~/.gitconfig` takes. Restores the previous value, and resets the cached `safe.directory`
+   * lookup either side so one test's fake HOME cannot leak into another's.
+   */
+  async function withGlobalGitConfig<T>(
+    config: string,
+    files: Record<string, string>,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const home = await mkdtemp(join(tmpdir(), "independent-reviewer-home-"));
+    const previousHome = process.env.HOME;
+    try {
+      for (const [name, contents] of Object.entries(files)) {
+        await writeFile(join(home, name), contents);
+      }
+      await writeFile(join(home, ".gitconfig"), config.replaceAll("{HOME}", home));
+      process.env.HOME = home;
+      resetGitConfigIsolationCacheV1();
+      return await run();
+    } finally {
+      if (previousHome === undefined) delete process.env.HOME;
+      else process.env.HOME = previousHome;
+      resetGitConfigIsolationCacheV1();
+      await rm(home, { recursive: true, force: true });
+    }
+  }
+
+  it("ignores a global attributes file that would reclassify every source file", async () => {
+    // Regression for #129. `check-attr` reads core.attributesFile from the developer's home
+    // directory, so the same commit classified differently on different machines: a broad global
+    // rule silently excluded a whole change from review while the run reported success.
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/global-attributes");
+      await writeFile(join(repositoryPath, "modified.ts"), "after\n");
+      await git(repositoryPath, "commit", "-am", "change");
+
+      const captured = await withGlobalGitConfig(
+        "[core]\n\tattributesFile = {HOME}/attributes\n",
+        { attributes: "*.ts linguist-generated\n" },
+        () => captureGitSnapshotV1(reviewRequest(repositoryPath, "main")),
+      );
+      const entry = captured.manifest.paths.find((path) => path.path === "modified.ts");
+
+      assert.ok(entry, "the changed file must still be captured");
+      assert.equal(entry.role, "SOURCE");
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores ignore rules that live outside the committed tree", async () => {
+    // Two sources, neither in the frozen tree: the developer's global core.excludesFile, and this
+    // clone's .git/info/exclude. Both used to remove an untracked file from the snapshot
+    // entirely -- membership, not classification.
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/global-excludes");
+      await writeFile(join(repositoryPath, "untracked-by-global.ts"), "export const a = 1;\n");
+      await writeFile(join(repositoryPath, "untracked-by-clone.ts"), "export const b = 2;\n");
+      await writeFile(join(repositoryPath, ".git", "info", "exclude"), "untracked-by-clone.ts\n");
+
+      const captured = await withGlobalGitConfig(
+        "[core]\n\texcludesFile = {HOME}/ignore\n",
+        { ignore: "untracked-by-global.ts\n" },
+        () => captureGitSnapshotV1(reviewRequest(repositoryPath, "main")),
+      );
+      const paths = captured.manifest.paths.map((entry) => entry.path);
+
+      assert.ok(paths.includes("untracked-by-global.ts"), paths.join(","));
+      assert.ok(paths.includes("untracked-by-clone.ts"), paths.join(","));
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("still honours an ignore rule the tree itself commits", async () => {
+    // The isolation must not reach in-tree .gitignore, which is repository-owned and frozen.
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/tree-ignore");
+      await writeFile(join(repositoryPath, ".gitignore"), "ignored-by-tree.ts\n");
+      await git(repositoryPath, "add", ".gitignore");
+      await git(repositoryPath, "commit", "-m", "ignore");
+      await writeFile(join(repositoryPath, "ignored-by-tree.ts"), "export const c = 3;\n");
+      await writeFile(join(repositoryPath, "visible.ts"), "export const d = 4;\n");
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const paths = captured.manifest.paths.map((entry) => entry.path);
+
+      assert.ok(paths.includes("visible.ts"), paths.join(","));
+      assert.equal(paths.includes("ignored-by-tree.ts"), false, paths.join(","));
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("forwards the user's own safe.directory entries through the isolation", async () => {
+    // Isolation removes safe.directory, which Git honours only in protected scopes. Without
+    // forwarding, capture would break wherever the checkout is owned by another user -- ordinary
+    // in containers and on shared mounts. Asked through `runGit`, so this observes the environment
+    // capture actually runs in rather than a reconstruction of it.
+    const repositoryPath = await createRepository();
+    try {
+      const isolated = await withGlobalGitConfig(
+        // Two entries, because the forwarded set is a list and the real one rarely has exactly
+        // one member -- a GitHub runner image ships `safe.directory = *` in system scope, which
+        // is what caught an equality assertion here.
+        "[core]\n\tattributesFile = {HOME}/attributes\n[safe]\n\tdirectory = *\n\tdirectory = /srv/checkout\n",
+        { attributes: "*.ts linguist-generated\n" },
+        async () => ({
+          safeDirectories: (
+            await runGit(repositoryPath, ["config", "--get-all", "safe.directory"], [0, 1])
+          ).stdout
+            .toString("utf8")
+            .split("\n")
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0),
+          attribute: (
+            await runGit(repositoryPath, [
+              "check-attr",
+              "-z",
+              "linguist-generated",
+              "--",
+              "modified.ts",
+            ])
+          ).stdout
+            .toString("utf8")
+            .split("\0")[2],
+        }),
+      );
+
+      // Forwarded: it decides whether Git will run at all. Asserted by containment rather than
+      // equality, because the forwarded set is everything the user configured and the system
+      // scope is outside this test's control -- a GitHub runner image, for one, ships
+      // `safe.directory = *`, which is exactly the kind of existing decision this re-admits.
+      assert.ok(
+        isolated.safeDirectories.includes("/srv/checkout"),
+        isolated.safeDirectories.join(","),
+      );
+      assert.ok(isolated.safeDirectories.includes("*"), isolated.safeDirectories.join(","));
+      // Not forwarded: it decides what Git reports, which is the whole point of isolating.
+      assert.equal(isolated.attribute, "unspecified");
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("records the one attribute source it cannot isolate", async () => {
+    // `.git/info/attributes` is per-clone and check-attr offers no flag to decline it, so this
+    // is stated in the manifest rather than silently tolerated.
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/per-clone-attributes");
+      await writeFile(join(repositoryPath, "modified.ts"), "after\n");
+      await git(repositoryPath, "commit", "-am", "change");
+      await writeFile(
+        join(repositoryPath, ".git", "info", "attributes"),
+        "*.ts linguist-vendored\n",
+      );
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+      const omission = captured.manifest.omissions.find(
+        (entry) => entry.scope === "repository:per-clone-attributes",
+      );
+
+      assert.ok(omission, JSON.stringify(captured.manifest.omissions));
+      assert.match(omission.detail, /\.git\/info\/attributes/);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("records nothing when the clone carries no per-clone attributes", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      await git(repositoryPath, "switch", "-c", "feature/clean");
+      await writeFile(join(repositoryPath, "modified.ts"), "after\n");
+      await git(repositoryPath, "commit", "-am", "change");
+
+      const captured = await captureGitSnapshotV1(reviewRequest(repositoryPath, "main"));
+
+      assert.equal(
+        captured.manifest.omissions.some(
+          (entry) => entry.scope === "repository:per-clone-attributes",
+        ),
+        false,
+      );
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }

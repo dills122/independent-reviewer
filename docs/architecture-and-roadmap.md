@@ -39,6 +39,8 @@ The versioned run-record event contract is recorded in
 Fresh verification of preliminary adverse claims and runner-owned final
 limitations is recorded in
 [ADR-016](decisions/016-verify-every-verdict-affecting-review-claim.md).
+Isolating capture from developer Git configuration is recorded in
+[ADR-017](decisions/017-isolate-capture-from-developer-git-configuration.md).
 
 ## Planned operator experience
 
