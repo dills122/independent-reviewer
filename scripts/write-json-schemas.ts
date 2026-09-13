@@ -2,7 +2,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
+  FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
   FINDING_VERIFICATION_V1_JSON_SCHEMA,
+  FINDING_VERIFICATION_V2_JSON_SCHEMA,
 } from "../src/contracts/finding-verification.js";
 import { GUIDANCE_GRAPH_V1_JSON_SCHEMA } from "../src/contracts/guidance-graph.js";
 import {
@@ -52,6 +54,8 @@ const schemaArtifacts = [
   ["guidance-graph-v1.schema.json", GUIDANCE_GRAPH_V1_JSON_SCHEMA],
   ["finding-verification-candidate-v1.schema.json", FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA],
   ["finding-verification-v1.schema.json", FINDING_VERIFICATION_V1_JSON_SCHEMA],
+  ["finding-verification-candidate-v2.schema.json", FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA],
+  ["finding-verification-v2.schema.json", FINDING_VERIFICATION_V2_JSON_SCHEMA],
   ["standards-profile-v1.schema.json", STANDARDS_PROFILE_V1_JSON_SCHEMA],
   ["standards-profile-v2.schema.json", STANDARDS_PROFILE_V2_JSON_SCHEMA],
   ["standards-review-request-v2.schema.json", STANDARDS_REVIEW_REQUEST_V2_JSON_SCHEMA],

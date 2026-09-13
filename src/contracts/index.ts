@@ -21,15 +21,23 @@ export {
 } from "./canonical-json.js";
 export type {
   FindingVerificationCandidateV1,
+  FindingVerificationCandidateV2,
   FindingVerificationV1,
+  FindingVerificationV2,
 } from "./finding-verification.js";
 export {
   assembleFindingVerificationV1,
+  assembleFindingVerificationV2,
   assertFindingVerificationScopeV1,
+  assertFindingVerificationScopeV2,
   FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
+  FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
   FINDING_VERIFICATION_V1_JSON_SCHEMA,
+  FINDING_VERIFICATION_V2_JSON_SCHEMA,
   FindingVerificationCandidateV1Schema,
+  FindingVerificationCandidateV2Schema,
   FindingVerificationV1Schema,
+  FindingVerificationV2Schema,
 } from "./finding-verification.js";
 export type {
   DirectGuidanceRecognitionV1,

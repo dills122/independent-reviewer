@@ -3,10 +3,15 @@ import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import {
   assembleFindingVerificationV1,
+  assembleFindingVerificationV2,
   assertFindingVerificationScopeV1,
+  assertFindingVerificationScopeV2,
   FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
-  FINDING_VERIFICATION_V1_JSON_SCHEMA,
+  FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
   FindingVerificationCandidateV1Schema,
+  FindingVerificationCandidateV2Schema,
+  FINDING_VERIFICATION_V1_JSON_SCHEMA,
+  FINDING_VERIFICATION_V2_JSON_SCHEMA,
   FindingVerificationV1Schema,
 } from "../../src/contracts/finding-verification.js";
 
@@ -66,6 +71,54 @@ describe("finding verification contract", () => {
     assert.doesNotThrow(() => assertFindingVerificationScopeV1(parsed, ["finding_boundary"]));
   });
 
+  it("uses violation-specific V2 judgments and rejects the ambiguous V1 labels", () => {
+    const candidate = FindingVerificationCandidateV2Schema.parse({
+      schemaVersion: 2,
+      stage: "FINDING_VERIFICATION",
+      snapshotDigest: digest,
+      briefDigest: digest,
+      assessments: [
+        {
+          status: "VIOLATION_DEMONSTRATED",
+          rationale: "Changed evidence demonstrates the requirement violation.",
+        },
+        {
+          status: "NO_VIOLATION",
+          rationale: "The changed behavior complies with the selected rule.",
+        },
+      ],
+    });
+
+    const assembled = assembleFindingVerificationV2(candidate, [
+      "finding_supported",
+      "finding_compliant",
+    ]);
+
+    assert.deepEqual(
+      assembled.assessments.map(({ preliminaryFindingId, status }) => ({
+        preliminaryFindingId,
+        status,
+      })),
+      [
+        { preliminaryFindingId: "finding_supported", status: "VIOLATION_DEMONSTRATED" },
+        { preliminaryFindingId: "finding_compliant", status: "NO_VIOLATION" },
+      ],
+    );
+    assert.doesNotThrow(() =>
+      assertFindingVerificationScopeV2(assembled, ["finding_supported", "finding_compliant"]),
+    );
+    assert.throws(
+      () => assertFindingVerificationScopeV2(assembled, ["finding_supported"]),
+      /exactly once/i,
+    );
+    assert.throws(() =>
+      FindingVerificationCandidateV2Schema.parse({
+        ...candidate,
+        assessments: [{ status: "CONFIRMED", rationale: "The code complies." }],
+      }),
+    );
+  });
+
   it("rejects duplicate, missing, and unknown preliminary finding IDs", () => {
     const duplicate = {
       ...verification(),
@@ -90,6 +143,14 @@ describe("finding verification contract", () => {
     assert.deepEqual(
       JSON.parse(await readFile("schemas/finding-verification-v1.schema.json", "utf8")),
       FINDING_VERIFICATION_V1_JSON_SCHEMA,
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile("schemas/finding-verification-candidate-v2.schema.json", "utf8")),
+      FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile("schemas/finding-verification-v2.schema.json", "utf8")),
+      FINDING_VERIFICATION_V2_JSON_SCHEMA,
     );
   });
 });

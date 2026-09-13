@@ -5,6 +5,7 @@ import {
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
   FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
+  FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
 } from "../../src/index.js";
 import {
@@ -116,7 +117,7 @@ function rootProperty(schema: unknown, name: string): Record<string, unknown> {
 describe("constrainResponseSchemaV1", () => {
   it("keeps finding IDs out of provider verification output and binds judgment count", () => {
     const verification = constrainFindingVerificationCandidateSchemaV1(
-      FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
+      FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
       2,
       options.identities,
     );

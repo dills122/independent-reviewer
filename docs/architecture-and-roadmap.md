@@ -182,8 +182,8 @@ SDK. See [ADR-002](decisions/002-use-typescript-node-runtime.md).
 2. **Validate.** Hash captured content and write the manifest. Check scope, file policy, size limits, and model capabilities. Produce a local dry-run packet showing exactly what will be sent. Never silently truncate a diff or silently exclude relevant files.
 3. **Blind review.** Start an external conversation containing trusted review policy, neutral requirements, scope, diff, tests, and initial surrounding code. Withhold the author packet at the orchestrator boundary. The shipped model receives one fixed payload; on-demand evidence reads remain deferred under ADR-005.
 4. **Persist preliminary assessment.** Require a structured preliminary findings and coverage ledger before unlocking the author packet. Persist the response and its input identity. This is a durable artifact; it cannot be overwritten by reconciliation.
-5. **Challenge findings.** When the preliminary contains findings, send the frozen blind evidence and persisted assessment to a fresh verifier with no author context. Persist exactly one confirmed, rejected, or inconclusive assessment per preliminary finding. For an empty finding set, persist an empty local ledger without a provider call.
-6. **Reconcile author claims.** Continue the original external review conversation with the verification ledger and author packet. Ask the reviewer to confirm, contradict, or mark claims unverified and explain any changes to preliminary findings. Every verifier-rejected finding must be withdrawn. Record missing author explanation explicitly if absent.
+5. **Challenge findings.** When the preliminary contains findings, send the frozen blind evidence and persisted assessment to a fresh verifier with no author context. Persist exactly one violation-demonstrated, no-violation, or inconclusive assessment per preliminary finding. For an empty finding set, persist an empty local ledger without a provider call.
+6. **Reconcile author claims.** Continue the original external review conversation with the verification ledger and author packet. Ask the reviewer to confirm, contradict, or mark claims unverified and explain any changes to preliminary findings. Every finding with a verifier `NO_VIOLATION` judgment must be withdrawn. Record missing author explanation explicitly if absent.
 7. **Validate and report.** Validate report shape, snapshot identity, path/line anchors, verification provenance, and required coverage fields. Preserve limitations; invalid output, incomplete scope, or exhausted context cannot become an empty successful review. An evidence anchor proves a location exists, not that a finding is true.
 8. **Return control.** The implementation workflow accepts, disputes with evidence, or defers each finding. A materially changed target needs a new snapshot and review instance within the original flow limit. The reviewer cannot dispatch fixes or start new reviews.
 
@@ -318,7 +318,7 @@ evidence set. It persists the raw and validated preliminary result, then persist
 a fresh author-blind assessment of every preliminary finding before author
 delivery. Finding-free reviews create the empty verification ledger locally;
 finding-bearing reviews make one schema-constrained verifier call. Final
-reconciliation must withdraw every verifier-rejected finding. It permits at most
+reconciliation must withdraw every finding with a verifier `NO_VIOLATION` judgment. It permits at most
 one separately recorded same-model repair when a complete final candidate fails local validation,
 assembles `final-review-candidate-v3` judgments into the unchanged final report,
 projects exact final path and canonical-input coverage from the frozen manifest and persisted

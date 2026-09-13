@@ -205,12 +205,12 @@ function confirmedFindingVerificationResponse(
 ): ReviewProviderResponseV1 {
   const input = JSON.parse(request.messages[1]?.content ?? "{}");
   return response({
-    schemaVersion: 1,
+    schemaVersion: 2,
     stage: "FINDING_VERIFICATION",
     snapshotDigest: input.blindReviewEvidence.snapshotManifest.snapshotDigest,
     briefDigest: input.blindReviewEvidence.briefDigest,
     assessments: input.preliminaryFindings.map(() => ({
-      status: "CONFIRMED",
+      status: "VIOLATION_DEMONSTRATED",
       rationale: "The cited changed evidence supports this in-scope finding.",
     })),
   });
@@ -285,7 +285,7 @@ function collectArrayLimits(schema: unknown, propertyName: string): number[] {
 }
 
 describe("two-stage review orchestrator", () => {
-  it("uses a fresh blind verifier and enforces rejection before author reconciliation", async () => {
+  it("uses a fresh blind verifier and enforces no-violation judgments before author reconciliation", async () => {
     const { repositoryPath, packetPath } = await arrangePacket(
       false,
       "AUTHOR_SECRET",
@@ -344,17 +344,28 @@ describe("two-stage review orchestrator", () => {
             /preliminaryFindingId/,
           );
           assert.equal(providerRequest.messages.length, 2);
+          assert.equal(providerRequest.responseSchema.name, "finding_verification_candidate_v2");
+          assert.match(
+            JSON.stringify(providerRequest.responseSchema.schema),
+            /VIOLATION_DEMONSTRATED/,
+          );
+          assert.doesNotMatch(JSON.stringify(providerRequest.responseSchema.schema), /CONFIRMED/);
+          assert.match(
+            providerRequest.messages[0]?.content ?? "",
+            /Never choose VIOLATION_DEMONSTRATED because code complies/,
+          );
           const input = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+          assert.equal(input.schemaVersion, 2);
           assert.equal(input.preliminaryFindings.length, 1);
           assert.doesNotMatch(JSON.stringify(input.preliminaryFindings), /finding_invalid_domain/);
           return response({
-            schemaVersion: 1,
+            schemaVersion: 2,
             stage: "FINDING_VERIFICATION",
             snapshotDigest: input.blindReviewEvidence.snapshotManifest.snapshotDigest,
             briefDigest: input.blindReviewEvidence.briefDigest,
             assessments: [
               {
-                status: "REJECTED",
+                status: "NO_VIOLATION",
                 rationale:
                   "Page zero is outside the stated valid input domain and no validation behavior is required.",
               },
@@ -412,7 +423,7 @@ describe("two-stage review orchestrator", () => {
         assert.match(JSON.stringify(providerRequest.messages), /FINAL_OUTPUT_REPAIR/);
         assert.match(
           JSON.stringify(providerRequest.messages),
-          /Adversarially rejected preliminary finding must be withdrawn/,
+          /Adversarial verifier found no violation; preliminary finding must be withdrawn/,
         );
         return response({
           schemaVersion: 3,
@@ -500,7 +511,7 @@ describe("two-stage review orchestrator", () => {
         assert.equal(providerRequest.stage, "FINDING_VERIFICATION");
         assert.doesNotMatch(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
         return response({
-          schemaVersion: 1,
+          schemaVersion: 2,
           stage: "FINDING_VERIFICATION",
           snapshotDigest: input.blindReviewEvidence.snapshotManifest.snapshotDigest,
           briefDigest: input.blindReviewEvidence.briefDigest,
