@@ -1411,6 +1411,50 @@ describe("two-stage review orchestrator", () => {
     }
   });
 
+  it("charges nothing for a request that never reached the provider", async () => {
+    // Regression for #134. Every fetch-layer failure was TRANSPORT_UNCERTAIN, so a DNS failure or
+    // a refused connection consumed the full conservative reservation of a review it never made.
+    // With a budget sized for the run, the phantom charge is what refuses the retry, and the run
+    // then dies reporting an exhausted token budget rather than a network fault.
+    const { repositoryPath, packetPath } = await arrangePacket();
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async () => {
+        throw new ProviderCallError("TRANSPORT_UNSENT", "OpenRouter could not be reached.", {
+          retryable: true,
+        });
+      },
+    };
+
+    try {
+      await assert.rejects(
+        () => runTwoStageReviewV1(packetPath, config, provider),
+        (error: unknown) => error instanceof ProviderCallError && error.code === "TRANSPORT_UNSENT",
+      );
+      const events = (await readFile(join(packetPath, "review", "run-record.jsonl"), "utf8"))
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      const retries = events.filter((event) => event.type === "PROVIDER_RETRY_REQUESTED");
+
+      // Reissued, because nothing was submitted and nothing can have been generated.
+      assert.ok(retries.length >= 1);
+      for (const retry of retries) {
+        assert.equal(retry.chargedFailedTokens, 0);
+        assert.equal(retry.chargedFailedCostUsd, 0);
+      }
+      // Not TRANSPORT_UNCERTAIN: the run is an ordinary failure, so the CLI must not warn that
+      // the outcome and spend may be unknown, and the exit code must not be the reserved 4.
+      assert.equal(events.at(-1)?.terminalState, "FAILED");
+      assert.equal(
+        events.some((event) => event.type === "BUDGET_EXHAUSTED"),
+        false,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("retries an uncertain transport and persists a durable attempt and terminal record", async () => {
     const { repositoryPath, packetPath } = await arrangePacket();
     const provider: ReviewProviderV1 = {

@@ -424,7 +424,9 @@ function failedAttemptChargeV1(
       completionTokens: usage?.completionTokens ?? 0,
     };
   }
-  if (error.code === "PROVIDER_ERROR") {
+  // A provider error envelope carrying no usage means no generation happened; so does a failure
+  // that never reached the provider at all (#134). Both cost nothing.
+  if (error.code === "PROVIDER_ERROR" || error.code === "TRANSPORT_UNSENT") {
     return { tokens: 0, promptTokens: 0, completionTokens: 0 };
   }
   return {
@@ -445,8 +447,10 @@ function retryDelayMs(error: ProviderCallError): number | null {
   const status = error.diagnostic?.httpStatus;
   const transient = [408, 409, 429, 500, 502, 503, 504, 524, 529];
   // An inference call is idempotent for this product: a request that may or may not have been
-  // submitted can be reissued, and the ledger charges the uncertain attempt either way.
-  if (error.code === "TRANSPORT_UNCERTAIN") return 1_000 + Math.floor(Math.random() * 1_000);
+  // submitted can be reissued, and the ledger charges the uncertain attempt either way. A request
+  // that was never submitted is unambiguously safe to reissue and costs nothing (#134).
+  if (error.code === "TRANSPORT_UNSENT" || error.code === "TRANSPORT_UNCERTAIN")
+    return 1_000 + Math.floor(Math.random() * 1_000);
   if (
     !error.retryable &&
     (error.code !== "PROVIDER_ERROR" ||

@@ -774,51 +774,51 @@ async function review(
         : `Verdict: ${reviewVerdictLabel(result.report)}`,
     );
     io.stdout(`Report: ${result.markdownPath}`);
-    if (prepared.standards) {
-      const events = await readRunRecordEventsV1(result.runRecordPath);
-      io.stdout(formatRunCost(events));
-    }
+    // Spend is not a standards-mode concern. Neither is anything in the catch below (#142).
+    io.stdout(formatRunCost(await readRunRecordEventsV1(result.runRecordPath)));
     return reviewOutcomeExitCodeV1(result.report.verdict);
   } catch (error) {
-    if (prepared.standards) {
-      io.stderr(`Review did not complete. Saved packet: ${terminalText(prepared.packetPath)}`);
-      if (error instanceof ProviderCallError && error.code === "TRANSPORT_UNCERTAIN")
-        io.stderr(
-          "Provider outcome and cost may be unknown. This submission cannot be safely replayed automatically.",
+    // Every branch below is mode-neutral, and used to be skipped entirely outside standards mode.
+    // A requirements-mode run is just as resumable -- `resume-final` takes only a packet and a
+    // config -- so withholding the packet path, the resume offer, the spend summary, and above
+    // all the transport-uncertain warning left those users with strictly less to act on (#142).
+    io.stderr(`Review did not complete. Saved packet: ${terminalText(prepared.packetPath)}`);
+    if (error instanceof ProviderCallError && error.code === "TRANSPORT_UNCERTAIN")
+      io.stderr(
+        "Provider outcome and cost may be unknown. This submission cannot be safely replayed automatically.",
+      );
+    else {
+      let events: RunRecordEventV1[] = [];
+      try {
+        events = await readRunRecordEventsV1(
+          join(prepared.packetPath, "review", "run-record.jsonl"),
         );
-      else {
-        let events: RunRecordEventV1[] = [];
-        try {
-          events = await readRunRecordEventsV1(
-            join(prepared.packetPath, "review", "run-record.jsonl"),
-          );
-        } catch {
-          /* Input/preflight may have failed before a ledger exists. */
-        }
-        const persisted = events.some((event) => event.type === "PRELIMINARY_PERSISTED");
-        io.stderr(
-          persisted
-            ? "Initial assessment is saved; the final review did not complete."
-            : "No valid initial assessment was saved. Correct the reported failure before starting another review.",
-        );
-        // The same predicate `resume-final` itself applies, rather than a second copy of the
-        // eligibility rules. The previous literal event-type sequence had not been updated when
-        // the finding-verification stage was added, so this offer was unreachable (#121).
-        if (evaluateResumeShapeV1(events).eligible) {
-          const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-          const resumeConfig =
-            typeof options.get("--config") === "string"
-              ? `--config ${quote(resolve(requiredOption(options, "--config")))}`
-              : `--model ${quote(config.model)} --max-cost ${config.budgets.maxTotalCostUsd}`;
-          io.stderr(
-            `A final-only retry may be available. This command revalidates eligibility: independent-reviewer resume-final --packet ${quote(prepared.packetPath)} ${resumeConfig}`,
-          );
-        } else if (persisted)
-          io.stderr(
-            "This failure has no remaining final-only resume under the current policy. No automatic new review will be started.",
-          );
-        if (events.length) io.stderr(formatRunCost(events));
+      } catch {
+        /* Input/preflight may have failed before a ledger exists. */
       }
+      const persisted = events.some((event) => event.type === "PRELIMINARY_PERSISTED");
+      io.stderr(
+        persisted
+          ? "Initial assessment is saved; the final review did not complete."
+          : "No valid initial assessment was saved. Correct the reported failure before starting another review.",
+      );
+      // The same predicate `resume-final` itself applies, rather than a second copy of the
+      // eligibility rules. The previous literal event-type sequence had not been updated when
+      // the finding-verification stage was added, so this offer was unreachable (#121).
+      if (evaluateResumeShapeV1(events).eligible) {
+        const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+        const resumeConfig =
+          typeof options.get("--config") === "string"
+            ? `--config ${quote(resolve(requiredOption(options, "--config")))}`
+            : `--model ${quote(config.model)} --max-cost ${config.budgets.maxTotalCostUsd}`;
+        io.stderr(
+          `A final-only retry may be available. This command revalidates eligibility: independent-reviewer resume-final --packet ${quote(prepared.packetPath)} ${resumeConfig}`,
+        );
+      } else if (persisted)
+        io.stderr(
+          "This failure has no remaining final-only resume under the current policy. No automatic new review will be started.",
+        );
+      if (events.length) io.stderr(formatRunCost(events));
     }
     throw error;
   } finally {
