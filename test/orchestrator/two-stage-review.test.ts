@@ -2847,6 +2847,10 @@ function successfulEmptyResponse(request: ReviewProviderRequestV1) {
 
 it("charges persisted transport retries when admitting a final-stage resume", async () => {
   const { repositoryPath, packetPath } = await arrangePacket();
+  const retryAccountingConfig = {
+    ...config,
+    budgets: { ...config.budgets, maxTotalTokens: 110_000 },
+  };
   let finalAttempts = 0;
   const firstProvider: ReviewProviderV1 = {
     auditRequest: mockAuditRequest,
@@ -2898,11 +2902,14 @@ it("charges persisted transport retries when admitting a final-stage resume", as
   };
 
   try {
-    await assert.rejects(() => runTwoStageReviewV1(packetPath, config, firstProvider), /rate/i);
+    await assert.rejects(
+      () => runTwoStageReviewV1(packetPath, retryAccountingConfig, firstProvider),
+      /rate/i,
+    );
     let resumeCalls = 0;
     await assert.rejects(
       () =>
-        resumeFinalReviewV1(packetPath, config, {
+        resumeFinalReviewV1(packetPath, retryAccountingConfig, {
           auditRequest: mockAuditRequest,
           complete: async (request) => {
             resumeCalls += 1;
