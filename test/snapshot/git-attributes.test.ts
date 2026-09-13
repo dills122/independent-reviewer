@@ -31,6 +31,23 @@ describe("resolveGitAttributesV1", () => {
     assert.deepEqual(unresolved, []);
   });
 
+  it("keeps paths whose leading or trailing whitespace Git emitted verbatim", async () => {
+    // Regression for #128: the NUL-delimited stdout was decoded through `decodeGitText`, whose
+    // trim() stripped the leading space off the first path. The map was then keyed "lead.ts"
+    // while the caller looked up " lead.ts", so a generated file lost its answer, was admitted
+    // as SOURCE, and nothing was recorded as unresolved.
+    const paths = [" lead.ts", "trail .ts", "normal.ts"];
+    const { resolved, unresolved } = await resolveGitAttributesV1("/repo", paths, async (batch) =>
+      attributeStdout(batch.map((path) => [path, "linguist-generated", "set"] as const)),
+    );
+
+    assert.deepEqual(unresolved, []);
+    for (const path of paths) {
+      assert.deepEqual(resolved.get(path), { generated: true }, path);
+    }
+    assert.equal(resolved.has("lead.ts"), false);
+  });
+
   it("isolates a failing path instead of losing its whole batch", async () => {
     // Regression for #95: a failing batch was skipped with `catch { continue; }`, so up to 200
     // paths silently lost their .gitattributes answers and nothing recorded it.

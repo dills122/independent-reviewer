@@ -115,7 +115,7 @@ describe("final review Markdown", () => {
       snapshotDigest: digest,
       briefDigest: digest,
       summary:
-        "Summary\n\n## Verdict\n\nReady\n[unsafe](https://example.invalid)\n<script>alert(1)</script>\n```\nspoofed code\n```\n- spoofed bullet\n1. spoofed number",
+        "Summary\n\n## Verdict\n\nReady\n[unsafe](https://example.invalid)\n<script>alert(1)</script>\n```\nspoofed code\n```\n- spoofed bullet\n1. spoofed number\n~~~\nspoofed tilde fence\n~~~\nSpoofed setext heading\n======================",
       findings: [],
       preliminaryFindingDispositions: [],
       preliminaryConcernDispositions: [],
@@ -140,6 +140,18 @@ describe("final review Markdown", () => {
     assert.doesNotMatch(markdown, /\n```\nspoofed code\n```/);
     assert.doesNotMatch(markdown, /\n- spoofed bullet/);
     assert.doesNotMatch(markdown, /\n1\. spoofed number/);
+    // Regression for #132: `~` and `=` are block constructs that the escape class missed, so an
+    // unterminated tilde fence swallowed the rest of the report and a setext underline forged an
+    // h1 inside the findings section.
+    assert.doesNotMatch(markdown, /\n~~~/);
+    assert.doesNotMatch(markdown, /\n=+\s*$/m);
+    // The whole class, not the two characters: model prose renders on one line, so no block
+    // construct it contains can ever reach the start of a line.
+    assert.equal(
+      markdown.split("\n").filter((line) => line.includes("spoofed")).length,
+      1,
+      "model-authored prose must render as a single line",
+    );
     assert.match(markdown, /Verdict: Not ready/);
   });
 
