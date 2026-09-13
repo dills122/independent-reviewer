@@ -14,11 +14,7 @@ const FindingVerificationJudgmentV2Schema = z.strictObject({
 });
 
 const ConcernVerificationJudgmentV3Schema = z.strictObject({
-  status: z.enum([
-    "BLOCKING_UNCERTAINTY_DEMONSTRATED",
-    "NO_BLOCKING_UNCERTAINTY",
-    "INCONCLUSIVE",
-  ]),
+  status: z.enum(["BLOCKING_UNCERTAINTY_DEMONSTRATED", "NO_BLOCKING_UNCERTAINTY", "INCONCLUSIVE"]),
   rationale: NonEmptyTextSchema.max(400),
 });
 
@@ -241,10 +237,7 @@ export function assertFindingVerificationScopeV3(
   preliminaryFindingIds: string[],
   preliminaryConcerns: PreliminaryConcernIdentityV3[],
 ): void {
-  assertFindingVerificationScopeV2(
-    { ...verification, schemaVersion: 2 },
-    preliminaryFindingIds,
-  );
+  assertFindingVerificationScopeV2({ ...verification, schemaVersion: 2 }, preliminaryFindingIds);
   const expected = new Set(
     preliminaryConcerns.map((concern) => `${concern.kind}:${concern.concernIndex}`),
   );

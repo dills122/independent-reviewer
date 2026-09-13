@@ -235,16 +235,22 @@ function materializeExpandedCandidate(
   return report;
 }
 
-export function materializeFinalCandidate(
+function materializeFinalCandidateWithPolicy(
   value: unknown,
   preliminary: ReviewPreliminary,
   claims: AuthorPacketV1["claimedVerification"],
   coverage: RunnerOwnedFinalCoverageV1,
+  rejectProviderLimitations: boolean,
 ): ReviewReport {
   const standards = preliminary.schemaVersion === 2;
   const { findings, withdrawnPreliminaryFindings, ...candidate } = (
     standards ? StandardsCandidateV3Schema : FinalReviewCandidateV3Schema
   ).parse(value);
+  if (rejectProviderLimitations && candidate.limitations.length > 0) {
+    throw new Error(
+      "Final candidate limitations must be empty; formal limitations are derived from verified preliminary concerns and runner-owned coverage.",
+    );
+  }
   const expected = new Set(preliminary.findings.map((finding) => finding.id));
   const actual = [
     ...findings.flatMap((finding) => finding.sourceFindingIds),
@@ -297,6 +303,15 @@ export function materializeFinalCandidate(
   );
 }
 
+export function materializeFinalCandidate(
+  value: unknown,
+  preliminary: ReviewPreliminary,
+  claims: AuthorPacketV1["claimedVerification"],
+  coverage: RunnerOwnedFinalCoverageV1,
+): ReviewReport {
+  return materializeFinalCandidateWithPolicy(value, preliminary, claims, coverage, true);
+}
+
 export function materializeFinalReviewCandidateV1(
   value: unknown,
   preliminary: Pick<PreliminaryAssessmentV1, "evidenceGaps" | "limitations">,
@@ -316,9 +331,15 @@ export function materializeFinalReviewCandidateV2(
     ...candidate
   } = FinalReviewCandidateV2Schema.parse(value);
   return FinalReviewReportV1Schema.parse(
-    materializeFinalCandidate({ ...candidate, schemaVersion: 3 }, preliminary, claims, {
-      changedPathCoverage,
-      canonicalInputCoverage,
-    }),
+    materializeFinalCandidateWithPolicy(
+      { ...candidate, schemaVersion: 3 },
+      preliminary,
+      claims,
+      {
+        changedPathCoverage,
+        canonicalInputCoverage,
+      },
+      false,
+    ),
   );
 }
