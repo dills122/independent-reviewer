@@ -308,7 +308,17 @@ function boundUnspecifiedProse(
   const applied: Record<string, number> = {};
 
   visitNodes(root, (node, propertyName) => {
-    if (node.type === "string" && node.const === undefined && node.enum === undefined) {
+    // Unspecified, as the name says: a declared bound wins, exactly as an explicit `maxItems`
+    // wins below. This used to overwrite unconditionally, which loosened every identifier the
+    // contract had bounded at 128 to the generic 400 -- a model could then return an over-long
+    // finding id that the wire schema accepted and the persisted contract rejected, spending a
+    // paid call to earn a repair (#136). Enum- and const-pinned strings are already exact.
+    if (
+      node.type === "string" &&
+      node.const === undefined &&
+      node.enum === undefined &&
+      node.maxLength === undefined
+    ) {
       node.maxLength = DEFAULT_PROSE_MAX_LENGTH_V1;
     }
     if (node.type !== "array" || node.maxItems !== undefined) {

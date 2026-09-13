@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 
 import {
@@ -23,6 +23,20 @@ async function manifestFixture() {
   ) as Record<string, unknown>;
   const { snapshotDigest: _digest, ...draft } = persisted;
   return finalizeSnapshotManifestV1(draft);
+}
+
+/** Every TypeScript source file under src/, for the declaration-site guard below. */
+async function guidanceSourceFiles(directory = "src"): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const nested = await Promise.all(
+    entries.map((entry) => {
+      const path = join(directory, entry.name);
+      return entry.isDirectory()
+        ? guidanceSourceFiles(path)
+        : Promise.resolve(path.endsWith(".ts") ? [path] : []);
+    }),
+  );
+  return nested.flat();
 }
 
 describe("GuidanceGraphV1", () => {
@@ -309,5 +323,33 @@ describe("GuidanceGraphV1", () => {
       await readFile(resolve("schemas", "guidance-graph-v1.schema.json"), "utf8"),
     );
     assert.deepEqual(schema, GUIDANCE_GRAPH_V1_JSON_SCHEMA);
+  });
+
+  it("is the only module that declares a guidance capacity limit", async () => {
+    // Regression for #131. Every one of these was exported here, enforced here by `.max()` and
+    // `superRefine`, imported by nobody, and redeclared as a private const in both discovery
+    // adapters -- one of them under a different name, so grepping the contract's identifier found
+    // neither copy. Capture-time and parse-time limits were two policies that happened to agree.
+    const owned = [
+      "MAX_GUIDANCE_TARGETS_V1",
+      "MAX_GUIDANCE_NODES_V1",
+      "MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1",
+      "MAX_GUIDANCE_APPLICABILITY_PAIRS_V1",
+      "MAX_GUIDANCE_OCCURRENCES_V1",
+      "MAX_GUIDANCE_EDGES_V1",
+      "MAX_GUIDANCE_DIAGNOSTICS_V1",
+      // The renamed copy the adapters used to carry. Nothing may reintroduce it.
+      "MAX_DIRECT_RECOGNITIONS_V1",
+    ];
+    const offenders: string[] = [];
+    for (const path of await guidanceSourceFiles()) {
+      if (path.endsWith(join("contracts", "guidance-graph.ts"))) continue;
+      const contents = await readFile(path, "utf8");
+      for (const name of owned) {
+        if (new RegExp(`^const ${name}\\b`, "m").test(contents)) offenders.push(`${path}:${name}`);
+      }
+    }
+
+    assert.deepEqual(offenders, []);
   });
 });

@@ -1,4 +1,7 @@
 import {
+  MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
+  MAX_GUIDANCE_NODES_V1,
+  MAX_GUIDANCE_TARGETS_V1,
   buildDirectGuidanceGraphV1,
   createGuidanceDiagnosticV1,
   type DirectGuidanceSourceInputV1,
@@ -14,10 +17,7 @@ import {
 import { guidanceAncestorDirectoriesV1, guidancePathInDirectoryV1 } from "./discovery-paths.js";
 
 const MAX_SNAPSHOT_ENTRIES_V1 = 4_096;
-const MAX_GUIDANCE_TARGETS_V1 = 8_192;
 const MAX_DIRECT_CANDIDATES_V1 = 4_096;
-const MAX_GUIDANCE_NODES_V1 = 256;
-const MAX_DIRECT_RECOGNITIONS_V1 = 65_536;
 
 export interface CapturedCodexGuidanceV1 {
   graph: GuidanceGraphV1;
@@ -119,8 +119,10 @@ export async function captureCodexGuidanceV1(
     );
     selected.forEach((path, nativeOrder) => {
       recognitionCount += 1;
-      if (recognitionCount > MAX_DIRECT_RECOGNITIONS_V1)
-        discoveryLimit(`more than ${MAX_DIRECT_RECOGNITIONS_V1} recognitions were produced.`);
+      if (recognitionCount > MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1)
+        discoveryLimit(
+          `more than ${MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1} recognitions were produced.`,
+        );
       const source = sources.get(path);
       if (!source) throw new Error(`Selected guidance source ${path} was not loaded.`);
       const input = directSources.get(path) ?? {
