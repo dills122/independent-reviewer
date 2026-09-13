@@ -11,12 +11,22 @@ export const VERDICT_LABELS_V1: Record<FinalReviewReportV1["verdict"], string> =
   UNABLE_TO_VERIFY: "Unable to verify",
 };
 
+/**
+ * Renders one untrusted model-authored string as Markdown text with no structural meaning.
+ *
+ * Two defences, because escaping punctuation alone was not enough (#132). Every Markdown block
+ * construct needs a line of its own, so line terminators collapse first: prose fields are
+ * single-paragraph by intent, and without that a `~~~` fence or a setext `===` underline in a
+ * finding title restructured the whole report. The character class then covers the inline
+ * constructs and, defensively, the block starters `=` and `~` that the collapse already defeats.
+ */
 function escapeMarkdown(value: string): string {
   return value
+    .replace(/[\r\n\u2028\u2029]+/g, " ")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replace(/([\\`*_[\]{}()#+\-.!|])/g, "\\$1");
+    .replace(/([\\`*_[\]{}()#+\-.!|=~])/g, "\\$1");
 }
 
 function list(items: string[]): string {

@@ -454,7 +454,9 @@ async function captureReferencedSources(
 ): Promise<SnapshotManifestIdentityInputV1["referencedSources"]> {
   const changedPaths = new Set(options.paths.map((entry) => entry.path));
   const tracked = new Set(
-    decodeGitText(
+    // NUL-delimited, so the raw decoder: `decodeGitText` would trim the leading whitespace off
+    // the first path and drop that file out of the tracked set (#128).
+    decodeNulFields(
       (
         await runGit(options.repositoryPath, [
           "ls-tree",
@@ -465,9 +467,7 @@ async function captureReferencedSources(
           options.revision,
         ])
       ).stdout,
-    )
-      .split("\0")
-      .filter((entry) => entry.length > 0),
+    ).filter((entry) => entry.length > 0),
   );
 
   const importersByPath = new Map<string, string[]>();
@@ -659,8 +659,10 @@ async function readAttributeBatch(
 }
 
 function recordAttributes(stdout: Uint8Array, resolved: Map<string, PathGitAttributesV1>): void {
-  // Records are NUL-separated triples of path, attribute, value.
-  const fields = decodeGitText(stdout).split("\0");
+  // Records are NUL-separated triples of path, attribute, value. `-z` exists so paths stay raw
+  // bytes, so this must not go through `decodeGitText`: its trim() strips leading whitespace from
+  // the first path and keys the map by a path no caller will ever look up (#128).
+  const fields = decodeNulFields(stdout);
   for (let index = 0; index + 2 < fields.length; index += 3) {
     const path = fields[index] as string;
     const attribute = fields[index + 1] as string;

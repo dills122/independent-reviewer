@@ -1,9 +1,89 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import { createTreeSitterContextAnalyzerV1, sha256Utf8 } from "../../src/index.js";
 
+const require = createRequire(import.meta.url);
+
+async function declaredVersion(specifier: string): Promise<string> {
+  const contents = await readFile(require.resolve(`${specifier}/package.json`), "utf8");
+  return (JSON.parse(contents) as { version: string }).version;
+}
+
 describe("TreeSitterContextAnalyzerV1", () => {
+  it("reports the grammar version it actually loaded", async () => {
+    // Regression for #137: every adapter carried a literal packageVersion beside it, and the
+    // JavaScript one had drifted to 0.23.1 (the nested copy under tree-sitter-typescript) while
+    // require.resolve loaded 0.25.0. producerVersion is digest-bound provenance, so a literal
+    // that disagrees with the loaded WASM makes the frozen context map name the wrong producer.
+    const fixtures = [
+      ["src/a.js", "function f() {}\n", "tree-sitter-javascript"],
+      ["src/a.jsx", "function f() {}\n", "tree-sitter-javascript"],
+      ["src/a.ts", "function f() {}\n", "tree-sitter-typescript"],
+      ["src/a.tsx", "function f() {}\n", "tree-sitter-typescript"],
+      ["src/a.py", "def f():\n    pass\n", "tree-sitter-python"],
+      ["src/a.go", "package m\nfunc F() {}\n", "tree-sitter-go"],
+      ["src/A.java", "class A { void f() {} }\n", "tree-sitter-java"],
+    ] as const;
+
+    const analyzer = await createTreeSitterContextAnalyzerV1();
+    try {
+      for (const [path, source, packageName] of fixtures) {
+        const result = await analyzer.analyze({
+          path,
+          source,
+          fileDigest: sha256Utf8(source),
+          side: "HEAD",
+          origin: "CHANGED_PATH",
+          role: "SOURCE",
+        });
+
+        assert.ok(
+          result.producer.producerVersion.includes(
+            `${packageName}@${await declaredVersion(packageName)}`,
+          ),
+          `${path}: ${result.producer.producerVersion}`,
+        );
+      }
+    } finally {
+      analyzer.dispose();
+    }
+  });
+
+  it("pins the web-tree-sitter runtime version it reports to the installed dependency", async () => {
+    // The one version string still written by hand, because web-tree-sitter's exports map blocks
+    // require.resolve("web-tree-sitter/package.json"). This test is what keeps it honest.
+    // Tests execute from dist/, so this reads the repository manifest by working directory the
+    // way test/support/collect-bug-report-info.test.ts does, not by depth from import.meta.url.
+    const manifest = JSON.parse(await readFile(join(process.cwd(), "package.json"), "utf8")) as {
+      dependencies: Record<string, string>;
+    };
+    const source = "function f() {}\n";
+    const analyzer = await createTreeSitterContextAnalyzerV1();
+    try {
+      const result = await analyzer.analyze({
+        path: "src/a.ts",
+        source,
+        fileDigest: sha256Utf8(source),
+        side: "HEAD",
+        origin: "CHANGED_PATH",
+        role: "SOURCE",
+      });
+
+      assert.ok(
+        result.producer.producerVersion.startsWith(
+          `web-tree-sitter@${manifest.dependencies["web-tree-sitter"]};`,
+        ),
+        result.producer.producerVersion,
+      );
+    } finally {
+      analyzer.dispose();
+    }
+  });
+
   it("extracts declaration regions for JavaScript, TypeScript, Python, Go, and Java", async () => {
     const analyzer = await createTreeSitterContextAnalyzerV1();
     try {

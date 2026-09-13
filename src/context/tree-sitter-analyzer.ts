@@ -6,6 +6,7 @@ import { Language, Parser, Query } from "web-tree-sitter";
 import { digestCanonicalJson, sha256Utf8 } from "../contracts/canonical-json.js";
 import type { ReviewContextMapV1 } from "../contracts/review-context-map.js";
 import type { DigestV1, SnapshotPathEntryV1 } from "../contracts/snapshot-manifest.js";
+import { readStrictJsonFileV1 } from "../contracts/strict-json.js";
 
 const require = createRequire(import.meta.url);
 const RUNTIME_VERSION = "web-tree-sitter@0.27.0";
@@ -13,12 +14,12 @@ const QUERY_VERSION = "declarations-v2";
 const POLICY_VERSION = "bounded-v1";
 const MAX_SOURCE_BYTE_LENGTH = 512 * 1024;
 const MAX_DECLARATION_REGIONS = 512;
+const MAX_GRAMMAR_MANIFEST_BYTES = 1024 * 1024;
 
 interface LanguageAdapterV1 {
   languageId: string;
   extensions: readonly string[];
   packageName: string;
-  packageVersion: string;
   wasmFile: string;
   querySource: string;
 }
@@ -28,7 +29,6 @@ const LANGUAGE_ADAPTERS: readonly LanguageAdapterV1[] = [
     languageId: "javascript",
     extensions: [".js", ".mjs", ".cjs", ".jsx"],
     packageName: "tree-sitter-javascript",
-    packageVersion: "0.23.1",
     wasmFile: "tree-sitter-javascript.wasm",
     querySource: `[
       (function_declaration name: (identifier) @name) @decl
@@ -44,7 +44,6 @@ const LANGUAGE_ADAPTERS: readonly LanguageAdapterV1[] = [
     languageId: "typescript",
     extensions: [".ts", ".mts", ".cts"],
     packageName: "tree-sitter-typescript",
-    packageVersion: "0.23.2",
     wasmFile: "tree-sitter-typescript.wasm",
     querySource: `[
       (function_declaration name: (identifier) @name) @decl
@@ -64,7 +63,6 @@ const LANGUAGE_ADAPTERS: readonly LanguageAdapterV1[] = [
     languageId: "tsx",
     extensions: [".tsx"],
     packageName: "tree-sitter-typescript",
-    packageVersion: "0.23.2",
     wasmFile: "tree-sitter-tsx.wasm",
     querySource: `[
       (function_declaration name: (identifier) @name) @decl
@@ -84,7 +82,6 @@ const LANGUAGE_ADAPTERS: readonly LanguageAdapterV1[] = [
     languageId: "python",
     extensions: [".py", ".pyi"],
     packageName: "tree-sitter-python",
-    packageVersion: "0.25.0",
     wasmFile: "tree-sitter-python.wasm",
     querySource: `[
       (function_definition name: (identifier) @name) @decl
@@ -95,7 +92,6 @@ const LANGUAGE_ADAPTERS: readonly LanguageAdapterV1[] = [
     languageId: "go",
     extensions: [".go"],
     packageName: "tree-sitter-go",
-    packageVersion: "0.25.0",
     wasmFile: "tree-sitter-go.wasm",
     querySource: `[
       (function_declaration name: (identifier) @name) @decl
@@ -108,7 +104,6 @@ const LANGUAGE_ADAPTERS: readonly LanguageAdapterV1[] = [
     languageId: "java",
     extensions: [".java"],
     packageName: "tree-sitter-java",
-    packageVersion: "0.23.5",
     wasmFile: "tree-sitter-java.wasm",
     querySource: `[
       (class_declaration name: (identifier) @name) @decl
@@ -175,6 +170,30 @@ function regionId(
   }).value.slice(0, 24)}`;
 }
 
+/**
+ * Reads a grammar package's own declared version, so provenance cannot disagree with the WASM.
+ *
+ * Through the strict reader like every other JSON this process admits: native `JSON.parse` is
+ * deliberately confined to a reviewed allowlist, asserted by `test/contracts/strict-json.test.ts`.
+ */
+async function grammarPackageVersion(
+  packageJsonPath: string,
+  packageName: string,
+): Promise<string> {
+  const parsed = await readStrictJsonFileV1(packageJsonPath, {
+    maxBytes: MAX_GRAMMAR_MANIFEST_BYTES,
+    source: `${packageName} package manifest`,
+  });
+  const version =
+    parsed !== null && typeof parsed === "object"
+      ? (parsed as { version?: unknown }).version
+      : undefined;
+  if (typeof version !== "string" || version.length === 0) {
+    throw new Error(`${packageName} does not declare a version at ${packageJsonPath}.`);
+  }
+  return version;
+}
+
 export class TreeSitterContextAnalyzerV1 {
   readonly #loaded = new Map<string, LoadedAdapterV1>();
   #disposed = false;
@@ -189,14 +208,20 @@ export class TreeSitterContextAnalyzerV1 {
   async #load(adapter: LanguageAdapterV1): Promise<LoadedAdapterV1> {
     const cached = this.#loaded.get(adapter.languageId);
     if (cached) return cached;
-    const packageRoot = dirname(require.resolve(`${adapter.packageName}/package.json`));
+    // The version is read from the same package.json the WASM is loaded from, never from a
+    // literal beside the adapter. A hand-maintained copy drifts the moment the dependency is
+    // bumped, and it had: the JavaScript adapter recorded 0.23.1 (the nested copy under
+    // tree-sitter-typescript) while require.resolve loaded 0.25.0 (#137).
+    const packageJsonPath = require.resolve(`${adapter.packageName}/package.json`);
+    const packageRoot = dirname(packageJsonPath);
+    const packageVersion = await grammarPackageVersion(packageJsonPath, adapter.packageName);
     const language = await Language.load(join(packageRoot, adapter.wasmFile));
     const query = new Query(language, adapter.querySource);
     const loaded = {
       adapter,
       language,
       query,
-      producerVersion: `${RUNTIME_VERSION};${adapter.packageName}@${adapter.packageVersion};abi-${language.abiVersion};${QUERY_VERSION};${POLICY_VERSION}`,
+      producerVersion: `${RUNTIME_VERSION};${adapter.packageName}@${packageVersion};abi-${language.abiVersion};${QUERY_VERSION};${POLICY_VERSION}`,
     };
     this.#loaded.set(adapter.languageId, loaded);
     return loaded;
