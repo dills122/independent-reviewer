@@ -34,6 +34,8 @@ Explicit standards evidence selection is recorded in
 [ADR-011](decisions/011-separate-reference-selection-from-file-classification.md).
 Fresh blind finding verification is recorded in
 [ADR-012](decisions/012-adversarially-verify-preliminary-findings.md).
+The versioned run-record event contract is recorded in
+[ADR-015](decisions/015-version-the-run-record-as-a-contract.md).
 
 ## Planned operator experience
 
@@ -348,7 +350,9 @@ author-inclusive final conversation skeleton that exceeds the byte cap before
 making call one, then rechecks actual generated content before each later call.
 Its private run record binds each attempt to the provider-policy version and
 credential-free wire/body digests and records stage, identity, timing, route,
-valid usage, errors, and lifecycle-terminal events. The OpenRouter adapter uses
+valid usage, errors, and lifecycle-terminal events. That record is a versioned
+contract parsed on read rather than a log, recorded in
+[ADR-015](decisions/015-version-the-run-record-as-a-contract.md). The OpenRouter adapter uses
 strict structured output, an explicit model, same-model fallback inside a
 configured provider allowlist, hard price ceilings, ZDR-only routing,
 data-collection denial, disabled response caching, and disabled context

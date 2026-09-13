@@ -81,6 +81,13 @@ export const ReviewRunConfigV3Schema = z
       maxInitialEvidenceBytes: z.int().min(1),
       maxConversationBytes: z.int().min(1),
       maxOutputTokensPerCall: z.int().min(1),
+      /**
+       * Ceiling on the token reservations of one run, across every call.
+       *
+       * Input reservations are measured as UTF-8 payload bytes, which bound tokens from above but
+       * overshoot the real count by roughly four times. Budget in those units, not in the tokens a
+       * model reports (#135).
+       */
       maxTotalTokens: z.int().min(2),
       /** Local ceiling in US dollars on the total spend of one run, across every model call. */
       maxTotalCostUsd: z.number().positive().max(1_000),

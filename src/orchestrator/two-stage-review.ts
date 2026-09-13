@@ -24,6 +24,9 @@ import {
   ReviewRunConfigV3Schema,
   type ReviewUnitPlanV1,
   ReviewUnitPlanV1Schema,
+  type RunRecordEventOfTypeV1,
+  type RunRecordEventV1,
+  RunRecordEventV1Schema,
   resolveSnapshotSourceContentV1,
   sha256Utf8,
   verifyReviewUnitPlanIdentityV1,
@@ -641,6 +644,20 @@ function assertConversationBudget(messages: ReviewMessageV1[], maximum: number):
   }
 }
 
+/**
+ * An upper bound on the tokens one call's input can consume, measured in UTF-8 bytes.
+ *
+ * Bytes bound tokens from above: no tokenizer emits a token shorter than one byte, so the encoded
+ * size of the payload is a ceiling on its token count no matter which model runs. The per-message
+ * addend covers chat-template and role framing the payload itself does not carry. That makes this
+ * safe to reserve against and safe to price at the unit-price ceiling, in the conservative
+ * direction in both cases.
+ *
+ * It is not an estimate of the real token count, and it is not close to one. English prose and
+ * JSON run roughly 3-4 bytes per token, so this typically overshoots by a factor of about four.
+ * Anything shown to a user must therefore describe it as a reservation, never as a token count
+ * they could check against a model's context window (#135).
+ */
 function conservativeInputTokenUpperBound(
   messages: ReviewMessageV1[],
   responseSchema: unknown,
@@ -1903,7 +1920,7 @@ function prepareReviewCalls(
   const requiredWithRetry = requiredTokens + retryReservation;
   if (requiredWithRetry > config.budgets.maxTotalTokens) {
     throw new Error(
-      `The review requires a conservative reservation of ${requiredWithRetry} tokens including selective finding verification and one provider retry (${requiredTokens} without retry), exceeding the ${config.budgets.maxTotalTokens}-token budget.`,
+      `The review reserves ${requiredWithRetry} of the ${config.budgets.maxTotalTokens}-unit token budget, including selective finding verification and one provider retry (${requiredTokens} without retry). Reservations bound tokens by UTF-8 payload size, so they run roughly four times the tokens a call actually spends; raise budgets.maxTotalTokens rather than reading this as a token count.`,
     );
   }
 
@@ -2189,20 +2206,42 @@ export async function runTwoStageReview(
   }
 }
 
-function runEvent(value: unknown, label: string): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${label} is not a JSON object.`);
-  }
-  return value as Record<string, unknown>;
+/**
+ * Selects every run event of one type, narrowed to that member of the union.
+ *
+ * `Array.prototype.filter` infers a predicate only for the simplest callbacks, and the resume
+ * gates need to select on stage and attempt number as well. Narrowing once here keeps those
+ * compound selections typed instead of reaching into `Record<string, unknown>` (#122).
+ */
+function eventsOfTypeV1<T extends RunRecordEventV1["type"]>(
+  events: readonly RunRecordEventV1[],
+  type: T,
+): RunRecordEventOfTypeV1<T>[] {
+  return events.filter((event): event is RunRecordEventOfTypeV1<T> => event.type === type);
 }
 
-async function readRunEventsV1(runRecordPath: string): Promise<Record<string, unknown>[]> {
+/**
+ * Reads the run record as typed events.
+ *
+ * Parsing here rather than reading raw objects is what makes resume eligibility checkable: every
+ * field the gates below compare is declared in `RunRecordEventV1Schema`, so a renamed or
+ * restructured event fails the build instead of quietly making every run ineligible (#122).
+ */
+async function readRunEventsV1(runRecordPath: string): Promise<RunRecordEventV1[]> {
   const events = await readStrictJsonLinesFileV1(runRecordPath, {
     maxTotalBytes: MAX_PERSISTED_REVIEW_JSON_BYTES_V1,
     maxLineBytes: MAX_RUN_RECORD_LINE_BYTES_V1,
     source: "review run record",
   });
-  return events.map((event, index) => runEvent(event, `Run event ${index + 1}`));
+  return events.map((event, index) => {
+    const parsed = RunRecordEventV1Schema.safeParse(event);
+    if (!parsed.success) {
+      throw new Error(
+        `Run event ${index + 1} does not match the run-record contract: ${z.prettifyError(parsed.error)}`,
+      );
+    }
+    return parsed.data;
+  });
 }
 
 /**
@@ -2312,27 +2351,22 @@ export async function resumeFinalReview(
   // Eligibility is structural, not a literal event sequence: an in-run retry inserts extra
   // CALL_STARTED/CALL_FAILED/PROVIDER_RETRY_REQUESTED events, and a retried run is exactly the
   // kind of run resume exists for.
-  const succeededCalls = events.filter((event) => event.type === "CALL_SUCCEEDED");
+  const startedCalls = eventsOfTypeV1(events, "CALL_STARTED");
+  const succeededCalls = eventsOfTypeV1(events, "CALL_SUCCEEDED");
   const preliminarySucceededCalls = succeededCalls.filter((event) => event.stage === "PRELIMINARY");
   const findingVerificationSucceededCalls = succeededCalls.filter(
     (event) => event.stage === "FINDING_VERIFICATION",
   );
   const started = events[0];
   const runFailed = events.at(-1);
-  const preliminaryStarted = events.find(
-    (event) => event.type === "CALL_STARTED" && event.stage === "PRELIMINARY",
-  );
-  const preliminaryPersisted = events.find((event) => event.type === "PRELIMINARY_PERSISTED");
-  const findingVerificationPersisted = events.find(
-    (event) => event.type === "FINDING_VERIFICATION_PERSISTED",
-  );
+  const preliminaryStarted = startedCalls.find((event) => event.stage === "PRELIMINARY");
+  const preliminaryPersisted = eventsOfTypeV1(events, "PRELIMINARY_PERSISTED")[0];
+  const findingVerificationPersisted = eventsOfTypeV1(events, "FINDING_VERIFICATION_PERSISTED")[0];
   const acceptedAttemptNumber = preliminaryPersisted?.acceptedAttemptNumber;
   const preliminarySucceeded = preliminarySucceededCalls.at(-1);
-  const authorDelivered = events.find((event) => event.type === "AUTHOR_DELIVERED");
-  const finalStarted = events.findLast(
-    (event) => event.type === "CALL_STARTED" && event.stage === "FINAL",
-  );
-  const finalFailed = events.findLast((event) => event.type === "CALL_FAILED");
+  const authorDelivered = eventsOfTypeV1(events, "AUTHOR_DELIVERED")[0];
+  const finalStarted = startedCalls.findLast((event) => event.stage === "FINAL");
+  const finalFailed = eventsOfTypeV1(events, "CALL_FAILED").at(-1);
   if (
     started?.type !== "RUN_STARTED" ||
     runFailed?.type !== "RUN_FAILED" ||
@@ -2376,14 +2410,13 @@ export async function resumeFinalReview(
       "The persisted run uses an incompatible final response protocol; start a new review.",
     );
   }
-  const failedError = runEvent(finalFailed?.error, "Final call failure");
+  const failedError = finalFailed.error;
   if (
     failedError.code === "TRANSPORT_UNCERTAIN" ||
-    runFailed?.terminalState === "TRANSPORT_UNCERTAIN"
+    runFailed.terminalState === "TRANSPORT_UNCERTAIN"
   ) {
     throw new Error("A transport-uncertain final submission must not be retried.");
   }
-  const failedDiagnostic = runEvent(failedError.diagnostic, "Final call failure diagnostic");
   const lastPreFinalAttempt =
     findingVerificationSucceededCalls.at(-1)?.attemptNumber ?? preliminarySucceeded.attemptNumber;
   if (
@@ -2391,10 +2424,10 @@ export async function resumeFinalReview(
     !Number.isSafeInteger(preliminarySucceeded.attemptNumber) ||
     !Number.isSafeInteger(finalStarted.attemptNumber) ||
     !Number.isSafeInteger(lastPreFinalAttempt) ||
-    (finalStarted.attemptNumber as number) <= (lastPreFinalAttempt as number) ||
+    finalStarted.attemptNumber <= lastPreFinalAttempt ||
     finalStarted.attemptNumber !== finalFailed.attemptNumber ||
     failedError.code !== "PROVIDER_ERROR" ||
-    failedDiagnostic.httpStatus !== 429 ||
+    failedError.diagnostic?.httpStatus !== 429 ||
     runFailed.terminalState !== "FAILED"
   ) {
     throw new Error("Only a definite final-stage provider 429 may be resumed.");
@@ -2684,11 +2717,8 @@ export async function resumeFinalReview(
         schema: preliminaryResponseSchema,
       },
     };
-    const repairStarted = events.find(
-      (event) =>
-        event.type === "CALL_STARTED" &&
-        event.stage === "PRELIMINARY" &&
-        event.attemptNumber === acceptedAttemptNumber,
+    const repairStarted = startedCalls.find(
+      (event) => event.stage === "PRELIMINARY" && event.attemptNumber === acceptedAttemptNumber,
     );
     if (
       JSON.stringify(repairStarted?.inputDigest) !==
@@ -2726,11 +2756,9 @@ export async function resumeFinalReview(
       },
     };
     const succeeded = findingVerificationSucceededCalls[0];
-    const findingVerificationStarted = events.find(
+    const findingVerificationStarted = startedCalls.find(
       (event) =>
-        event.type === "CALL_STARTED" &&
-        event.stage === "FINDING_VERIFICATION" &&
-        event.attemptNumber === succeeded?.attemptNumber,
+        event.stage === "FINDING_VERIFICATION" && event.attemptNumber === succeeded?.attemptNumber,
     );
     if (
       findingVerificationStarted?.promptVersion !== FINDING_VERIFICATION_POLICY_VERSION_V1 ||
@@ -2796,7 +2824,7 @@ export async function resumeFinalReview(
   costLedger.record(
     priceCeilingCostUsd(failedFinalInputTokens, config.budgets.maxOutputTokensPerCall, config),
   );
-  const failedFinalAttemptNumber = finalStarted.attemptNumber as number;
+  const failedFinalAttemptNumber = finalStarted.attemptNumber;
   const resumedAttemptNumber = failedFinalAttemptNumber + 1;
 
   try {

@@ -131,6 +131,8 @@ export {
   REVIEW_REPORT_METADATA_V1_JSON_SCHEMA,
   ReviewReportMetadataV1Schema,
 } from "./review-report-metadata.js";
+export type { RunRecordEventOfTypeV1, RunRecordEventV1 } from "./run-record.js";
+export { RUN_RECORD_EVENT_V1_JSON_SCHEMA, RunRecordEventV1Schema } from "./run-record.js";
 export {
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA,
