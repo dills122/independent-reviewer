@@ -33,9 +33,14 @@ generation for deliberate contract changes, `npm run check`, and
 `python3 -B scripts/check-ai-context.py --ci`. No paid provider call is part of
 this execution index; live qualification requires separate explicit approval.
 
-Latest provider-free gate (2026-09-14): formatting, lint, typecheck, 599
-coverage tests, and 31 E2E tests pass under Node.js 24. Dependency audit reports
+Latest provider-free gate (2026-09-14): formatting, lint, typecheck, 600
+coverage tests, and 32 E2E tests pass under Node.js 24. Dependency audit reports
 zero vulnerabilities when rerun with registry access. No provider call made.
+
+Separately approved paid validation on the rebased Slice 3 branch completed
+3/14 cases; all three completed verdicts matched their human labels. Every
+incomplete case ended on upstream shared-pool 429 capacity errors. See
+[multi-harness paid E2E](../validation/2026-09-14-multi-harness-paid-e2e.md).
 
 Expanded Slice 3 qualification (2026-09-14): 46 focused provider-free cases
 pass, within a 110-test guidance suite. Coverage includes canonical multi-family closure under
