@@ -113,8 +113,8 @@ export async function captureCursorGuidanceV1(
     return depthDifference === 0 ? (left < right ? -1 : left > right ? 1 : 0) : depthDifference;
   });
 
-  const sources = new Map<string, LoadedSourceV1>();
-  const directSourcesByDiscoveredPath = new Map<string, ResolvedDirectSourceV1>();
+  type ResolvedSourceV1 = NonNullable<Awaited<ReturnType<typeof resolveBaseGuidanceBlobV1>>>;
+  const resolvedByDiscoveredPath = new Map<string, ResolvedSourceV1>();
   const alwaysApply = new Set<string>();
   const matchers = new Map<string, (candidatePath: string) => boolean>();
   const diagnostics = [];
@@ -127,6 +127,7 @@ export async function captureCursorGuidanceV1(
       path,
     );
     if (!resolved) throw new Error(`Cursor rule ${path} has no resolved BASE source.`);
+    resolvedByDiscoveredPath.set(path, resolved);
     const frontmatter = parseCursorFrontmatterV1(
       path,
       await readBaseGuidanceFrontmatterV1(repositoryPath, resolved.resolvedPath, resolved.metadata),
@@ -146,6 +147,30 @@ export async function captureCursorGuidanceV1(
       );
       continue;
     }
+    if (frontmatter.alwaysApply) alwaysApply.add(path);
+    else if (frontmatter.globs.length > 0)
+      matchers.set(path, compileGuidancePatternsV1(path, frontmatter.globs));
+  }
+
+  const selectPathsForTarget = (applicabilityPath: string): string[] =>
+    rulePaths.filter((path) => {
+      if (
+        !resolvedByDiscoveredPath.has(path) ||
+        !targetWithinScope(applicabilityPath, ruleScope(path))
+      )
+        return false;
+      return alwaysApply.has(path) || matchers.get(path)?.(applicabilityPath) === true;
+    });
+  const selectedPaths = new Set<string>();
+  for (const target of targets) {
+    for (const path of selectPathsForTarget(target.applicabilityPath)) selectedPaths.add(path);
+  }
+
+  const sources = new Map<string, LoadedSourceV1>();
+  const directSourcesByDiscoveredPath = new Map<string, ResolvedDirectSourceV1>();
+  for (const path of [...selectedPaths].sort()) {
+    const resolved = resolvedByDiscoveredPath.get(path);
+    if (!resolved) throw new Error(`Selected Cursor rule ${path} was not resolved.`);
     const source = await readBaseMarkdownGuidanceSourceV1(
       repositoryPath,
       resolved.resolvedPath,
@@ -165,22 +190,14 @@ export async function captureCursorGuidanceV1(
     }
     sources.set(resolved.resolvedPath, source);
     directSourcesByDiscoveredPath.set(path, { resolvedPath: resolved.resolvedPath, source });
-    if (frontmatter.alwaysApply) alwaysApply.add(path);
-    else if (frontmatter.globs.length > 0)
-      matchers.set(path, compileGuidancePatternsV1(path, frontmatter.globs));
   }
 
   const directSources = new Map<string, DirectGuidanceSourceInputV1>();
   let recognitionCount = 0;
   for (const target of targets) {
-    const selected = rulePaths.filter((path) => {
-      if (
-        !directSourcesByDiscoveredPath.has(path) ||
-        !targetWithinScope(target.applicabilityPath, ruleScope(path))
-      )
-        return false;
-      return alwaysApply.has(path) || matchers.get(path)?.(target.applicabilityPath) === true;
-    });
+    const selected = selectPathsForTarget(target.applicabilityPath).filter((path) =>
+      directSourcesByDiscoveredPath.has(path),
+    );
     selected.forEach((path, nativeOrder) => {
       recognitionCount += 1;
       if (recognitionCount > MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1)

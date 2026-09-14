@@ -53,7 +53,7 @@ function request(repositoryPath: string): ReviewRequestV1 {
   };
 }
 
-async function repository(): Promise<string> {
+async function repository(matchingFailure?: "SECRET" | "SIZE"): Promise<string> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "claude-guidance-"));
   await git(repositoryPath, "init", "--initial-branch=main");
   await git(repositoryPath, "config", "user.name", "Claude Guidance Test");
@@ -76,7 +76,15 @@ async function repository(): Promise<string> {
   await writeFile(join(repositoryPath, ".claude", "rules", "all.md"), "# All\n");
   await writeFile(
     join(repositoryPath, ".claude", "rules", "docs.md"),
-    "---\npaths: [docs/**]\n---\n# Documentation rule\n",
+    "---\npaths: [docs/**]\n---\n# Non-matching secret\n\nAKIAABCDEFGHIJKLMNOP\n",
+  );
+  await writeFile(
+    join(repositoryPath, ".claude", "rules", "config.md"),
+    `---\npaths: [config/**]\n---\n# Non-matching oversized rule\n${"x".repeat(64 * 1024)}\n`,
+  );
+  await writeFile(
+    join(repositoryPath, ".claude", "rules", "assets.md"),
+    Buffer.concat([Buffer.from("---\npaths: [assets/**]\n---\n"), Buffer.from([0xff])]),
   );
   await writeFile(
     join(repositoryPath, ".claude", "rules", "ignored.txt"),
@@ -84,7 +92,13 @@ async function repository(): Promise<string> {
   );
   await writeFile(
     join(repositoryPath, ".claude", "rules", "src.md"),
-    "---\npaths: [src/**]\n---\n# Source rule\n",
+    `---\npaths: [src/**]\n---\n# Source rule\n${
+      matchingFailure === "SECRET"
+        ? "AKIAABCDEFGHIJKLMNOP\n"
+        : matchingFailure === "SIZE"
+          ? `${"x".repeat(64 * 1024)}\n`
+          : ""
+    }`,
   );
   await writeFile(
     join(repositoryPath, ".claude", "rules", "tests.md"),
@@ -133,8 +147,22 @@ describe("captureClaudeGuidanceV1", () => {
       ]);
       assert.equal(captured.graph.nodes.length, 9);
       assert.equal(captured.blobs.size, 9);
+      for (const path of [
+        ".claude/rules/docs.md",
+        ".claude/rules/config.md",
+        ".claude/rules/assets.md",
+      ]) {
+        assert.equal(
+          captured.graph.nodes.some(({ resolvedPath }) => resolvedPath === path),
+          false,
+        );
+      }
       assert.equal(captured.graph.occurrences.length, 3);
       assert.equal(captured.graph.edges.length, 6);
+      for (const bytes of captured.blobs.values()) {
+        assert.ok(bytes.length <= 64 * 1024);
+        assert.doesNotMatch(new TextDecoder("utf-8", { fatal: true }).decode(bytes), /AKIA/);
+      }
       for (const path of ["docs/shared.md", "config/nested.md", "common.md"]) {
         const imported = captured.graph.nodes.find(({ resolvedPath }) => resolvedPath === path);
         assert.ok(imported);
@@ -158,6 +186,30 @@ describe("captureClaudeGuidanceV1", () => {
       await rm(repositoryPath, { recursive: true, force: true });
     }
   });
+
+  for (const failure of [
+    { name: "secret content", input: "SECRET", code: "GUIDANCE_SECRET_CONTENT" },
+    { name: "oversized content", input: "SIZE", code: "GUIDANCE_SOURCE_SIZE_LIMIT" },
+  ] as const) {
+    it(`still rejects matching Claude rules with ${failure.name}`, async () => {
+      const repositoryPath = await repository(failure.input);
+      try {
+        const snapshot = await captureGitSnapshotV1(request(repositoryPath));
+        await assert.rejects(
+          captureClaudeGuidanceV1(repositoryPath, snapshot.manifest),
+          (error: unknown) => {
+            assert.ok(error instanceof GuidanceCaptureError);
+            assert.equal(error.code, failure.code);
+            assert.equal(error.path, ".claude/rules/src.md");
+            assert.doesNotMatch(error.message, /AKIAABCDEFGHIJKLMNOP/);
+            return true;
+          },
+        );
+      } finally {
+        await rm(repositoryPath, { recursive: true, force: true });
+      }
+    });
+  }
 
   it("fails closed on malformed recognized rule frontmatter", async () => {
     const repositoryPath = await repository();

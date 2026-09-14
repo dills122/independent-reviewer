@@ -1,8 +1,9 @@
 # Friendly reviewer operations implementation plan
 
 Status: accepted by maintainer; implementation in progress. Slices 1 and 2 are
-complete and verified; Slice 3 has Codex and Claude support but not the remaining
-harness adapters; Slices 4–6 remain pending. Owner: project maintainer.
+complete and verified; Slice 3 implements all six harness adapters and has
+provider-free qualification coverage; Slices 4–6 remain pending. Owner: project
+maintainer.
 Decision records: [ADR-013](../decisions/013-separate-simple-settings-from-resolved-review-policy.md)
 and [ADR-014](../decisions/014-discover-repository-markdown-steering.md).
 Research basis:
@@ -224,7 +225,7 @@ applicability metadata. Implement already-frozen source-node/import-edge and
 resource-cap contracts before adapter groups split. Adopt qualified Markdown,
 YAML, JSON, glob, brace, and Gitignore libraries behind small family adapters.
 
-**Progress:** In progress. Canonical direct-source assembly and Codex ancestor
+**Progress:** Implemented. Canonical direct-source assembly and Codex ancestor
 discovery are implemented: BASE `AGENTS.override.md` wins over `AGENTS.md` per
 directory, selected files apply root-to-target-parent, and multi-source output
 flows through the existing packet, prompt, admission, and resume chain. Claude
@@ -239,108 +240,110 @@ deterministic diagnostic compaction, and frozen-BASE destination verification.
 `remark-parse`; `agent-install/agents-md` was evaluated but reads and edits live
 working-tree files and parses headings rather than supplying frozen Git
 discovery/applicability semantics, so it remains a possible setup-UX dependency,
-not a runtime capture dependency. Provider-free qualification and independent
-review remain before Slice 3 closes.
+not a runtime capture dependency. Provider-free qualification is complete. Three
+independent review instances were consumed; final review findings covering
+applicability-before-admission ordering and stale status text were remediated
+after instance 3, so no unsupported fourth review is claimed.
 
 **Acceptance criteria:**
 
-- [ ] Root, nested, override, always-on, and path-matched sources select the
+- [x] Root, nested, override, always-on, and path-matched sources select the
       correct guidance for every projected target.
-- [ ] Manual/model-selected modes, global home files, ignored files, and HEAD-only
+- [x] Manual/model-selected modes, global home files, ignored files, and HEAD-only
       guidance do not enter prompt context. Manual/model-selected sources are
       unconditionally excluded in v1; no implicit or advanced selection exists.
-- [ ] `.independent-reviewer/rules.md` is always last among repository guidance;
+- [x] `.independent-reviewer/rules.md` is always last among repository guidance;
       peer harness families retain equal semantic authority.
-- [ ] Canonical presentation sorts by semantic tier, direct/import-only origin
+- [x] Canonical presentation sorts by semantic tier, direct/import-only origin
       rank, complete canonical direct-recognition vector, resolved path, and
       source identity. Each direct recognition binds `familyId`, `sourceKind`,
       `nativeOrder`, `applicableTargetId`, and `discoveredPath`; records and
       vectors follow ADR-014's exact integer/UTF-16 comparison.
-- [ ] Strict `GuidanceGraphV1` serialization binds snapshot digest and BASE,
+- [x] Strict `GuidanceGraphV1` serialization binds snapshot digest and BASE,
       stores exact relocation-aware targets plus sorted unique
       nodes, occurrences, edges, diagnostics, and every sorted unique node-local
       vector. Validation recomputes all IDs and derived fields and rejects unknown
       fields, duplicates, bad order, dangling references, missing or extra closure
       edges, blob/digest mismatch, or drift before prompt construction and resume.
-- [ ] Snapshot entries project exactly: add/untracked/modified/type-changed use
+- [x] Snapshot entries project exactly: add/untracked/modified/type-changed use
       destination, deletion uses BASE path, rename uses BASE source plus HEAD
       destination, and copy uses HEAD destination only. Target role/side is
       visible in prompt provenance and bound into graph identity.
-- [ ] Packet metadata, neutral brief, `RUN_STARTED`, complete provider-request
+- [x] Packet metadata, neutral brief, `RUN_STARTED`, complete provider-request
       input digest, and runner-owned report bind exact `guidanceGraphDigest`.
       Resume rebuilds and compares graph, blobs, brief, plan, messages, ledger,
       and protocol versions before another provider call.
-- [ ] `AGENTS.md` and `CLAUDE.md` sources recognized by multiple family adapters
+- [x] `AGENTS.md` and `CLAUDE.md` sources recognized by multiple family adapters
       merge complete family/applicability provenance and render content once per
       payload. Applicability is the union of all recognitions.
-- [ ] Copilot recognizes standard `GEMINI.md` locations without expanding their
+- [x] Copilot recognizes standard `GEMINI.md` locations without expanding their
       references; Gemini/Copilot overlap merges provenance and content.
-- [ ] Canonical source nodes, family-specific syntax occurrences, and expanded
+- [x] Canonical source nodes, family-specific syntax occurrences, and expanded
       import edges bind BASE identity, resolved paths, requested specifiers,
       source positions, family, and target applicability. One occurrence
       emits exactly one edge per applicable target; multi-family parsing
       emits separate occurrences. Direct-plus-import merging retains recognition
       kinds and provenance without a mutable node-level `sourceKind`.
-- [ ] Every supported root, metadata shape, path base, ignore rule, import
+- [x] Every supported root, metadata shape, path base, ignore rule, import
       syntax/depth, dynamic-mode exclusion, and unsupported setting follows the
       normative family table rather than one shared parser assumption.
-- [ ] Every normative snapshot-entry, target, applicability-path,
+- [x] Every normative snapshot-entry, target, applicability-path,
       unique-candidate, recognition, canonical-node, node/target-pair,
       raw/canonical-occurrence, expanded-edge, parser,
       pattern/expansion, symlink, and diagnostic cap uses its declared identity.
       Authority/work caps fail closed above exact limit without partial guidance
       or provider access; diagnostic overflow alone uses deterministic bounded
       compaction.
-- [ ] Every applicable root and imported/reference file passes path/content
+- [x] Every applicable root and imported/reference file passes path/content
       secret policy before artifact creation; failure retains metadata-only
       diagnostics and sends zero provider calls.
 
 **Verification:**
 
-- [ ] Table-driven fixtures cover each harness convention and overlapping paths.
-- [ ] Adapter-order and filesystem-order permutation tests produce byte-identical
+- [x] Table-driven fixtures cover each harness convention and overlapping paths.
+- [x] Adapter-order and filesystem-order permutation tests produce byte-identical
       graph serialization, prompt input, and digest-bound artifacts.
-- [ ] Added, deleted, modified, type-changed, rename-across-scope,
+- [x] Added, deleted, modified, type-changed, rename-across-scope,
       copy-across-scope, same-directory relocation, and separately modified copy
       source fixtures prove exact target role/side, guidance selection, graph,
       prompt, and digest output.
-- [ ] Multi-family fixtures give one shared source divergent native orders and
+- [x] Multi-family fixtures give one shared source divergent native orders and
       adapter discovery orders; every permutation produces the same recognition
       vector, prompt bytes, and digest.
-- [ ] Direct-only, import-only, repeated-edge, transitive, and
+- [x] Direct-only, import-only, repeated-edge, transitive, and
       direct-plus-import fixtures produce canonical node/edge identities,
       rendering order, prompt bytes, and digest across traversal permutations.
-- [ ] Strict-schema, round-trip, and tamper fixtures cover every graph/member
+- [x] Strict-schema, round-trip, and tamper fixtures cover every graph/member
       field, exact identifier prefix/digest, external content-blob verification,
       occurrence source spans, diagnostic canonicalization, unknown fields, and
       missing or invented derived records.
-- [ ] One import occurrence propagated to N targets produces exactly N
+- [x] One import occurrence propagated to N targets produces exactly N
       edges; recognition by F families produces F occurrences and expected
       per-family edges. Exact duplicates collapse, conflicting target resolution
       fails, and cycle identity is family/source/path specific.
-- [ ] Multi-family source-kind fixtures retain every recognition kind, derive
+- [x] Multi-family source-kind fixtures retain every recognition kind, derive
       node semantic tier/applicability exactly, and reject recognition conflicts
       instead of using adapter arrival order.
-- [ ] Traversal, symlink, invalid glob/frontmatter, duplicate discovery, case,
+- [x] Traversal, symlink, invalid glob/frontmatter, duplicate discovery, case,
       slash, Unicode, imports, cycles, depth, ignores, and unsupported modes have
       explicit results.
-- [ ] Secret-bearing imported/reference fixtures prove rejected bytes occur in
+- [x] Secret-bearing imported/reference fixtures prove rejected bytes occur in
       neither persisted artifacts nor request bodies.
-- [ ] Below, exactly-at, and above fixtures cover every resource cap, including
+- [x] Below, exactly-at, and above fixtures cover every resource cap, including
       expansion-product preflight before allocation and deterministic diagnostic
       overflow compaction. Overlap fixtures prove unique-path/node caps count once
       while recognition, occurrence, edge, and applicability-pair caps count their
       complete canonical identities.
-- [ ] After preliminary persistence and a definite resumable final 429,
+- [x] After preliminary persistence and a definite resumable final 429,
       self-consistent graph replacement, graph-plus-blob replacement, missing
       graph, stale packet binding, and mixed protocol versions all fail locally
       with zero additional provider calls.
-- [ ] Manual/model-selected sources always produce typed exclusions in v1; no
+- [x] Manual/model-selected sources always produce typed exclusions in v1; no
       settings or CLI permutation causes their contents to enter graph or prompt.
-- [ ] Dependency-parity fixtures exercise remark, `yaml`, `jsonc-parser`,
+- [x] Dependency-parity fixtures exercise remark, `yaml`, `jsonc-parser`,
       patched `picomatch`, `braces`, and `ignore` through narrow adapters.
       No hand-written replacement for those grammars ships without approved ADR.
-- [ ] TypeScript, Python, Go, Java, documentation-only, and mixed-language
+- [x] TypeScript, Python, Go, Java, documentation-only, and mixed-language
       changes use identical discovery policy.
 
 **Dependencies:** Slice 2.

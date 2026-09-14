@@ -6,7 +6,11 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import { captureCursorGuidanceV1 } from "../../src/guidance/cursor-discovery.js";
-import { captureGitSnapshotV1, type ReviewRequestV1 } from "../../src/index.js";
+import {
+  captureGitSnapshotV1,
+  GuidanceCaptureError,
+  type ReviewRequestV1,
+} from "../../src/index.js";
 
 const exec = promisify(execFile);
 
@@ -47,7 +51,7 @@ function request(repositoryPath: string): ReviewRequestV1 {
   };
 }
 
-async function repository(): Promise<string> {
+async function repository(matchingFailure?: "SECRET" | "SIZE"): Promise<string> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "cursor-guidance-"));
   await git(repositoryPath, "init", "--initial-branch=main");
   await git(repositoryPath, "config", "user.name", "Cursor Guidance Test");
@@ -62,7 +66,28 @@ async function repository(): Promise<string> {
   );
   await writeFile(
     join(repositoryPath, ".cursor/rules/src.mdc"),
-    "---\nglobs: ['src/**']\nalwaysApply: false\n---\n# Source\n",
+    `---\nglobs: ['src/**']\nalwaysApply: false\n---\n# Source\n${
+      matchingFailure === "SECRET"
+        ? "AKIAABCDEFGHIJKLMNOP\n"
+        : matchingFailure === "SIZE"
+          ? `${"x".repeat(64 * 1024)}\n`
+          : ""
+    }`,
+  );
+  await writeFile(
+    join(repositoryPath, ".cursor/rules/docs-secret.mdc"),
+    "---\nglobs: ['docs/**']\nalwaysApply: false\n---\nAKIAABCDEFGHIJKLMNOP\n",
+  );
+  await writeFile(
+    join(repositoryPath, ".cursor/rules/config-size.mdc"),
+    `---\nglobs: ['config/**']\nalwaysApply: false\n---\n${"x".repeat(64 * 1024)}\n`,
+  );
+  await writeFile(
+    join(repositoryPath, ".cursor/rules/assets-utf8.mdc"),
+    Buffer.concat([
+      Buffer.from("---\nglobs: ['assets/**']\nalwaysApply: false\n---\n"),
+      Buffer.from([0xff]),
+    ]),
   );
   await writeFile(
     join(repositoryPath, ".cursor/rules/model-selected.mdc"),
@@ -135,13 +160,51 @@ describe("captureCursorGuidanceV1", () => {
             code === "UNSELECTED_MANUAL_MODE" && path === ".cursor/rules/manual.mdc",
         ),
       );
+      for (const path of [
+        ".cursor/rules/docs-secret.mdc",
+        ".cursor/rules/config-size.mdc",
+        ".cursor/rules/assets-utf8.mdc",
+      ]) {
+        assert.equal(
+          captured.graph.nodes.some(({ resolvedPath }) => resolvedPath === path),
+          false,
+        );
+      }
       assert.equal(captured.graph.occurrences.length, 1);
       assert.equal(captured.graph.edges.length, 2);
+      for (const bytes of captured.blobs.values()) {
+        assert.ok(bytes.length <= 64 * 1024);
+        assert.doesNotMatch(new TextDecoder("utf-8", { fatal: true }).decode(bytes), /AKIA/);
+      }
       assert.ok(captured.graph.nodes.some(({ resolvedPath }) => resolvedPath === "docs/shared.md"));
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
   });
+
+  for (const failure of [
+    { name: "secret content", input: "SECRET", code: "GUIDANCE_SECRET_CONTENT" },
+    { name: "oversized content", input: "SIZE", code: "GUIDANCE_SOURCE_SIZE_LIMIT" },
+  ] as const) {
+    it(`still rejects matching Cursor rules with ${failure.name}`, async () => {
+      const repositoryPath = await repository(failure.input);
+      try {
+        const snapshot = await captureGitSnapshotV1(request(repositoryPath));
+        await assert.rejects(
+          captureCursorGuidanceV1(repositoryPath, snapshot.manifest),
+          (error: unknown) => {
+            assert.ok(error instanceof GuidanceCaptureError);
+            assert.equal(error.code, failure.code);
+            assert.equal(error.path, ".cursor/rules/src.mdc");
+            assert.doesNotMatch(error.message, /AKIAABCDEFGHIJKLMNOP/);
+            return true;
+          },
+        );
+      } finally {
+        await rm(repositoryPath, { recursive: true, force: true });
+      }
+    });
+  }
 
   it("resolves a direct repository-internal BASE symlink and retains its discovered path", async () => {
     const repositoryPath = await repository();

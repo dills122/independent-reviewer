@@ -6,7 +6,11 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import { captureCopilotGuidanceV1 } from "../../src/guidance/copilot-discovery.js";
-import { captureGitSnapshotV1, type ReviewRequestV1 } from "../../src/index.js";
+import {
+  captureGitSnapshotV1,
+  GuidanceCaptureError,
+  type ReviewRequestV1,
+} from "../../src/index.js";
 
 const exec = promisify(execFile);
 
@@ -47,7 +51,7 @@ function request(repositoryPath: string): ReviewRequestV1 {
   };
 }
 
-async function repository(): Promise<string> {
+async function repository(matchingFailure?: "SECRET" | "SIZE"): Promise<string> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "copilot-guidance-"));
   await git(repositoryPath, "init", "--initial-branch=main");
   await git(repositoryPath, "config", "user.name", "Copilot Guidance Test");
@@ -62,7 +66,25 @@ async function repository(): Promise<string> {
   );
   await writeFile(
     join(repositoryPath, ".github/instructions/src.instructions.md"),
-    "---\napplyTo: 'src/**'\n---\n# Source modular\n\n@../../docs/modular-only.md\n",
+    `---\napplyTo: 'src/**'\n---\n# Source modular\n\n@../../docs/modular-only.md\n${
+      matchingFailure === "SECRET"
+        ? "AKIAABCDEFGHIJKLMNOP\n"
+        : matchingFailure === "SIZE"
+          ? `${"x".repeat(64 * 1024)}\n`
+          : ""
+    }`,
+  );
+  await writeFile(
+    join(repositoryPath, ".github/instructions/docs-secret.instructions.md"),
+    "---\napplyTo: 'docs/**'\n---\nAKIAABCDEFGHIJKLMNOP\n",
+  );
+  await writeFile(
+    join(repositoryPath, ".github/instructions/config-size.instructions.md"),
+    `---\napplyTo: 'config/**'\n---\n${"x".repeat(64 * 1024)}\n`,
+  );
+  await writeFile(
+    join(repositoryPath, ".github/instructions/assets-utf8.instructions.md"),
+    Buffer.concat([Buffer.from("---\napplyTo: 'assets/**'\n---\n"), Buffer.from([0xff])]),
   );
   await writeFile(
     join(repositoryPath, ".github/instructions/excluded.instructions.md"),
@@ -150,8 +172,22 @@ describe("captureCopilotGuidanceV1", () => {
         ),
         false,
       );
+      for (const path of [
+        ".github/instructions/docs-secret.instructions.md",
+        ".github/instructions/config-size.instructions.md",
+        ".github/instructions/assets-utf8.instructions.md",
+      ]) {
+        assert.equal(
+          captured.graph.nodes.some(({ resolvedPath }) => resolvedPath === path),
+          false,
+        );
+      }
       assert.equal(captured.graph.occurrences.length, 1);
       assert.equal(captured.graph.edges.length, 2);
+      for (const bytes of captured.blobs.values()) {
+        assert.ok(bytes.length <= 64 * 1024);
+        assert.doesNotMatch(new TextDecoder("utf-8", { fatal: true }).decode(bytes), /AKIA/);
+      }
       assert.ok(captured.graph.nodes.some(({ resolvedPath }) => resolvedPath === "docs/shared.md"));
       assert.equal(
         captured.graph.nodes.some(({ resolvedPath }) => resolvedPath === "docs/modular-only.md"),
@@ -165,6 +201,30 @@ describe("captureCopilotGuidanceV1", () => {
       await rm(repositoryPath, { recursive: true, force: true });
     }
   });
+
+  for (const failure of [
+    { name: "secret content", input: "SECRET", code: "GUIDANCE_SECRET_CONTENT" },
+    { name: "oversized content", input: "SIZE", code: "GUIDANCE_SOURCE_SIZE_LIMIT" },
+  ] as const) {
+    it(`still rejects matching Copilot rules with ${failure.name}`, async () => {
+      const repositoryPath = await repository(failure.input);
+      try {
+        const snapshot = await captureGitSnapshotV1(request(repositoryPath));
+        await assert.rejects(
+          captureCopilotGuidanceV1(repositoryPath, snapshot.manifest),
+          (error: unknown) => {
+            assert.ok(error instanceof GuidanceCaptureError);
+            assert.equal(error.code, failure.code);
+            assert.equal(error.path, ".github/instructions/src.instructions.md");
+            assert.doesNotMatch(error.message, /AKIAABCDEFGHIJKLMNOP/);
+            return true;
+          },
+        );
+      } finally {
+        await rm(repositoryPath, { recursive: true, force: true });
+      }
+    });
+  }
 
   it("uses frozen BASE and excludes HEAD-only Copilot files", async () => {
     const repositoryPath = await repository();

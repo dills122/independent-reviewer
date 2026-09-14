@@ -104,11 +104,8 @@ export async function captureKiroGuidanceV1(
     if (metadata) metadataByPath.set(path, metadata);
   }
 
-  const sources = new Map<string, Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>>>();
-  const directSourcesByDiscoveredPath = new Map<
-    string,
-    { resolvedPath: string; source: Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>> }
-  >();
+  type ResolvedSourceV1 = NonNullable<Awaited<ReturnType<typeof resolveBaseGuidanceBlobV1>>>;
+  const resolvedByDiscoveredPath = new Map<string, ResolvedSourceV1>();
   const steeringMatchers = new Map<string, ((path: string) => boolean) | undefined>();
   const excludedSteering = new Set<string>();
   const diagnostics = [];
@@ -121,6 +118,7 @@ export async function captureKiroGuidanceV1(
       path,
     );
     if (!resolved) throw new Error(`Kiro guidance ${path} has no resolved BASE source.`);
+    resolvedByDiscoveredPath.set(path, resolved);
     if (steeringPaths.includes(path)) {
       const parsed = parseKiroSteeringFrontmatterV1(
         path,
@@ -153,6 +151,33 @@ export async function captureKiroGuidanceV1(
           : undefined,
       );
     }
+  }
+
+  const selectPathsForTarget = (targetId: string, applicabilityPath: string): string[] => {
+    const orderedAgents = (agentsByTarget.get(targetId) ?? []).filter((path) =>
+      resolvedByDiscoveredPath.has(path),
+    );
+    const orderedSteering = steeringPaths.filter((path) => {
+      if (excludedSteering.has(path) || !resolvedByDiscoveredPath.has(path)) return false;
+      const matcher = steeringMatchers.get(path);
+      return matcher ? matcher(applicabilityPath) : true;
+    });
+    return [...orderedAgents, ...orderedSteering];
+  };
+  const selectedPaths = new Set<string>();
+  for (const target of targets) {
+    for (const path of selectPathsForTarget(target.targetId, target.applicabilityPath))
+      selectedPaths.add(path);
+  }
+
+  const sources = new Map<string, Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>>>();
+  const directSourcesByDiscoveredPath = new Map<
+    string,
+    { resolvedPath: string; source: Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>> }
+  >();
+  for (const path of [...selectedPaths].sort()) {
+    const resolved = resolvedByDiscoveredPath.get(path);
+    if (!resolved) throw new Error(`Selected Kiro guidance ${path} was not resolved.`);
     const source = await readBaseMarkdownGuidanceSourceV1(
       repositoryPath,
       resolved.resolvedPath,
@@ -177,15 +202,10 @@ export async function captureKiroGuidanceV1(
   const directSources = new Map<string, DirectGuidanceSourceInputV1>();
   let recognitionCount = 0;
   for (const target of targets) {
-    const orderedAgents = (agentsByTarget.get(target.targetId) ?? []).filter((path) =>
-      directSourcesByDiscoveredPath.has(path),
+    const selected = selectPathsForTarget(target.targetId, target.applicabilityPath).filter(
+      (path) => directSourcesByDiscoveredPath.has(path),
     );
-    const orderedSteering = steeringPaths.filter((path) => {
-      if (excludedSteering.has(path) || !directSourcesByDiscoveredPath.has(path)) return false;
-      const matcher = steeringMatchers.get(path);
-      return matcher ? matcher(target.applicabilityPath) : true;
-    });
-    [...orderedAgents, ...orderedSteering].forEach((path, nativeOrder) => {
+    selected.forEach((path, nativeOrder) => {
       recognitionCount += 1;
       if (recognitionCount > MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1)
         discoveryLimit(

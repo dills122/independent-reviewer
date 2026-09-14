@@ -110,11 +110,8 @@ export async function captureCopilotGuidanceV1(
     if (metadata) metadataByPath.set(path, metadata);
   }
 
-  const sources = new Map<string, LoadedSourceV1>();
-  const directSourcesByDiscoveredPath = new Map<
-    string,
-    { resolvedPath: string; source: LoadedSourceV1 }
-  >();
+  type ResolvedSourceV1 = NonNullable<Awaited<ReturnType<typeof resolveBaseGuidanceBlobV1>>>;
+  const resolvedByDiscoveredPath = new Map<string, ResolvedSourceV1>();
   const modularMatchers = new Map<string, (candidatePath: string) => boolean>();
   const excludedModular = new Set<string>();
   const diagnostics = [];
@@ -127,6 +124,7 @@ export async function captureCopilotGuidanceV1(
       path,
     );
     if (!resolved) throw new Error(`Copilot guidance source ${path} has no resolved BASE source.`);
+    resolvedByDiscoveredPath.set(path, resolved);
     if (modularPaths.includes(path)) {
       const frontmatter = parseCopilotFrontmatterV1(
         path,
@@ -142,6 +140,46 @@ export async function captureCopilotGuidanceV1(
       }
       modularMatchers.set(path, compileGuidancePatternsV1(path, frontmatter.applyTo));
     }
+  }
+
+  const selectPathsForTarget = (targetId: string, applicabilityPath: string): string[] => {
+    const directories = ancestorsByTarget.get(targetId) ?? [];
+    const agents = directories.map((directory) =>
+      guidancePathInDirectoryV1(directory, "AGENTS.md"),
+    );
+    const claude = directories.map((directory) =>
+      guidancePathInDirectoryV1(directory, "CLAUDE.md"),
+    );
+    const gemini = directories.map((directory) =>
+      guidancePathInDirectoryV1(directory, "GEMINI.md"),
+    );
+    const ordered = [
+      ...(resolvedByDiscoveredPath.has(REPOSITORY_PATH_V1) ? [REPOSITORY_PATH_V1] : []),
+      ...agents.filter((path) => resolvedByDiscoveredPath.has(path)),
+      ...claude.filter((path) => resolvedByDiscoveredPath.has(path)),
+      ...(resolvedByDiscoveredPath.has(DOT_CLAUDE_PATH_V1) ? [DOT_CLAUDE_PATH_V1] : []),
+      ...gemini.filter((path) => resolvedByDiscoveredPath.has(path)),
+      ...modularPaths.filter(
+        (path) =>
+          !excludedModular.has(path) && modularMatchers.get(path)?.(applicabilityPath) === true,
+      ),
+    ];
+    return [...new Set(ordered)];
+  };
+  const selectedPaths = new Set<string>();
+  for (const target of targets) {
+    for (const path of selectPathsForTarget(target.targetId, target.applicabilityPath))
+      selectedPaths.add(path);
+  }
+
+  const sources = new Map<string, LoadedSourceV1>();
+  const directSourcesByDiscoveredPath = new Map<
+    string,
+    { resolvedPath: string; source: LoadedSourceV1 }
+  >();
+  for (const path of [...selectedPaths].sort()) {
+    const resolved = resolvedByDiscoveredPath.get(path);
+    if (!resolved) throw new Error(`Selected Copilot source ${path} was not resolved.`);
     const source = await readBaseMarkdownGuidanceSourceV1(
       repositoryPath,
       resolved.resolvedPath,
@@ -166,29 +204,10 @@ export async function captureCopilotGuidanceV1(
   const directSources = new Map<string, DirectGuidanceSourceInputV1>();
   let recognitionCount = 0;
   for (const target of targets) {
-    const directories = ancestorsByTarget.get(target.targetId) ?? [];
-    const agents = directories.map((directory) =>
-      guidancePathInDirectoryV1(directory, "AGENTS.md"),
+    const selected = selectPathsForTarget(target.targetId, target.applicabilityPath).filter(
+      (path) => directSourcesByDiscoveredPath.has(path),
     );
-    const claude = directories.map((directory) =>
-      guidancePathInDirectoryV1(directory, "CLAUDE.md"),
-    );
-    const gemini = directories.map((directory) =>
-      guidancePathInDirectoryV1(directory, "GEMINI.md"),
-    );
-    const ordered = [
-      ...(directSourcesByDiscoveredPath.has(REPOSITORY_PATH_V1) ? [REPOSITORY_PATH_V1] : []),
-      ...agents.filter((path) => directSourcesByDiscoveredPath.has(path)),
-      ...claude.filter((path) => directSourcesByDiscoveredPath.has(path)),
-      ...(directSourcesByDiscoveredPath.has(DOT_CLAUDE_PATH_V1) ? [DOT_CLAUDE_PATH_V1] : []),
-      ...gemini.filter((path) => directSourcesByDiscoveredPath.has(path)),
-      ...modularPaths.filter(
-        (path) =>
-          !excludedModular.has(path) &&
-          modularMatchers.get(path)?.(target.applicabilityPath) === true,
-      ),
-    ];
-    [...new Set(ordered)].forEach((path, nativeOrder) => {
+    selected.forEach((path, nativeOrder) => {
       recognitionCount += 1;
       if (recognitionCount > MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1)
         discoveryLimit(

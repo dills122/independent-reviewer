@@ -6,7 +6,11 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 import { captureKiroGuidanceV1 } from "../../src/guidance/kiro-discovery.js";
-import { captureGitSnapshotV1, type ReviewRequestV1 } from "../../src/index.js";
+import {
+  captureGitSnapshotV1,
+  GuidanceCaptureError,
+  type ReviewRequestV1,
+} from "../../src/index.js";
 
 const exec = promisify(execFile);
 
@@ -47,7 +51,7 @@ function request(repositoryPath: string): ReviewRequestV1 {
   };
 }
 
-async function repository(): Promise<string> {
+async function repository(matchingFailure?: "SECRET" | "SIZE"): Promise<string> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "kiro-guidance-"));
   await git(repositoryPath, "init", "--initial-branch=main");
   await git(repositoryPath, "config", "user.name", "Kiro Guidance Test");
@@ -65,11 +69,32 @@ async function repository(): Promise<string> {
   );
   await writeFile(
     join(repositoryPath, ".kiro", "steering", "src.md"),
-    "---\ninclusion: fileMatch\nfileMatchPattern: src/**\n---\n# Source\n",
+    `---\ninclusion: fileMatch\nfileMatchPattern: src/**\n---\n# Source\n${
+      matchingFailure === "SECRET"
+        ? "AKIAABCDEFGHIJKLMNOP\n"
+        : matchingFailure === "SIZE"
+          ? `${"x".repeat(64 * 1024)}\n`
+          : ""
+    }`,
   );
   await writeFile(
     join(repositoryPath, ".kiro", "steering", "test.md"),
     "---\ninclusion: fileMatch\nfileMatchPattern: test/**\n---\n# Test\n",
+  );
+  await writeFile(
+    join(repositoryPath, ".kiro", "steering", "docs-secret.md"),
+    "---\ninclusion: fileMatch\nfileMatchPattern: docs/**\n---\nAKIAABCDEFGHIJKLMNOP\n",
+  );
+  await writeFile(
+    join(repositoryPath, ".kiro", "steering", "config-size.md"),
+    `---\ninclusion: fileMatch\nfileMatchPattern: config/**\n---\n${"x".repeat(64 * 1024)}\n`,
+  );
+  await writeFile(
+    join(repositoryPath, ".kiro", "steering", "assets-utf8.md"),
+    Buffer.concat([
+      Buffer.from("---\ninclusion: fileMatch\nfileMatchPattern: assets/**\n---\n"),
+      Buffer.from([0xff]),
+    ]),
   );
   await writeFile(
     join(repositoryPath, ".kiro", "steering", "manual.md"),
@@ -123,12 +148,26 @@ describe("captureKiroGuidanceV1", () => {
         captured.graph.nodes.some(({ resolvedPath }) => resolvedPath.endsWith("head-only.md")),
         false,
       );
+      for (const path of [
+        ".kiro/steering/docs-secret.md",
+        ".kiro/steering/config-size.md",
+        ".kiro/steering/assets-utf8.md",
+      ]) {
+        assert.equal(
+          captured.graph.nodes.some(({ resolvedPath }) => resolvedPath === path),
+          false,
+        );
+      }
       assert.equal(
         captured.graph.nodes.filter(({ resolvedPath }) => resolvedPath === "docs/shared.md").length,
         1,
       );
       assert.equal(captured.graph.occurrences.length, 1);
       assert.equal(captured.graph.edges.length, 2);
+      for (const bytes of captured.blobs.values()) {
+        assert.ok(bytes.length <= 64 * 1024);
+        assert.doesNotMatch(new TextDecoder("utf-8", { fatal: true }).decode(bytes), /AKIA/);
+      }
       assert.deepEqual(
         captured.graph.diagnostics.map(({ code, path }) => ({ code, path })),
         [
@@ -140,4 +179,28 @@ describe("captureKiroGuidanceV1", () => {
       await rm(repositoryPath, { recursive: true, force: true });
     }
   });
+
+  for (const failure of [
+    { name: "secret content", input: "SECRET", code: "GUIDANCE_SECRET_CONTENT" },
+    { name: "oversized content", input: "SIZE", code: "GUIDANCE_SOURCE_SIZE_LIMIT" },
+  ] as const) {
+    it(`still rejects matching Kiro rules with ${failure.name}`, async () => {
+      const repositoryPath = await repository(failure.input);
+      try {
+        const snapshot = await captureGitSnapshotV1(request(repositoryPath));
+        await assert.rejects(
+          captureKiroGuidanceV1(repositoryPath, snapshot.manifest),
+          (error: unknown) => {
+            assert.ok(error instanceof GuidanceCaptureError);
+            assert.equal(error.code, failure.code);
+            assert.equal(error.path, ".kiro/steering/src.md");
+            assert.doesNotMatch(error.message, /AKIAABCDEFGHIJKLMNOP/);
+            return true;
+          },
+        );
+      } finally {
+        await rm(repositoryPath, { recursive: true, force: true });
+      }
+    });
+  }
 });

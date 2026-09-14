@@ -16,8 +16,8 @@ import {
   baseGuidanceBlobMetadataV1,
   GuidanceCaptureError,
   listBaseGuidanceBlobMetadataV1,
+  readBaseGuidanceFrontmatterV1,
   readBaseMarkdownGuidanceSourceV1,
-  readResolvedBaseMarkdownGuidanceSourceV1,
   resolveBaseGuidanceBlobV1,
 } from "./base-markdown-source.js";
 import { resolveClaudeImportPathV1, scanClaudeImportOccurrencesV1 } from "./claude-imports.js";
@@ -102,22 +102,65 @@ export async function captureClaudeGuidanceV1(
     if (metadata) metadataByPath.set(path, metadata);
   }
 
-  const sources = new Map<string, Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>>>();
-  const directSourcesByDiscoveredPath = new Map<
-    string,
-    NonNullable<Awaited<ReturnType<typeof readResolvedBaseMarkdownGuidanceSourceV1>>>
-  >();
+  type ResolvedSourceV1 = NonNullable<Awaited<ReturnType<typeof resolveBaseGuidanceBlobV1>>>;
+  const resolvedByDiscoveredPath = new Map<string, ResolvedSourceV1>();
   const ruleMatchers = new Map<string, ((path: string) => boolean) | undefined>();
   for (const path of [...metadataByPath.keys()].sort()) {
     const metadata = metadataByPath.get(path);
     if (!metadata) throw new Error(`Guidance source ${path} has no BASE metadata.`);
-    const loaded = await readResolvedBaseMarkdownGuidanceSourceV1(
+    const resolved = await resolveBaseGuidanceBlobV1(
       repositoryPath,
       manifest.source.baseCommit,
       path,
     );
-    if (!loaded) throw new Error(`Guidance source ${path} has no resolved BASE source.`);
-    const { source } = loaded;
+    if (!resolved) throw new Error(`Guidance source ${path} has no resolved BASE source.`);
+    resolvedByDiscoveredPath.set(path, resolved);
+    if (rules.includes(path)) {
+      const { paths } = parseGuidanceFrontmatterV1(
+        path,
+        await readBaseGuidanceFrontmatterV1(
+          repositoryPath,
+          resolved.resolvedPath,
+          resolved.metadata,
+        ),
+      );
+      ruleMatchers.set(path, paths ? compileGuidancePatternsV1(path, paths) : undefined);
+    }
+  }
+
+  const selectPathsForTarget = (targetId: string, applicabilityPath: string): string[] => {
+    const ordered = [
+      ...(candidatesByTarget.get(targetId) ?? []).filter((path) =>
+        resolvedByDiscoveredPath.has(path),
+      ),
+      ...(resolvedByDiscoveredPath.has(DOT_CLAUDE_PATH_V1) ? [DOT_CLAUDE_PATH_V1] : []),
+      ...rules.filter((path) => {
+        if (!resolvedByDiscoveredPath.has(path)) return false;
+        const matcher = ruleMatchers.get(path);
+        return matcher ? matcher(applicabilityPath) : true;
+      }),
+    ];
+    return [...new Set(ordered)];
+  };
+  const selectedPaths = new Set<string>();
+  for (const target of targets) {
+    for (const path of selectPathsForTarget(target.targetId, target.applicabilityPath))
+      selectedPaths.add(path);
+  }
+
+  const sources = new Map<string, Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>>>();
+  const directSourcesByDiscoveredPath = new Map<
+    string,
+    { resolvedPath: string; source: Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>> }
+  >();
+  for (const path of [...selectedPaths].sort()) {
+    const resolved = resolvedByDiscoveredPath.get(path);
+    if (!resolved) throw new Error(`Selected guidance source ${path} was not resolved.`);
+    const source = await readBaseMarkdownGuidanceSourceV1(
+      repositoryPath,
+      resolved.resolvedPath,
+      resolved.metadata,
+    );
     if (source.content.trim().length === 0) {
       session.addDiagnostic(
         createGuidanceDiagnosticV1({
@@ -130,28 +173,15 @@ export async function captureClaudeGuidanceV1(
       );
       continue;
     }
-    sources.set(loaded.resolvedPath, source);
-    directSourcesByDiscoveredPath.set(path, loaded);
-    if (rules.includes(path)) {
-      const { paths } = parseGuidanceFrontmatterV1(path, source.content);
-      ruleMatchers.set(path, paths ? compileGuidancePatternsV1(path, paths) : undefined);
-    }
+    sources.set(resolved.resolvedPath, source);
+    directSourcesByDiscoveredPath.set(path, { resolvedPath: resolved.resolvedPath, source });
   }
   const directSources = new Map<string, DirectGuidanceSourceInputV1>();
   let recognitionCount = 0;
   for (const target of targets) {
-    const ordered = [
-      ...(candidatesByTarget.get(target.targetId) ?? []).filter((path) =>
-        directSourcesByDiscoveredPath.has(path),
-      ),
-      ...(directSourcesByDiscoveredPath.has(DOT_CLAUDE_PATH_V1) ? [DOT_CLAUDE_PATH_V1] : []),
-      ...rules.filter((path) => {
-        if (!directSourcesByDiscoveredPath.has(path)) return false;
-        const matcher = ruleMatchers.get(path);
-        return matcher ? matcher(target.applicabilityPath) : true;
-      }),
-    ];
-    const selected = [...new Set(ordered)];
+    const selected = selectPathsForTarget(target.targetId, target.applicabilityPath).filter(
+      (path) => directSourcesByDiscoveredPath.has(path),
+    );
     selected.forEach((path, nativeOrder) => {
       recognitionCount += 1;
       if (recognitionCount > MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1)
