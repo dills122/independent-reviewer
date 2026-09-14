@@ -6,7 +6,12 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 
-import { decodeGitText, runGit } from "../../src/snapshot/git-command.js";
+import {
+  decodeGitText,
+  runGit,
+  runGitNulRecords,
+  runGitStdoutPrefix,
+} from "../../src/snapshot/git-command.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,6 +22,42 @@ async function createRepository(): Promise<string> {
 }
 
 describe("runGit", () => {
+  it("streams NUL records and stops an active producer when the consumer rejects overflow", async () => {
+    const repositoryPath = await createRepository();
+    const records: string[] = [];
+    const startedAt = Date.now();
+    try {
+      await assert.rejects(
+        runGitNulRecords(
+          repositoryPath,
+          ["-c", "alias.records=!while :; do printf '%s\\0' one two three; done", "records"],
+          (record) => {
+            records.push(record.toString("utf8"));
+            if (records.length === 3) throw new Error("record limit reached");
+          },
+          5_000,
+        ),
+        /record limit reached/,
+      );
+      assert.deepEqual(records, ["one", "two", "three"]);
+      assert.ok(Date.now() - startedAt < 2_000, "producer did not stop promptly");
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("returns only the requested stdout prefix", async () => {
+    const repositoryPath = await createRepository();
+    try {
+      assert.equal(
+        (await runGitStdoutPrefix(repositoryPath, ["version"], 3)).toString("ascii"),
+        "git",
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("rejects with a timeout diagnostic when Git does not finish in time", async () => {
     const repositoryPath = await createRepository();
     try {

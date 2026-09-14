@@ -678,12 +678,15 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
       inspected.guidanceGraph?.nodes.map(({ resolvedPath }) => resolvedPath).sort(),
       [".independent-reviewer/rules.md", "AGENTS.md", "CLAUDE.md", "docs/review-guidance.md"],
     );
-    assert.equal(inspected.guidanceGraph?.occurrences.length, 1);
+    assert.deepEqual(inspected.guidanceGraph?.occurrences.map(({ familyId }) => familyId).sort(), [
+      "CLAUDE",
+      "COPILOT",
+    ]);
     const claudeRoot = inspected.guidanceGraph?.nodes.find(
       ({ resolvedPath }) => resolvedPath === "CLAUDE.md",
     );
     assert.ok(claudeRoot);
-    assert.equal(inspected.guidanceGraph?.edges.length, claudeRoot.applicableTargetIds.length);
+    assert.equal(inspected.guidanceGraph?.edges.length, 2 * claudeRoot.applicableTargetIds.length);
     assert.match(JSON.stringify(requests[0]?.messages), /Never hide a fallback/);
     assert.match(JSON.stringify(requests[0]?.messages), /Keep error paths explicit/);
     assert.match(JSON.stringify(requests[0]?.messages), /Preserve retry state transitions/);

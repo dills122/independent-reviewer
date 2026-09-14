@@ -7,6 +7,11 @@ import {
 } from "../contracts/index.js";
 import { captureClaudeGuidanceV1 } from "./claude-discovery.js";
 import { captureCodexGuidanceV1 } from "./codex-discovery.js";
+import { captureCopilotGuidanceV1 } from "./copilot-discovery.js";
+import { captureCursorGuidanceV1 } from "./cursor-discovery.js";
+import { createGuidanceDiscoverySessionV1 } from "./discovery-capacity.js";
+import { captureGeminiGuidanceV1 } from "./gemini-discovery.js";
+import { captureKiroGuidanceV1 } from "./kiro-discovery.js";
 import { captureReviewerRulesGuidanceV1 } from "./reviewer-rules.js";
 
 export interface CapturedRepositoryGuidanceV1 {
@@ -19,10 +24,15 @@ export async function captureRepositoryGuidanceV1(
   repositoryPath: string,
   manifest: SnapshotManifestV1,
 ): Promise<CapturedRepositoryGuidanceV1> {
+  const session = createGuidanceDiscoverySessionV1(manifest);
   const captures = [
-    await captureCodexGuidanceV1(repositoryPath, manifest),
-    await captureClaudeGuidanceV1(repositoryPath, manifest),
-    await captureReviewerRulesGuidanceV1(repositoryPath, manifest),
+    await captureCodexGuidanceV1(repositoryPath, manifest, session),
+    await captureClaudeGuidanceV1(repositoryPath, manifest, session),
+    await captureGeminiGuidanceV1(repositoryPath, manifest, session),
+    await captureKiroGuidanceV1(repositoryPath, manifest, session),
+    await captureCopilotGuidanceV1(repositoryPath, manifest, session),
+    await captureCursorGuidanceV1(repositoryPath, manifest, session),
+    await captureReviewerRulesGuidanceV1(repositoryPath, manifest, session),
   ];
   const sources: DirectGuidanceSourceInputV1[] = captures.flatMap(({ graph }) =>
     graph.nodes.map(({ resolvedPath, contentDigest, directRecognitions }) => ({
@@ -69,12 +79,7 @@ export async function captureRepositoryGuidanceV1(
     }
   }
   return {
-    graph: buildGuidanceGraphV1(
-      manifest,
-      sources,
-      imports,
-      captures.flatMap(({ graph }) => graph.diagnostics),
-    ),
+    graph: buildGuidanceGraphV1(manifest, sources, imports, session.finalizeDiagnostics()),
     blobs,
   };
 }

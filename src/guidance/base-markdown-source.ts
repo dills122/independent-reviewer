@@ -5,7 +5,7 @@ import { unified } from "unified";
 
 import { type DigestV1, SnapshotPathV1Schema, sha256BytesDigestV1 } from "../contracts/index.js";
 import { isSecretPathV1, secretContentScanV1 } from "../snapshot/git-capture.js";
-import { runGit } from "../snapshot/git-command.js";
+import { runGit, runGitNulRecords, runGitStdoutPrefix } from "../snapshot/git-command.js";
 
 export const MAX_GUIDANCE_SOURCE_BYTES_V1 = 64 * 1024;
 
@@ -59,6 +59,16 @@ export interface BaseMarkdownGuidanceSourceV1 {
 export interface ResolvedBaseGuidanceBlobV1 {
   resolvedPath: string;
   metadata: BaseGuidanceBlobMetadataV1;
+}
+
+export interface ResolvedBaseMarkdownGuidanceSourceV1 {
+  resolvedPath: string;
+  source: BaseMarkdownGuidanceSourceV1;
+}
+
+export interface ListBaseGuidanceBlobMetadataOptionsV1 {
+  include?: (path: string) => boolean;
+  maximumEntries?: number;
 }
 
 const MAX_GUIDANCE_SYMLINKS_V1 = 16;
@@ -209,19 +219,109 @@ export async function listBaseGuidanceBlobMetadataV1(
   repositoryPath: string,
   baseCommit: string,
   path: string,
+  options: ListBaseGuidanceBlobMetadataOptionsV1 = {},
 ): Promise<ReadonlyMap<string, BaseGuidanceBlobMetadataV1>> {
-  const listing = await runGit(
+  const metadata = new Map<string, BaseGuidanceBlobMetadataV1>();
+  await runGitNulRecords(
     repositoryPath,
     ["ls-tree", "-r", "-z", baseCommit, "--", path],
-    [0],
+    (recordBytes) => {
+      let record: string;
+      try {
+        record = new TextDecoder("utf-8", { fatal: true }).decode(recordBytes);
+      } catch {
+        throw new GuidanceCaptureError(
+          "GUIDANCE_UNSUPPORTED_KIND",
+          path,
+          `${path} has invalid UTF-8 in BASE tree metadata.`,
+        );
+      }
+      const parsed = parseBaseBlobMetadataRecordV1(record);
+      if (options.include && !options.include(parsed.path)) return;
+      if (
+        options.maximumEntries !== undefined &&
+        !metadata.has(parsed.path) &&
+        metadata.size >= options.maximumEntries
+      ) {
+        throw new GuidanceCaptureError(
+          "GUIDANCE_DISCOVERY_LIMIT_EXCEEDED",
+          path,
+          `Guidance discovery limit exceeded: more than ${options.maximumEntries} matching BASE entries were enumerated.`,
+        );
+      }
+      metadata.set(parsed.path, parsed.metadata);
+    },
   );
-  const metadata = new Map<string, BaseGuidanceBlobMetadataV1>();
-  for (const record of listing.stdout.toString("utf8").split("\0")) {
-    if (record.length === 0) continue;
-    const parsed = parseBaseBlobMetadataRecordV1(record);
-    metadata.set(parsed.path, parsed.metadata);
-  }
   return metadata;
+}
+
+function leadingFrontmatterByteEnd(bytes: Uint8Array, maximumBytes: number): number {
+  const startsWithMarker =
+    bytes[0] === 0x2d &&
+    bytes[1] === 0x2d &&
+    bytes[2] === 0x2d &&
+    (bytes[3] === 0x0a || (bytes[3] === 0x0d && bytes[4] === 0x0a));
+  if (!startsWithMarker) return 0;
+  let lineStart = bytes[3] === 0x0a ? 4 : 5;
+  const scanEnd = Math.min(bytes.length, maximumBytes + 1);
+  while (lineStart < scanEnd) {
+    let lineEnd = lineStart;
+    while (lineEnd < scanEnd && bytes[lineEnd] !== 0x0a) lineEnd += 1;
+    const contentEnd = lineEnd > lineStart && bytes[lineEnd - 1] === 0x0d ? lineEnd - 1 : lineEnd;
+    const isDelimiter =
+      contentEnd - lineStart === 3 &&
+      ((bytes[lineStart] === 0x2d &&
+        bytes[lineStart + 1] === 0x2d &&
+        bytes[lineStart + 2] === 0x2d) ||
+        (bytes[lineStart] === 0x2e &&
+          bytes[lineStart + 1] === 0x2e &&
+          bytes[lineStart + 2] === 0x2e));
+    if (isDelimiter) return Math.min(lineEnd + 1, bytes.length);
+    lineStart = lineEnd + 1;
+  }
+  return Math.min(bytes.length, maximumBytes + 1);
+}
+
+/** Reads only leading metadata semantics; body bytes receive no secret or source admission. */
+export async function readBaseGuidanceFrontmatterV1(
+  repositoryPath: string,
+  path: string,
+  metadata: BaseGuidanceBlobMetadataV1,
+  maximumBytes = 16 * 1024,
+): Promise<string> {
+  if (metadata.kind !== "blob" || (metadata.mode !== "100644" && metadata.mode !== "100755")) {
+    throw new GuidanceCaptureError(
+      "GUIDANCE_UNSUPPORTED_KIND",
+      path,
+      `${path} is not a supported BASE regular file.`,
+    );
+  }
+  const sizeResult = await runGit(repositoryPath, ["cat-file", "-s", metadata.objectId]);
+  const byteLength = Number(sizeResult.stdout.toString("ascii").trim());
+  if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
+    throw new GuidanceCaptureError(
+      "GUIDANCE_UNSUPPORTED_KIND",
+      path,
+      `${path} has invalid BASE object size.`,
+    );
+  }
+  const prefixLength = Math.min(byteLength, maximumBytes + 1);
+  const bytes = await runGitStdoutPrefix(
+    repositoryPath,
+    ["cat-file", "blob", metadata.objectId],
+    prefixLength,
+  );
+  const end = leadingFrontmatterByteEnd(bytes, maximumBytes);
+  if (end === 0) return "";
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, end));
+  } catch {
+    throw new GuidanceCaptureError(
+      "GUIDANCE_INVALID_UTF8",
+      path,
+      `${path} has invalid UTF-8 in its leading guidance metadata.`,
+    );
+  }
 }
 
 /** Reads, secret-checks, and parses one already-selected frozen BASE Markdown source. */
@@ -307,4 +407,22 @@ export async function readBaseMarkdownGuidanceSourceV1(
     );
   }
   return { bytes, content, contentDigest: sha256BytesDigestV1(bytes) };
+}
+
+/** Resolves one direct frozen-BASE candidate, then applies complete source admission. */
+export async function readResolvedBaseMarkdownGuidanceSourceV1(
+  repositoryPath: string,
+  baseCommit: string,
+  discoveredPath: string,
+): Promise<ResolvedBaseMarkdownGuidanceSourceV1 | undefined> {
+  const resolved = await resolveBaseGuidanceBlobV1(repositoryPath, baseCommit, discoveredPath);
+  if (!resolved) return undefined;
+  return {
+    resolvedPath: resolved.resolvedPath,
+    source: await readBaseMarkdownGuidanceSourceV1(
+      repositoryPath,
+      resolved.resolvedPath,
+      resolved.metadata,
+    ),
+  };
 }

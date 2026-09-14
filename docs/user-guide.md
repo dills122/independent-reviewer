@@ -407,11 +407,14 @@ whole packet to a public issue without reviewing every file.
 Requirements-mode packets can be checked without exposing author content:
 
 ```sh
-node dist/src/cli.js inspect --packet /path/to/packet
-node dist/src/cli.js inspect --packet /path/to/packet --json
+node dist/src/cli.js inspect --packet /path/to/packet --repo /path/to/target-repository
+node dist/src/cli.js inspect --packet /path/to/packet --repo /path/to/target-repository --json
 ```
 
-`inspect` reports whether an author packet exists, never its content.
+`inspect` reports whether an author packet exists, never its content. `--repo`
+defaults to current directory. Packets containing imported repository guidance
+require a checkout containing frozen BASE commit so inspection can re-resolve
+each import before accepting persisted destination.
 
 ## Final-stage retry
 
@@ -421,6 +424,7 @@ provider failure, use the same packet and exact same configuration:
 ```sh
 node --env-file=.env dist/src/cli.js resume-final \
   --packet /path/to/packet \
+  --repo /path/to/target-repository \
   --config /absolute/path/to/review-config.json
 ```
 

@@ -53,7 +53,7 @@ function request(repositoryPath: string): ReviewRequestV1 {
   };
 }
 
-async function repository(): Promise<string> {
+async function repository(matchingFailure?: "SECRET" | "SIZE"): Promise<string> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "claude-guidance-"));
   await git(repositoryPath, "init", "--initial-branch=main");
   await git(repositoryPath, "config", "user.name", "Claude Guidance Test");
@@ -76,7 +76,15 @@ async function repository(): Promise<string> {
   await writeFile(join(repositoryPath, ".claude", "rules", "all.md"), "# All\n");
   await writeFile(
     join(repositoryPath, ".claude", "rules", "docs.md"),
-    "---\npaths: [docs/**]\n---\n# Documentation rule\n",
+    "---\npaths: [docs/**]\n---\n# Non-matching secret\n\nAKIAABCDEFGHIJKLMNOP\n",
+  );
+  await writeFile(
+    join(repositoryPath, ".claude", "rules", "config.md"),
+    `---\npaths: [config/**]\n---\n# Non-matching oversized rule\n${"x".repeat(64 * 1024)}\n`,
+  );
+  await writeFile(
+    join(repositoryPath, ".claude", "rules", "assets.md"),
+    Buffer.concat([Buffer.from("---\npaths: [assets/**]\n---\n"), Buffer.from([0xff])]),
   );
   await writeFile(
     join(repositoryPath, ".claude", "rules", "ignored.txt"),
@@ -84,7 +92,13 @@ async function repository(): Promise<string> {
   );
   await writeFile(
     join(repositoryPath, ".claude", "rules", "src.md"),
-    "---\npaths: [src/**]\n---\n# Source rule\n",
+    `---\npaths: [src/**]\n---\n# Source rule\n${
+      matchingFailure === "SECRET"
+        ? "AKIAABCDEFGHIJKLMNOP\n"
+        : matchingFailure === "SIZE"
+          ? `${"x".repeat(64 * 1024)}\n`
+          : ""
+    }`,
   );
   await writeFile(
     join(repositoryPath, ".claude", "rules", "tests.md"),
@@ -133,8 +147,22 @@ describe("captureClaudeGuidanceV1", () => {
       ]);
       assert.equal(captured.graph.nodes.length, 9);
       assert.equal(captured.blobs.size, 9);
+      for (const path of [
+        ".claude/rules/docs.md",
+        ".claude/rules/config.md",
+        ".claude/rules/assets.md",
+      ]) {
+        assert.equal(
+          captured.graph.nodes.some(({ resolvedPath }) => resolvedPath === path),
+          false,
+        );
+      }
       assert.equal(captured.graph.occurrences.length, 3);
       assert.equal(captured.graph.edges.length, 6);
+      for (const bytes of captured.blobs.values()) {
+        assert.ok(bytes.length <= 64 * 1024);
+        assert.doesNotMatch(new TextDecoder("utf-8", { fatal: true }).decode(bytes), /AKIA/);
+      }
       for (const path of ["docs/shared.md", "config/nested.md", "common.md"]) {
         const imported = captured.graph.nodes.find(({ resolvedPath }) => resolvedPath === path);
         assert.ok(imported);
@@ -143,13 +171,45 @@ describe("captureClaudeGuidanceV1", () => {
       }
 
       const combined = await captureRepositoryGuidanceV1(repositoryPath, snapshot.manifest);
-      assert.equal(combined.graph.occurrences.length, 3);
-      assert.equal(combined.graph.edges.length, 6);
-      assert.deepEqual(combined.graph, captured.graph);
+      assert.equal(combined.graph.occurrences.length, 6);
+      assert.equal(combined.graph.edges.length, 12);
+      assert.deepEqual(
+        combined.graph.occurrences.reduce<Record<string, number>>((counts, occurrence) => {
+          counts[occurrence.familyId] = (counts[occurrence.familyId] ?? 0) + 1;
+          return counts;
+        }, {}),
+        { CLAUDE: 3, COPILOT: 3 },
+      );
+      assert.equal(combined.graph.nodes.length, captured.graph.nodes.length);
+      assert.equal(combined.blobs.size, captured.blobs.size);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
   });
+
+  for (const failure of [
+    { name: "secret content", input: "SECRET", code: "GUIDANCE_SECRET_CONTENT" },
+    { name: "oversized content", input: "SIZE", code: "GUIDANCE_SOURCE_SIZE_LIMIT" },
+  ] as const) {
+    it(`still rejects matching Claude rules with ${failure.name}`, async () => {
+      const repositoryPath = await repository(failure.input);
+      try {
+        const snapshot = await captureGitSnapshotV1(request(repositoryPath));
+        await assert.rejects(
+          captureClaudeGuidanceV1(repositoryPath, snapshot.manifest),
+          (error: unknown) => {
+            assert.ok(error instanceof GuidanceCaptureError);
+            assert.equal(error.code, failure.code);
+            assert.equal(error.path, ".claude/rules/src.md");
+            assert.doesNotMatch(error.message, /AKIAABCDEFGHIJKLMNOP/);
+            return true;
+          },
+        );
+      } finally {
+        await rm(repositoryPath, { recursive: true, force: true });
+      }
+    });
+  }
 
   it("fails closed on malformed recognized rule frontmatter", async () => {
     const repositoryPath = await repository();
@@ -295,6 +355,59 @@ describe("captureClaudeGuidanceV1", () => {
         true,
       );
       assert.equal(captured.graph.occurrences.length, 2);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves direct BASE file and rule symlinks before parsing and import traversal", async () => {
+    const repositoryPath = await repository();
+    try {
+      await git(repositoryPath, "add", ".");
+      await git(repositoryPath, "commit", "-m", "feature changes");
+      await git(repositoryPath, "switch", "main");
+      await writeFile(
+        join(repositoryPath, "docs", "direct-claude.md"),
+        "# Direct Claude\n\n@nested-direct.md\n",
+      );
+      await writeFile(join(repositoryPath, "docs", "nested-direct.md"), "# Nested direct\n");
+      await writeFile(
+        join(repositoryPath, "docs", "direct-rule.md"),
+        "---\npaths: [src/**]\n---\n# Direct rule\n",
+      );
+      await rm(join(repositoryPath, "CLAUDE.md"));
+      await symlink("docs/direct-claude.md", join(repositoryPath, "CLAUDE.md"));
+      await symlink(
+        "../../docs/direct-rule.md",
+        join(repositoryPath, ".claude", "rules", "linked.md"),
+      );
+      await git(repositoryPath, "add", ".");
+      await git(repositoryPath, "commit", "-m", "symlink direct Claude guidance");
+      await git(repositoryPath, "switch", "feature/claude-guidance");
+      await git(repositoryPath, "merge", "main", "--no-edit");
+      await writeFile(join(repositoryPath, "src/lib/code.ts"), "export const value = 3;\n");
+
+      const snapshot = await captureGitSnapshotV1(request(repositoryPath));
+      const captured = await captureClaudeGuidanceV1(repositoryPath, snapshot.manifest);
+      const direct = captured.graph.nodes.find(
+        ({ resolvedPath }) => resolvedPath === "docs/direct-claude.md",
+      );
+      const rule = captured.graph.nodes.find(
+        ({ resolvedPath }) => resolvedPath === "docs/direct-rule.md",
+      );
+      assert.ok(direct);
+      assert.ok(rule);
+      assert.ok(
+        direct.directRecognitions.some(({ discoveredPath }) => discoveredPath === "CLAUDE.md"),
+      );
+      assert.ok(
+        rule.directRecognitions.some(
+          ({ discoveredPath }) => discoveredPath === ".claude/rules/linked.md",
+        ),
+      );
+      assert.ok(
+        captured.graph.nodes.some(({ resolvedPath }) => resolvedPath === "docs/nested-direct.md"),
+      );
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }

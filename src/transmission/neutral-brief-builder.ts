@@ -131,11 +131,15 @@ async function capturedText(
 export async function buildReviewBrief(
   packetPath: string,
   maxInitialEvidenceBytes: number,
+  guidanceRepositoryPath?: string,
 ): Promise<ReviewBrief> {
   if (!Number.isSafeInteger(maxInitialEvidenceBytes) || maxInitialEvidenceBytes < 1) {
     throw new TypeError("maxInitialEvidenceBytes must be a positive safe integer.");
   }
-  const packet = await inspectSnapshotPacket(packetPath);
+  const packet = await inspectSnapshotPacket(packetPath, {
+    ...(guidanceRepositoryPath !== undefined ? { guidanceRepositoryPath } : {}),
+    requireGuidanceImportResolution: true,
+  });
   if (packet.guidanceGraph && !("standards" in packet.canonicalInputs)) {
     throw new Error("Guidance-capable briefs require standards review mode.");
   }

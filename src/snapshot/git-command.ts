@@ -199,6 +199,171 @@ export async function runGit(
   });
 }
 
+/** Streams bounded NUL-delimited Git output without retaining the complete stdout payload. */
+export async function runGitNulRecords(
+  repositoryPath: string,
+  args: readonly string[],
+  onRecord: (record: Buffer) => void,
+  timeoutMs: number = DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+): Promise<void> {
+  const environment = gitEnvironment(await safeDirectories());
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", ["-C", repositoryPath, "--literal-pathspecs", ...args], {
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: environment,
+    });
+    const stderrChunks: Buffer[] = [];
+    let pending = Buffer.alloc(0);
+    let stdoutLength = 0;
+    let stderrLength = 0;
+    let settled = false;
+    let watchdog: NodeJS.Timeout | undefined;
+
+    const fail = (error: Error, signal: NodeJS.Signals = "SIGTERM"): void => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(watchdog);
+        child.kill(signal);
+        reject(error);
+      }
+    };
+
+    watchdog = setTimeout(() => {
+      fail(new Error(`Git command timed out after ${timeoutMs} ms`), "SIGKILL");
+    }, timeoutMs);
+    watchdog.unref();
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      stdoutLength += chunk.length;
+      if (stdoutLength > MAX_GIT_OUTPUT_BYTES) {
+        fail(new Error("Git output exceeded the capture limit"));
+        return;
+      }
+      const available = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
+      let recordStart = 0;
+      while (!settled) {
+        const recordEnd = available.indexOf(0, recordStart);
+        if (recordEnd === -1) break;
+        try {
+          onRecord(available.subarray(recordStart, recordEnd));
+        } catch (error) {
+          fail(error instanceof Error ? error : new Error(String(error)));
+          return;
+        }
+        recordStart = recordEnd + 1;
+      }
+      if (!settled) pending = Buffer.from(available.subarray(recordStart));
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      stderrLength += chunk.length;
+      if (stderrLength > MAX_GIT_OUTPUT_BYTES) {
+        fail(new Error("Git diagnostic output exceeded the capture limit"));
+        return;
+      }
+      stderrChunks.push(chunk);
+    });
+    child.on("error", (error: Error) => fail(error));
+    child.on("close", (exitCode) => {
+      if (settled) return;
+      if (exitCode !== 0) {
+        const diagnostic = Buffer.concat(stderrChunks).toString("utf8").trim();
+        fail(new Error(diagnostic || `Git exited with status ${exitCode ?? -1}`));
+        return;
+      }
+      if (pending.length !== 0) {
+        fail(new Error("Git output ended without a NUL record delimiter"));
+        return;
+      }
+      settled = true;
+      clearTimeout(watchdog);
+      resolve();
+    });
+  });
+}
+
+/** Runs Git and returns exactly a bounded stdout prefix, stopping the producer once filled. */
+export async function runGitStdoutPrefix(
+  repositoryPath: string,
+  args: readonly string[],
+  byteCount: number,
+  timeoutMs: number = DEFAULT_GIT_COMMAND_TIMEOUT_MS,
+): Promise<Buffer> {
+  if (!Number.isSafeInteger(byteCount) || byteCount < 0 || byteCount > MAX_GIT_OUTPUT_BYTES) {
+    throw new Error("Git stdout prefix byte count is invalid");
+  }
+  if (byteCount === 0) return Buffer.alloc(0);
+  const environment = gitEnvironment(await safeDirectories());
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", ["-C", repositoryPath, "--literal-pathspecs", ...args], {
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: environment,
+    });
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
+    let stdoutLength = 0;
+    let stderrLength = 0;
+    let settled = false;
+    let watchdog: NodeJS.Timeout | undefined;
+
+    const fail = (error: Error, signal: NodeJS.Signals = "SIGTERM"): void => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(watchdog);
+        child.kill(signal);
+        reject(error);
+      }
+    };
+    const complete = (): void => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(watchdog);
+        child.kill("SIGTERM");
+        resolve(Buffer.concat(stdoutChunks, byteCount));
+      }
+    };
+
+    watchdog = setTimeout(() => {
+      fail(new Error(`Git command timed out after ${timeoutMs} ms`), "SIGKILL");
+    }, timeoutMs);
+    watchdog.unref();
+
+    child.stdout.on("data", (chunk: Buffer) => {
+      const remaining = byteCount - stdoutLength;
+      if (remaining <= 0) return;
+      const admitted = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
+      stdoutChunks.push(admitted);
+      stdoutLength += admitted.length;
+      if (stdoutLength === byteCount) complete();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderrLength += chunk.length;
+      if (stderrLength > MAX_GIT_OUTPUT_BYTES) {
+        fail(new Error("Git diagnostic output exceeded the capture limit"));
+        return;
+      }
+      stderrChunks.push(chunk);
+    });
+    child.on("error", (error: Error) => fail(error));
+    child.on("close", (exitCode) => {
+      if (settled) return;
+      if (exitCode !== 0) {
+        const diagnostic = Buffer.concat(stderrChunks).toString("utf8").trim();
+        fail(new Error(diagnostic || `Git exited with status ${exitCode ?? -1}`));
+        return;
+      }
+      if (stdoutLength !== byteCount) {
+        fail(new Error(`Git produced ${stdoutLength} bytes; expected ${byteCount}`));
+        return;
+      }
+      complete();
+    });
+  });
+}
+
 export function decodeGitText(bytes: Uint8Array): string {
   return new TextDecoder("utf-8", { fatal: true }).decode(bytes).trim();
 }

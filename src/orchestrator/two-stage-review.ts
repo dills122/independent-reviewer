@@ -2031,16 +2031,27 @@ function prepareReviewCalls(
 }
 
 /** Uses the same admission calculation as execution, without constructing a provider. */
-export async function preflightReview(packetPath: string, configValue: unknown) {
+export async function preflightReview(
+  packetPath: string,
+  configValue: unknown,
+  guidanceRepositoryPath?: string,
+) {
   const config = ReviewRunConfigV3Schema.parse(configValue);
-  const packet = await inspectSnapshotPacket(packetPath);
+  const packet = await inspectSnapshotPacket(packetPath, {
+    ...(guidanceRepositoryPath !== undefined ? { guidanceRepositoryPath } : {}),
+    requireGuidanceImportResolution: true,
+  });
   if (!packet.authorPacket)
     throw new Error("An author packet is required for the two-stage review.");
   if (packet.reviewConfigRef !== config.configId)
     throw new Error("Review configuration does not match packet.");
   if (!packet.manifest.paths.length)
     throw new Error("The snapshot contains no changed paths to review.");
-  const brief = await buildReviewBrief(packetPath, config.budgets.maxInitialEvidenceBytes);
+  const brief = await buildReviewBrief(
+    packetPath,
+    config.budgets.maxInitialEvidenceBytes,
+    guidanceRepositoryPath,
+  );
   const plan = planReviewUnitsV1(brief, packet.contextMap, {
     policyVersion: REVIEW_UNIT_POLICY_VERSION_V1,
     maxSupportingBytesPerUnit: config.budgets.maxInitialEvidenceBytes,
@@ -2068,9 +2079,13 @@ export async function runTwoStageReview(
   packetPath: string,
   configValue: unknown,
   provider: ReviewProviderV1,
+  guidanceRepositoryPath?: string,
 ): Promise<TwoStageReviewResult> {
   const config = ReviewRunConfigV3Schema.parse(configValue);
-  const packet = await inspectSnapshotPacket(packetPath);
+  const packet = await inspectSnapshotPacket(packetPath, {
+    ...(guidanceRepositoryPath !== undefined ? { guidanceRepositoryPath } : {}),
+    requireGuidanceImportResolution: true,
+  });
   if (packet.manifest.paths.length === 0) {
     throw new Error("The snapshot contains no changed paths to review.");
   }
@@ -2082,7 +2097,11 @@ export async function runTwoStageReview(
       `Review config ${config.configId} does not match packet reference ${packet.reviewConfigRef}.`,
     );
   }
-  const brief = await buildReviewBrief(packetPath, config.budgets.maxInitialEvidenceBytes);
+  const brief = await buildReviewBrief(
+    packetPath,
+    config.budgets.maxInitialEvidenceBytes,
+    guidanceRepositoryPath,
+  );
   const plan = planReviewUnitsV1(brief, packet.contextMap, {
     policyVersion: REVIEW_UNIT_POLICY_VERSION_V1,
     maxSupportingBytesPerUnit: config.budgets.maxInitialEvidenceBytes,
@@ -2421,9 +2440,13 @@ export async function resumeFinalReview(
   packetPath: string,
   configValue: unknown,
   provider: ReviewProviderV1,
+  guidanceRepositoryPath?: string,
 ): Promise<TwoStageReviewResult> {
   const config = ReviewRunConfigV3Schema.parse(configValue);
-  const packet = await inspectSnapshotPacket(packetPath);
+  const packet = await inspectSnapshotPacket(packetPath, {
+    ...(guidanceRepositoryPath !== undefined ? { guidanceRepositoryPath } : {}),
+    requireGuidanceImportResolution: true,
+  });
   if (!packet.authorPacket) {
     throw new Error("An author packet is required to resume the final review stage.");
   }
@@ -2505,7 +2528,11 @@ export async function resumeFinalReview(
     throw new Error("The persisted neutral review brief identity is invalid.");
   }
   const brief = ReviewBriefSchema.parse(briefValue);
-  const rebuiltBrief = await buildReviewBrief(packetPath, config.budgets.maxInitialEvidenceBytes);
+  const rebuiltBrief = await buildReviewBrief(
+    packetPath,
+    config.budgets.maxInitialEvidenceBytes,
+    guidanceRepositoryPath,
+  );
   if (
     JSON.stringify(brief) !== JSON.stringify(rebuiltBrief) ||
     JSON.stringify(started?.snapshotDigest) !==

@@ -736,15 +736,18 @@ The initial command families remain:
 
 ```text
 independent-reviewer prepare --request <path> [--base <ref>]
-independent-reviewer inspect --packet <path>
+independent-reviewer inspect --packet <path> [--repo <path>]
 independent-reviewer review --request <path> --config <path> [--base <ref>] [--output <path>]
-independent-reviewer resume-final --packet <path> --config <path>
+independent-reviewer resume-final --packet <path> [--repo <path>] --config <path>
 ```
 
 `prepare` performs no provider call. It now writes packet metadata, the
 manifest, canonical inputs, optional author packet, and content-addressed blobs
-as separate private files. `inspect` verifies the manifest and every referenced blob before showing
-the neutral snapshot; it does not print the separately stored author packet.
+as separate private files. `inspect` verifies manifest and every referenced blob before showing
+neutral snapshot; it does not print separately stored author packet. When guidance graph contains
+imports, CLI inspection, provider entry, and final resume require trusted repository checkout
+(current directory by default for `inspect` and `resume-final`) and re-resolve requested paths,
+symlink chains, destination paths, and content digests from frozen BASE before acceptance.
 Small-change transmission-plan construction fails visibly when the complete
 initial evidence exceeds its configured byte budget. `review` validates the
 request and config, excludes those runner-control files from captured evidence,

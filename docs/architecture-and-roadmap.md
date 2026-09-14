@@ -2,9 +2,9 @@
 
 Status: first local release implemented and exercised with controlled live smoke fixtures.
 Friendly operations implementation is in progress: simple settings, explicit
-reviewer rules, guidance admission, and identity binding are complete; broader
-Codex and Claude harness discovery are implemented; remaining harness adapters,
-inspection/lint, and interactive author input remain pending.
+reviewer rules, guidance admission, identity binding, and Codex, Claude, Gemini,
+Kiro, Copilot, and Cursor harness discovery are complete and provider-free
+qualified; inspection/lint and interactive author input remain pending.
 
 Current milestone: complete friendly reviewer operations using repository
 Markdown steering, steering-budget inspection, and first-class author
@@ -45,9 +45,10 @@ Isolating capture from developer Git configuration is recorded in
 ## Planned operator experience
 
 Current standards mode supports validated profile JSON plus simple model/cost
-settings and BASE-owned `.independent-reviewer/rules.md`. Remaining milestone
-work adds common-harness discovery, steering inspection/lint, and interactive
-author input without weakening or silently changing strict runtime contracts.
+settings, BASE-owned `.independent-reviewer/rules.md`, and common-harness
+discovery. Remaining milestone work adds steering inspection/lint and
+interactive author input without weakening or silently changing strict runtime
+contracts.
 A user selects a supported model and maximum review cost, reuses applicable
 repository Markdown guidance, and supplies an author explanation. The runner
 resolves those inputs into strict versioned runtime artifacts.

@@ -20,20 +20,22 @@ import {
   readBaseMarkdownGuidanceSourceV1,
   resolveBaseGuidanceBlobV1,
 } from "./base-markdown-source.js";
-import { resolveClaudeImportPathV1, scanClaudeImportOccurrencesV1 } from "./claude-imports.js";
 import { compileGuidancePatternsV1 } from "./conditional-patterns.js";
 import {
   createGuidanceDiscoverySessionV1,
   type GuidanceDiscoverySessionV1,
 } from "./discovery-capacity.js";
 import { guidanceAncestorDirectoriesV1, guidancePathInDirectoryV1 } from "./discovery-paths.js";
-import { parseGuidanceFrontmatterV1 } from "./frontmatter.js";
+import { parseKiroSteeringFrontmatterV1 } from "./kiro-frontmatter.js";
+import {
+  resolveKiroFileReferencePathV1,
+  scanKiroFileReferenceOccurrencesV1,
+} from "./kiro-imports.js";
 
-const MAX_GUIDANCE_IMPORT_DEPTH_V1 = 4;
-const DOT_CLAUDE_PATH_V1 = ".claude/CLAUDE.md";
-const CLAUDE_RULES_ROOT_V1 = ".claude/rules";
+const MAX_GUIDANCE_IMPORT_DEPTH_V1 = 5;
+const KIRO_STEERING_ROOT_V1 = ".kiro/steering";
 
-export interface CapturedClaudeGuidanceV1 {
+export interface CapturedKiroGuidanceV1 {
   graph: GuidanceGraphV1;
   blobs: ReadonlyMap<string, Uint8Array>;
 }
@@ -41,7 +43,7 @@ export interface CapturedClaudeGuidanceV1 {
 function discoveryLimit(message: string): never {
   throw new GuidanceCaptureError(
     "GUIDANCE_DISCOVERY_LIMIT_EXCEEDED",
-    "CLAUDE.md",
+    ".kiro/steering",
     `Guidance discovery limit exceeded: ${message}`,
   );
 }
@@ -55,45 +57,45 @@ function importFailure(
     | "GUIDANCE_IMPORT_UNRESOLVED",
   path: string,
 ): never {
-  throw new GuidanceCaptureError(code, path, `${path} has an invalid Claude @path import graph.`);
+  throw new GuidanceCaptureError(code, path, `${path} has an invalid Kiro file-reference graph.`);
 }
 
-/** Discovers directly selected Claude guidance from frozen BASE. */
-export async function captureClaudeGuidanceV1(
+/** Discovers Kiro AGENTS and steering sources from frozen BASE. */
+export async function captureKiroGuidanceV1(
   repositoryPath: string,
   manifest: SnapshotManifestV1,
   session: GuidanceDiscoverySessionV1 = createGuidanceDiscoverySessionV1(manifest),
-): Promise<CapturedClaudeGuidanceV1> {
+): Promise<CapturedKiroGuidanceV1> {
   const targets = session.targets;
 
-  const candidatesByTarget = new Map<string, string[]>();
-  const fixedCandidates = new Set<string>([DOT_CLAUDE_PATH_V1]);
+  const agentsByTarget = new Map<string, string[]>();
+  const agentCandidates = new Set<string>();
   for (const target of targets) {
     const candidates = guidanceAncestorDirectoriesV1(target.applicabilityPath).map((directory) =>
-      guidancePathInDirectoryV1(directory, "CLAUDE.md"),
+      guidancePathInDirectoryV1(directory, "AGENTS.md"),
     );
-    candidatesByTarget.set(target.targetId, candidates);
-    for (const candidate of candidates) fixedCandidates.add(candidate);
+    agentsByTarget.set(target.targetId, candidates);
+    for (const candidate of candidates) agentCandidates.add(candidate);
   }
-  const ruleMetadata = await listBaseGuidanceBlobMetadataV1(
+  const steeringMetadata = await listBaseGuidanceBlobMetadataV1(
     repositoryPath,
     manifest.source.baseCommit,
-    CLAUDE_RULES_ROOT_V1,
+    KIRO_STEERING_ROOT_V1,
     {
       include: (path) => path.endsWith(".md"),
       maximumEntries: MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
     },
   );
-  const rules = [...ruleMetadata.keys()].sort();
-  session.claimDirectCandidates([...fixedCandidates, ...rules]);
+  const steeringPaths = [...steeringMetadata.keys()].sort();
+  session.claimDirectCandidates([...agentCandidates, ...steeringPaths]);
 
   const metadataByPath = new Map<string, BaseGuidanceBlobMetadataV1>();
-  for (const path of rules) {
-    const metadata = ruleMetadata.get(path);
-    if (!metadata) throw new Error(`Claude rule ${path} has no BASE metadata.`);
+  for (const path of steeringPaths) {
+    const metadata = steeringMetadata.get(path);
+    if (!metadata) throw new Error(`Kiro steering source ${path} has no BASE metadata.`);
     metadataByPath.set(path, metadata);
   }
-  for (const path of [...fixedCandidates].sort()) {
+  for (const path of [...agentCandidates].sort()) {
     const metadata = await baseGuidanceBlobMetadataV1(
       repositoryPath,
       manifest.source.baseCommit,
@@ -104,19 +106,21 @@ export async function captureClaudeGuidanceV1(
 
   type ResolvedSourceV1 = NonNullable<Awaited<ReturnType<typeof resolveBaseGuidanceBlobV1>>>;
   const resolvedByDiscoveredPath = new Map<string, ResolvedSourceV1>();
-  const ruleMatchers = new Map<string, ((path: string) => boolean) | undefined>();
+  const steeringMatchers = new Map<string, ((path: string) => boolean) | undefined>();
+  const excludedSteering = new Set<string>();
+  const diagnostics = [];
   for (const path of [...metadataByPath.keys()].sort()) {
     const metadata = metadataByPath.get(path);
-    if (!metadata) throw new Error(`Guidance source ${path} has no BASE metadata.`);
+    if (!metadata) throw new Error(`Kiro guidance ${path} has no BASE metadata.`);
     const resolved = await resolveBaseGuidanceBlobV1(
       repositoryPath,
       manifest.source.baseCommit,
       path,
     );
-    if (!resolved) throw new Error(`Guidance source ${path} has no resolved BASE source.`);
+    if (!resolved) throw new Error(`Kiro guidance ${path} has no resolved BASE source.`);
     resolvedByDiscoveredPath.set(path, resolved);
-    if (rules.includes(path)) {
-      const { paths } = parseGuidanceFrontmatterV1(
+    if (steeringPaths.includes(path)) {
+      const parsed = parseKiroSteeringFrontmatterV1(
         path,
         await readBaseGuidanceFrontmatterV1(
           repositoryPath,
@@ -124,23 +128,41 @@ export async function captureClaudeGuidanceV1(
           resolved.metadata,
         ),
       );
-      ruleMatchers.set(path, paths ? compileGuidancePatternsV1(path, paths) : undefined);
+      if (parsed.inclusion === "manual" || parsed.inclusion === "auto") {
+        excludedSteering.add(path);
+        diagnostics.push(
+          createGuidanceDiagnosticV1({
+            code:
+              parsed.inclusion === "manual"
+                ? "UNSELECTED_MANUAL_MODE"
+                : "UNSELECTED_MODEL_SELECTED_MODE",
+            severity: "EXCLUSION",
+            path,
+            startUtf16: 0,
+            omittedCount: null,
+          }),
+        );
+        continue;
+      }
+      steeringMatchers.set(
+        path,
+        parsed.inclusion === "fileMatch"
+          ? compileGuidancePatternsV1(path, parsed.fileMatchPatterns ?? [])
+          : undefined,
+      );
     }
   }
 
   const selectPathsForTarget = (targetId: string, applicabilityPath: string): string[] => {
-    const ordered = [
-      ...(candidatesByTarget.get(targetId) ?? []).filter((path) =>
-        resolvedByDiscoveredPath.has(path),
-      ),
-      ...(resolvedByDiscoveredPath.has(DOT_CLAUDE_PATH_V1) ? [DOT_CLAUDE_PATH_V1] : []),
-      ...rules.filter((path) => {
-        if (!resolvedByDiscoveredPath.has(path)) return false;
-        const matcher = ruleMatchers.get(path);
-        return matcher ? matcher(applicabilityPath) : true;
-      }),
-    ];
-    return [...new Set(ordered)];
+    const orderedAgents = (agentsByTarget.get(targetId) ?? []).filter((path) =>
+      resolvedByDiscoveredPath.has(path),
+    );
+    const orderedSteering = steeringPaths.filter((path) => {
+      if (excludedSteering.has(path) || !resolvedByDiscoveredPath.has(path)) return false;
+      const matcher = steeringMatchers.get(path);
+      return matcher ? matcher(applicabilityPath) : true;
+    });
+    return [...orderedAgents, ...orderedSteering];
   };
   const selectedPaths = new Set<string>();
   for (const target of targets) {
@@ -155,14 +177,14 @@ export async function captureClaudeGuidanceV1(
   >();
   for (const path of [...selectedPaths].sort()) {
     const resolved = resolvedByDiscoveredPath.get(path);
-    if (!resolved) throw new Error(`Selected guidance source ${path} was not resolved.`);
+    if (!resolved) throw new Error(`Selected Kiro guidance ${path} was not resolved.`);
     const source = await readBaseMarkdownGuidanceSourceV1(
       repositoryPath,
       resolved.resolvedPath,
       resolved.metadata,
     );
     if (source.content.trim().length === 0) {
-      session.addDiagnostic(
+      diagnostics.push(
         createGuidanceDiagnosticV1({
           code: "EMPTY_SOURCE",
           severity: "WARNING",
@@ -176,6 +198,7 @@ export async function captureClaudeGuidanceV1(
     sources.set(resolved.resolvedPath, source);
     directSourcesByDiscoveredPath.set(path, { resolvedPath: resolved.resolvedPath, source });
   }
+
   const directSources = new Map<string, DirectGuidanceSourceInputV1>();
   let recognitionCount = 0;
   for (const target of targets) {
@@ -188,27 +211,23 @@ export async function captureClaudeGuidanceV1(
         discoveryLimit(
           `more than ${MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1} recognitions were produced.`,
         );
-      const loaded = directSourcesByDiscoveredPath.get(path);
-      if (!loaded) throw new Error(`Selected guidance source ${path} was not loaded.`);
-      const input = directSources.get(loaded.resolvedPath) ?? {
-        resolvedPath: loaded.resolvedPath,
-        contentDigest: loaded.source.contentDigest,
+      const direct = directSourcesByDiscoveredPath.get(path);
+      if (!direct) throw new Error(`Selected Kiro guidance ${path} was not loaded.`);
+      const input = directSources.get(direct.resolvedPath) ?? {
+        resolvedPath: direct.resolvedPath,
+        contentDigest: direct.source.contentDigest,
         directRecognitions: [],
       };
       const recognition = {
-        familyId: "CLAUDE",
-        sourceKind: rules.includes(path)
-          ? "CLAUDE_RULE"
-          : path === DOT_CLAUDE_PATH_V1
-            ? "CLAUDE_DOT_CLAUDE_MD"
-            : "CLAUDE_MD",
+        familyId: "KIRO",
+        sourceKind: steeringPaths.includes(path) ? "KIRO_STEERING" : "KIRO_AGENTS",
         nativeOrder,
         applicableTargetId: target.targetId,
         discoveredPath: path,
       } as const;
       session.claimDirectRecognition(input, recognition);
       input.directRecognitions.push(recognition);
-      directSources.set(loaded.resolvedPath, input);
+      directSources.set(direct.resolvedPath, input);
     });
   }
   if (directSources.size > MAX_GUIDANCE_NODES_V1)
@@ -219,7 +238,7 @@ export async function captureClaudeGuidanceV1(
     { input: Omit<GuidanceImportInputV1, "applicableTargetIds">; targetIds: Set<string> }
   >();
   const graphSources = new Map<string, DirectGuidanceSourceInputV1>(directSources);
-  const importScans = new Map<string, ReturnType<typeof scanClaudeImportOccurrencesV1>>();
+  const importScans = new Map<string, ReturnType<typeof scanKiroFileReferenceOccurrencesV1>>();
   let importEdgeCount = 0;
   const loadImportedSource = async (path: string) => {
     const resolved = await resolveBaseGuidanceBlobV1(
@@ -247,25 +266,28 @@ export async function captureClaudeGuidanceV1(
     ancestry: ReadonlySet<string>,
   ): Promise<void> => {
     const importer = sources.get(importerPath);
-    if (!importer) throw new Error(`Claude import source ${importerPath} was not loaded.`);
+    if (!importer) throw new Error(`Kiro import source ${importerPath} was not loaded.`);
     let occurrences = importScans.get(importerPath);
     if (!occurrences) {
-      occurrences = scanClaudeImportOccurrencesV1(importerPath, importer.content);
+      occurrences = scanKiroFileReferenceOccurrencesV1(importerPath, importer.content);
       importScans.set(importerPath, occurrences);
     }
     if (occurrences.length > 0 && depth >= MAX_GUIDANCE_IMPORT_DEPTH_V1)
       importFailure("GUIDANCE_IMPORT_DEPTH_LIMIT", importerPath);
     for (const occurrence of occurrences) {
       const occurrenceKey = session.claimOccurrence({
-        familyId: "CLAUDE",
-        syntaxKind: "CLAUDE_AT_PATH",
+        familyId: "KIRO",
+        syntaxKind: "KIRO_FILE_REFERENCE",
         importerPath,
         importerContentDigest: importer.contentDigest,
         requestedSpecifier: occurrence.requestedSpecifier,
         startUtf16: occurrence.startUtf16,
         endUtf16: occurrence.endUtf16,
       });
-      const requestedPath = resolveClaudeImportPathV1(importerPath, occurrence.requestedSpecifier);
+      const requestedPath = resolveKiroFileReferencePathV1(
+        importerPath,
+        occurrence.requestedSpecifier,
+      );
       const { resolvedPath: importedPath, source: imported } =
         await loadImportedSource(requestedPath);
       if (ancestry.has(importedPath)) importFailure("GUIDANCE_IMPORT_CYCLE", importedPath);
@@ -280,8 +302,8 @@ export async function captureClaudeGuidanceV1(
       ]);
       const accumulated = importTargets.get(key) ?? {
         input: {
-          familyId: "CLAUDE" as const,
-          syntaxKind: "CLAUDE_AT_PATH" as const,
+          familyId: "KIRO" as const,
+          syntaxKind: "KIRO_FILE_REFERENCE" as const,
           importerPath,
           importerContentDigest: importer.contentDigest,
           importedPath,
@@ -309,12 +331,6 @@ export async function captureClaudeGuidanceV1(
       if (importEdgeCount > MAX_GUIDANCE_EDGES_V1)
         importFailure("GUIDANCE_IMPORT_EDGE_LIMIT", importerPath);
       const existingGraphSource = graphSources.get(importedPath);
-      if (
-        existingGraphSource &&
-        existingGraphSource.contentDigest.value !== imported.contentDigest.value
-      ) {
-        throw new Error(`Guidance source ${importedPath} has conflicting BASE content identity.`);
-      }
       graphSources.set(
         importedPath,
         existingGraphSource ?? {
@@ -336,19 +352,17 @@ export async function captureClaudeGuidanceV1(
 
   for (const [path, source] of directSources) {
     const targetIds = source.directRecognitions
-      .filter(({ familyId, sourceKind }) => familyId === "CLAUDE" && sourceKind !== "CLAUDE_RULE")
+      .filter(({ sourceKind }) => sourceKind === "KIRO_STEERING")
       .map(({ applicableTargetId }) => applicableTargetId);
     for (const applicableTargetId of targetIds) {
       await traverseImports(path, applicableTargetId, 0, new Set([path]));
     }
   }
   const imports: GuidanceImportInputV1[] = [...importTargets.values()].map(
-    ({ input, targetIds }) => ({
-      ...input,
-      applicableTargetIds: [...targetIds].sort(),
-    }),
+    ({ input, targetIds }) => ({ ...input, applicableTargetIds: [...targetIds].sort() }),
   );
 
+  for (const diagnostic of diagnostics) session.addDiagnostic(diagnostic);
   return {
     graph: buildGuidanceGraphV1(
       manifest,
@@ -359,7 +373,7 @@ export async function captureClaudeGuidanceV1(
     blobs: new Map(
       [...graphSources.keys()].map((path) => {
         const source = sources.get(path);
-        if (!source) throw new Error(`Applicable guidance source ${path} was not loaded.`);
+        if (!source) throw new Error(`Applicable Kiro guidance ${path} was not loaded.`);
         return [source.contentDigest.value, Uint8Array.from(source.bytes)];
       }),
     ),
