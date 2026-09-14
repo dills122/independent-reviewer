@@ -2,15 +2,18 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 
 import {
+  buildGuidanceGraphV1,
   buildReviewerRulesGuidanceGraphV1,
   captureGitSnapshotV1,
+  captureRepositoryGuidanceV1,
   captureReviewerRulesGuidanceV1,
   finalizeReviewContextMapV1,
+  guidanceGraphDigestV1,
   inspectSnapshotPacketV1,
   type ReviewContextMapIdentityInputV1,
   type ReviewContextMapV1,
@@ -25,7 +28,10 @@ async function git(repositoryPath: string, ...args: string[]): Promise<void> {
   await execFileAsync("git", ["-C", repositoryPath, ...args], { encoding: "utf8" });
 }
 
-async function arrangeCapture(baseRules?: string): Promise<{
+async function arrangeCapture(
+  baseRules?: string,
+  baseGuidanceFiles: Readonly<Record<string, string>> = {},
+): Promise<{
   repositoryPath: string;
   request: ReviewRequestV1;
 }> {
@@ -41,6 +47,10 @@ async function arrangeCapture(baseRules?: string): Promise<{
   if (baseRules !== undefined) {
     await mkdir(join(repositoryPath, ".independent-reviewer"), { recursive: true });
     await writeFile(join(repositoryPath, ".independent-reviewer", "rules.md"), baseRules);
+  }
+  for (const [path, content] of Object.entries(baseGuidanceFiles)) {
+    await mkdir(dirname(join(repositoryPath, path)), { recursive: true });
+    await writeFile(join(repositoryPath, path), content);
   }
   await git(repositoryPath, "add", ".");
   await git(repositoryPath, "commit", "-m", "initial");
@@ -111,6 +121,82 @@ function declarationRange(draft: ReviewContextMapIdentityInputV1) {
 }
 
 describe("snapshot packet store", () => {
+  it("rejects a self-consistent redirected import after frozen-BASE revalidation", async () => {
+    const attackerContent = "# Attacker-selected guidance\n";
+    const { repositoryPath, request } = await arrangeCapture(undefined, {
+      ".kiro/steering/main.md": "# Main\n\n#[[file:../../docs/expected.md]]\n",
+      "docs/expected.md": "# Expected guidance\n",
+      "docs/attacker.md": attackerContent,
+    });
+    const packetPath = join(repositoryPath, ".review-runs", "packet-guidance-import");
+    try {
+      const captured = await captureGitSnapshotV1(request);
+      const guidance = await captureRepositoryGuidanceV1(repositoryPath, captured.manifest);
+      await writeSnapshotPacketV1(packetPath, captured, request, { guidance });
+
+      const importer = guidance.graph.nodes.find(
+        ({ resolvedPath }) => resolvedPath === ".kiro/steering/main.md",
+      );
+      const occurrence = guidance.graph.occurrences.find(({ familyId }) => familyId === "KIRO");
+      assert.ok(importer);
+      assert.ok(occurrence);
+      const attackerDigest = sha256Utf8(attackerContent);
+      const redirected = buildGuidanceGraphV1(
+        captured.manifest,
+        [
+          {
+            resolvedPath: importer.resolvedPath,
+            contentDigest: importer.contentDigest,
+            directRecognitions: importer.directRecognitions,
+          },
+          {
+            resolvedPath: "docs/attacker.md",
+            contentDigest: attackerDigest,
+            directRecognitions: [],
+          },
+        ],
+        [
+          {
+            familyId: "KIRO",
+            syntaxKind: "KIRO_FILE_REFERENCE",
+            importerPath: importer.resolvedPath,
+            importerContentDigest: importer.contentDigest,
+            importedPath: "docs/attacker.md",
+            importedContentDigest: attackerDigest,
+            requestedSpecifier: occurrence.requestedSpecifier,
+            startUtf16: occurrence.startUtf16,
+            endUtf16: occurrence.endUtf16,
+            applicableTargetIds: [
+              ...new Set(
+                importer.directRecognitions.map(({ applicableTargetId }) => applicableTargetId),
+              ),
+            ],
+          },
+        ],
+      );
+      await writeFile(join(packetPath, "guidance-graph.json"), `${JSON.stringify(redirected)}\n`);
+      await writeFile(
+        join(packetPath, "blobs", attackerDigest.value),
+        new TextEncoder().encode(attackerContent),
+      );
+      const metadataPath = join(packetPath, "packet-metadata.json");
+      const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
+      metadata.guidanceGraphDigest = guidanceGraphDigestV1(redirected);
+      await writeFile(metadataPath, `${JSON.stringify(metadata)}\n`);
+
+      await assert.rejects(
+        () =>
+          inspectSnapshotPacketV1(packetPath, {
+            guidanceRepositoryPath: repositoryPath,
+            requireGuidanceImportResolution: true,
+          }),
+        /invalid resolved destination/i,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("writes and verifies a graph-bound reviewer-guidance packet", async () => {
     const { repositoryPath, request } = await arrangeCapture(
       "# Review rules\n\nNo hidden fallback.\n",

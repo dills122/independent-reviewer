@@ -13,6 +13,7 @@ const MAX_PATTERNS_PER_SOURCE_V1 = 64;
 const MAX_PATTERN_BYTES_V1 = 512;
 
 export interface ParsedCursorFrontmatterV1 {
+  mode: "always" | "autoAttached" | "agentRequested" | "manual";
   alwaysApply: boolean;
   globs: string[];
 }
@@ -34,7 +35,10 @@ export function parseCursorFrontmatterV1(path: string, content: string): ParsedC
     invalidFrontmatter(path);
   }
   const first = root.children[0];
-  if (first?.type !== "yaml") return { alwaysApply: false, globs: [] };
+  if (first?.type !== "yaml") {
+    if (/^---(?:\r?\n|$)/u.test(content)) invalidFrontmatter(path);
+    return { mode: "manual", alwaysApply: false, globs: [] };
+  }
   if (first.position?.start.offset !== 0) invalidFrontmatter(path);
   const end = first.position.end.offset;
   if (end === undefined || Buffer.byteLength(content.slice(0, end)) > MAX_FRONTMATTER_BYTES_V1)
@@ -91,5 +95,14 @@ export function parseCursorFrontmatterV1(path: string, content: string): ParsedC
   ) {
     invalidFrontmatter(path);
   }
-  return { alwaysApply, globs };
+  const description = metadata.description;
+  if (description !== undefined && typeof description !== "string") invalidFrontmatter(path);
+  const mode = alwaysApply
+    ? "always"
+    : globs.length > 0
+      ? "autoAttached"
+      : typeof description === "string" && description.trim().length > 0
+        ? "agentRequested"
+        : "manual";
+  return { mode, alwaysApply, globs };
 }

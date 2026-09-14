@@ -7,10 +7,13 @@ import { it } from "node:test";
 import { promisify } from "node:util";
 import { reviewOutcomeExitCodeV1, runCliV1 } from "../src/cli.js";
 import {
+  buildGuidanceGraphV1,
+  guidanceGraphDigestV1,
   ProviderCallError,
   type ReviewProviderRequestV1,
   type ReviewProviderResponseV1,
   type ReviewProviderV1,
+  sha256Utf8,
 } from "../src/index.js";
 import { asFinalCandidateV3 } from "./helpers/final-candidate.js";
 
@@ -19,6 +22,61 @@ const mockDigest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
 
 async function git(repositoryPath: string, ...args: string[]): Promise<void> {
   await execFileAsync("git", ["-C", repositoryPath, ...args], { encoding: "utf8" });
+}
+
+async function redirectKiroImport(packetPath: string): Promise<void> {
+  const graph = JSON.parse(await readFile(join(packetPath, "guidance-graph.json"), "utf8"));
+  const manifest = JSON.parse(await readFile(join(packetPath, "snapshot-manifest.json"), "utf8"));
+  const importer = graph.nodes.find(
+    ({ resolvedPath }: { resolvedPath: string }) => resolvedPath === ".kiro/steering/main.md",
+  );
+  const occurrence = graph.occurrences.find(
+    ({ familyId }: { familyId: string }) => familyId === "KIRO",
+  );
+  assert.ok(importer);
+  assert.ok(occurrence);
+  const redirectedContent = "# Redirected guidance\n";
+  const redirectedDigest = sha256Utf8(redirectedContent);
+  const redirected = buildGuidanceGraphV1(
+    manifest,
+    [
+      {
+        resolvedPath: importer.resolvedPath,
+        contentDigest: importer.contentDigest,
+        directRecognitions: importer.directRecognitions,
+      },
+      {
+        resolvedPath: "docs/attacker.md",
+        contentDigest: redirectedDigest,
+        directRecognitions: [],
+      },
+    ],
+    [
+      {
+        familyId: "KIRO",
+        syntaxKind: "KIRO_FILE_REFERENCE",
+        importerPath: importer.resolvedPath,
+        importerContentDigest: importer.contentDigest,
+        importedPath: "docs/attacker.md",
+        importedContentDigest: redirectedDigest,
+        requestedSpecifier: occurrence.requestedSpecifier,
+        startUtf16: occurrence.startUtf16,
+        endUtf16: occurrence.endUtf16,
+        applicableTargetIds: graph.edges
+          .filter(
+            ({ occurrenceId }: { occurrenceId: string }) =>
+              occurrenceId === occurrence.occurrenceId,
+          )
+          .map(({ applicableTargetId }: { applicableTargetId: string }) => applicableTargetId),
+      },
+    ],
+  );
+  await writeFile(join(packetPath, "guidance-graph.json"), `${JSON.stringify(redirected)}\n`);
+  await writeFile(join(packetPath, "blobs", redirectedDigest.value), redirectedContent);
+  const metadataPath = join(packetPath, "packet-metadata.json");
+  const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
+  metadata.guidanceGraphDigest = guidanceGraphDigestV1(redirected);
+  await writeFile(metadataPath, `${JSON.stringify(metadata)}\n`);
 }
 
 it("prepares and inspects a snapshot packet without a provider call", async () => {
@@ -82,6 +140,111 @@ it("prepares and inspects a snapshot packet without a provider call", async () =
     assert.match(output.join("\n"), /MODIFIED reviewed\.ts/);
     assert.doesNotMatch(output.join("\n"), /UNTRACKED request\.json/);
     assert.match(output.join("\n"), /RUNNER_CONTROL request\.json/);
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
+it("inspects imported guidance only against the selected frozen-BASE repository", async () => {
+  const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-cli-imports-"));
+  try {
+    await git(repositoryPath, "init", "--initial-branch=main");
+    await git(repositoryPath, "config", "user.name", "CLI Import Test");
+    await git(repositoryPath, "config", "user.email", "cli-import@example.invalid");
+    await git(repositoryPath, "config", "commit.gpgsign", "false");
+    await mkdir(join(repositoryPath, ".kiro", "steering"), { recursive: true });
+    await mkdir(join(repositoryPath, "docs"), { recursive: true });
+    await writeFile(
+      join(repositoryPath, ".kiro", "steering", "main.md"),
+      "# Main\n\n#[[file:../../docs/expected.md]]\n",
+    );
+    await writeFile(join(repositoryPath, "docs", "expected.md"), "# Expected guidance\n");
+    await writeFile(join(repositoryPath, "docs", "attacker.md"), "# Redirected guidance\n");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "before\n");
+    await writeFile(join(repositoryPath, ".gitignore"), ".review-runs/\n");
+    await git(repositoryPath, "add", ".");
+    await git(repositoryPath, "commit", "-m", "initial");
+    await git(repositoryPath, "switch", "-c", "feature/cli-imports");
+    await writeFile(join(repositoryPath, "reviewed.ts"), "after\n");
+
+    const requestPath = join(repositoryPath, "request.json");
+    const packetPath = join(repositoryPath, ".review-runs", "cli-imports");
+    await writeFile(
+      requestPath,
+      JSON.stringify({
+        schemaVersion: 2,
+        mode: "STANDARDS",
+        flowId: "flow_cli_imports",
+        reviewInstance: { number: 1, maximum: 3 },
+        repository: { path: repositoryPath, base: "main" },
+        canonicalInputs: {
+          standards: [
+            {
+              id: "input_standard",
+              kind: "PROJECT_GUIDANCE",
+              title: "TypeScript review",
+              content: JSON.stringify({
+                schemaVersion: 1,
+                name: "TypeScript review",
+                source: "CLI fixture",
+                rules: [
+                  {
+                    id: "rule_typescript",
+                    text: "Review TypeScript changes.",
+                    enforcement: "REQUIRED",
+                    paths: ["**/*.ts"],
+                    exceptions: null,
+                  },
+                ],
+              }),
+              provenance: { type: "INLINE", label: "CLI import test" },
+            },
+          ],
+        },
+        authorPacket: {
+          schemaVersion: 2,
+          overview: "Changed one line.",
+          claimedVerification: [],
+        },
+        reviewConfigRef: "config_cli_imports",
+      }),
+    );
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: (message: string) => output.push(message),
+      stderr: (message: string) => errors.push(message),
+    };
+
+    assert.equal(
+      await runCliV1(["prepare", "--request", requestPath, "--output", packetPath], io),
+      0,
+    );
+    output.length = 0;
+    assert.equal(await runCliV1(["inspect", "--help"], io), 0);
+    assert.match(output.join("\n"), /--repo <value>/);
+
+    output.length = 0;
+    errors.length = 0;
+    assert.equal(await runCliV1(["inspect", "--packet", packetPath], io), 1);
+    assert.match(errors.join("\n"), /frozen BASE|Git command failed|not a tree object/i);
+
+    output.length = 0;
+    errors.length = 0;
+    assert.equal(
+      await runCliV1(["inspect", "--packet", packetPath, "--repo", repositoryPath], io),
+      0,
+      errors.join("\n"),
+    );
+
+    await redirectKiroImport(packetPath);
+    output.length = 0;
+    errors.length = 0;
+    assert.equal(
+      await runCliV1(["inspect", "--packet", packetPath, "--repo", repositoryPath], io),
+      1,
+    );
+    assert.match(errors.join("\n"), /invalid resolved destination/i);
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });
   }

@@ -79,7 +79,10 @@ export {
   resolveRepositoryRootV1,
   SnapshotCaptureError,
 } from "./snapshot/git-capture.js";
-export type { InspectedSnapshotPacketV1 } from "./snapshot/snapshot-packet.js";
+export type {
+  InspectedSnapshotPacketV1,
+  SnapshotPacketInspectionOptionsV1,
+} from "./snapshot/snapshot-packet.js";
 export {
   inspectSnapshotPacket,
   inspectSnapshotPacketV1,

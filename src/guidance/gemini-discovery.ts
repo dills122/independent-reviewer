@@ -6,6 +6,7 @@ import {
   type DirectGuidanceSourceInputV1,
   type GuidanceGraphV1,
   type GuidanceImportInputV1,
+  MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
   MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
   MAX_GUIDANCE_EDGES_V1,
   MAX_GUIDANCE_NODES_V1,
@@ -68,11 +69,6 @@ export async function captureGeminiGuidanceV1(
 ): Promise<CapturedGeminiGuidanceV1> {
   const targets = session.targets;
 
-  const allMetadata = await listBaseGuidanceBlobMetadataV1(
-    repositoryPath,
-    manifest.source.baseCommit,
-    ".",
-  );
   const settingsMetadata = await baseGuidanceBlobMetadataV1(
     repositoryPath,
     manifest.source.baseCommit,
@@ -91,7 +87,22 @@ export async function captureGeminiGuidanceV1(
         unknownSettingOffsets: [],
       };
 
-  const ignorePaths = [...allMetadata.keys()].filter((path) => {
+  const ignoreMetadata = await listBaseGuidanceBlobMetadataV1(
+    repositoryPath,
+    manifest.source.baseCommit,
+    ".",
+    {
+      include: (path) => {
+        const basename = posix.basename(path);
+        return (
+          (settings.respectGitIgnore && basename === ".gitignore") ||
+          (settings.respectGeminiIgnore && basename === ".geminiignore")
+        );
+      },
+      maximumEntries: MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
+    },
+  );
+  const ignorePaths = [...ignoreMetadata.keys()].filter((path) => {
     const basename = posix.basename(path);
     return (
       (settings.respectGitIgnore && basename === ".gitignore") ||
@@ -100,7 +111,7 @@ export async function captureGeminiGuidanceV1(
   });
   const ignoreDocuments = [];
   for (const path of ignorePaths.sort()) {
-    const metadata = allMetadata.get(path);
+    const metadata = ignoreMetadata.get(path);
     if (!metadata) throw new Error(`Gemini ignore source ${path} has no BASE metadata.`);
     const source = await readBaseMarkdownGuidanceSourceV1(repositoryPath, path, metadata);
     ignoreDocuments.push({ path, content: source.content });
@@ -108,12 +119,28 @@ export async function captureGeminiGuidanceV1(
   const isIgnored = buildGeminiIgnoreMatcherV1(ignoreDocuments);
 
   const configuredNames = new Set(settings.contextFileNames);
-  const contextPaths = [...allMetadata.keys()]
-    .filter((path) => configuredNames.has(posix.basename(path)) && !isIgnored(path))
+  const contextMetadata = await listBaseGuidanceBlobMetadataV1(
+    repositoryPath,
+    manifest.source.baseCommit,
+    ".",
+    {
+      include: (path) => configuredNames.has(posix.basename(path)),
+      maximumEntries: MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
+    },
+  );
+  const contextPaths = [...contextMetadata.keys()]
+    .filter((path) => !isIgnored(path))
     .sort((left, right) => pathDepth(left) - pathDepth(right) || (left < right ? -1 : 1));
   session.claimDirectCandidates(contextPaths);
 
   const sources = new Map<string, Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>>>();
+  const directSourcesByDiscoveredPath = new Map<
+    string,
+    {
+      resolvedPath: string;
+      source: Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>>;
+    }
+  >();
   const diagnostics = settings.unknownSettingOffsets.map((startUtf16) =>
     createGuidanceDiagnosticV1({
       code: "UNKNOWN_SETTING_IGNORED",
@@ -124,9 +151,19 @@ export async function captureGeminiGuidanceV1(
     }),
   );
   for (const path of contextPaths) {
-    const metadata = allMetadata.get(path);
+    const metadata = contextMetadata.get(path);
     if (!metadata) throw new Error(`Gemini context ${path} has no BASE metadata.`);
-    const source = await readBaseMarkdownGuidanceSourceV1(repositoryPath, path, metadata);
+    const resolved = await resolveBaseGuidanceBlobV1(
+      repositoryPath,
+      manifest.source.baseCommit,
+      path,
+    );
+    if (!resolved) throw new Error(`Gemini context ${path} has no resolved BASE source.`);
+    const source = await readBaseMarkdownGuidanceSourceV1(
+      repositoryPath,
+      resolved.resolvedPath,
+      resolved.metadata,
+    );
     if (source.content.trim().length === 0) {
       diagnostics.push(
         createGuidanceDiagnosticV1({
@@ -138,11 +175,12 @@ export async function captureGeminiGuidanceV1(
         }),
       );
     } else {
-      sources.set(path, source);
+      sources.set(resolved.resolvedPath, source);
+      directSourcesByDiscoveredPath.set(path, { resolvedPath: resolved.resolvedPath, source });
     }
   }
 
-  const selectedPaths = contextPaths.filter((path) => sources.has(path));
+  const selectedPaths = contextPaths.filter((path) => directSourcesByDiscoveredPath.has(path));
   if (selectedPaths.length > MAX_GUIDANCE_NODES_V1)
     discoveryLimit(`more than ${MAX_GUIDANCE_NODES_V1} applicable source nodes were selected.`);
   const directSources = new Map<string, DirectGuidanceSourceInputV1>();
@@ -154,11 +192,11 @@ export async function captureGeminiGuidanceV1(
         discoveryLimit(
           `more than ${MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1} recognitions were produced.`,
         );
-      const source = sources.get(path);
-      if (!source) throw new Error(`Selected Gemini context ${path} was not loaded.`);
-      const input = directSources.get(path) ?? {
-        resolvedPath: path,
-        contentDigest: source.contentDigest,
+      const direct = directSourcesByDiscoveredPath.get(path);
+      if (!direct) throw new Error(`Selected Gemini context ${path} was not loaded.`);
+      const input = directSources.get(direct.resolvedPath) ?? {
+        resolvedPath: direct.resolvedPath,
+        contentDigest: direct.source.contentDigest,
         directRecognitions: [],
       };
       const recognition = {
@@ -170,7 +208,7 @@ export async function captureGeminiGuidanceV1(
       } as const;
       session.claimDirectRecognition(input, recognition);
       input.directRecognitions.push(recognition);
-      directSources.set(path, input);
+      directSources.set(direct.resolvedPath, input);
     });
   }
 

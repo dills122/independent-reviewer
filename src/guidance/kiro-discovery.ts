@@ -4,6 +4,7 @@ import {
   type DirectGuidanceSourceInputV1,
   type GuidanceGraphV1,
   type GuidanceImportInputV1,
+  MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
   MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
   MAX_GUIDANCE_EDGES_V1,
   MAX_GUIDANCE_NODES_V1,
@@ -15,6 +16,7 @@ import {
   baseGuidanceBlobMetadataV1,
   GuidanceCaptureError,
   listBaseGuidanceBlobMetadataV1,
+  readBaseGuidanceFrontmatterV1,
   readBaseMarkdownGuidanceSourceV1,
   resolveBaseGuidanceBlobV1,
 } from "./base-markdown-source.js";
@@ -79,8 +81,12 @@ export async function captureKiroGuidanceV1(
     repositoryPath,
     manifest.source.baseCommit,
     KIRO_STEERING_ROOT_V1,
+    {
+      include: (path) => path.endsWith(".md"),
+      maximumEntries: MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
+    },
   );
-  const steeringPaths = [...steeringMetadata.keys()].filter((path) => path.endsWith(".md")).sort();
+  const steeringPaths = [...steeringMetadata.keys()].sort();
   session.claimDirectCandidates([...agentCandidates, ...steeringPaths]);
 
   const metadataByPath = new Map<string, BaseGuidanceBlobMetadataV1>();
@@ -99,27 +105,31 @@ export async function captureKiroGuidanceV1(
   }
 
   const sources = new Map<string, Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>>>();
+  const directSourcesByDiscoveredPath = new Map<
+    string,
+    { resolvedPath: string; source: Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>> }
+  >();
   const steeringMatchers = new Map<string, ((path: string) => boolean) | undefined>();
   const excludedSteering = new Set<string>();
   const diagnostics = [];
   for (const path of [...metadataByPath.keys()].sort()) {
     const metadata = metadataByPath.get(path);
     if (!metadata) throw new Error(`Kiro guidance ${path} has no BASE metadata.`);
-    const source = await readBaseMarkdownGuidanceSourceV1(repositoryPath, path, metadata);
-    if (source.content.trim().length === 0) {
-      diagnostics.push(
-        createGuidanceDiagnosticV1({
-          code: "EMPTY_SOURCE",
-          severity: "WARNING",
-          path,
-          startUtf16: 0,
-          omittedCount: null,
-        }),
-      );
-      continue;
-    }
+    const resolved = await resolveBaseGuidanceBlobV1(
+      repositoryPath,
+      manifest.source.baseCommit,
+      path,
+    );
+    if (!resolved) throw new Error(`Kiro guidance ${path} has no resolved BASE source.`);
     if (steeringPaths.includes(path)) {
-      const parsed = parseKiroSteeringFrontmatterV1(path, source.content);
+      const parsed = parseKiroSteeringFrontmatterV1(
+        path,
+        await readBaseGuidanceFrontmatterV1(
+          repositoryPath,
+          resolved.resolvedPath,
+          resolved.metadata,
+        ),
+      );
       if (parsed.inclusion === "manual" || parsed.inclusion === "auto") {
         excludedSteering.add(path);
         diagnostics.push(
@@ -143,17 +153,35 @@ export async function captureKiroGuidanceV1(
           : undefined,
       );
     }
-    sources.set(path, source);
+    const source = await readBaseMarkdownGuidanceSourceV1(
+      repositoryPath,
+      resolved.resolvedPath,
+      resolved.metadata,
+    );
+    if (source.content.trim().length === 0) {
+      diagnostics.push(
+        createGuidanceDiagnosticV1({
+          code: "EMPTY_SOURCE",
+          severity: "WARNING",
+          path,
+          startUtf16: 0,
+          omittedCount: null,
+        }),
+      );
+      continue;
+    }
+    sources.set(resolved.resolvedPath, source);
+    directSourcesByDiscoveredPath.set(path, { resolvedPath: resolved.resolvedPath, source });
   }
 
   const directSources = new Map<string, DirectGuidanceSourceInputV1>();
   let recognitionCount = 0;
   for (const target of targets) {
     const orderedAgents = (agentsByTarget.get(target.targetId) ?? []).filter((path) =>
-      sources.has(path),
+      directSourcesByDiscoveredPath.has(path),
     );
     const orderedSteering = steeringPaths.filter((path) => {
-      if (excludedSteering.has(path) || !sources.has(path)) return false;
+      if (excludedSteering.has(path) || !directSourcesByDiscoveredPath.has(path)) return false;
       const matcher = steeringMatchers.get(path);
       return matcher ? matcher(target.applicabilityPath) : true;
     });
@@ -163,11 +191,11 @@ export async function captureKiroGuidanceV1(
         discoveryLimit(
           `more than ${MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1} recognitions were produced.`,
         );
-      const source = sources.get(path);
-      if (!source) throw new Error(`Selected Kiro guidance ${path} was not loaded.`);
-      const input = directSources.get(path) ?? {
-        resolvedPath: path,
-        contentDigest: source.contentDigest,
+      const direct = directSourcesByDiscoveredPath.get(path);
+      if (!direct) throw new Error(`Selected Kiro guidance ${path} was not loaded.`);
+      const input = directSources.get(direct.resolvedPath) ?? {
+        resolvedPath: direct.resolvedPath,
+        contentDigest: direct.source.contentDigest,
         directRecognitions: [],
       };
       const recognition = {
@@ -179,7 +207,7 @@ export async function captureKiroGuidanceV1(
       } as const;
       session.claimDirectRecognition(input, recognition);
       input.directRecognitions.push(recognition);
-      directSources.set(path, input);
+      directSources.set(direct.resolvedPath, input);
     });
   }
   if (directSources.size > MAX_GUIDANCE_NODES_V1)

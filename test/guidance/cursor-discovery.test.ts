@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -66,7 +66,11 @@ async function repository(): Promise<string> {
   );
   await writeFile(
     join(repositoryPath, ".cursor/rules/model-selected.mdc"),
-    "---\nalwaysApply: false\n---\n# Model selected\n",
+    `---\ndescription: Apply when relevant\nalwaysApply: false\n---\n# Agent requested\n\nAKIAABCDEFGHIJKLMNOP\n${"x".repeat(64 * 1024)}\n`,
+  );
+  await writeFile(
+    join(repositoryPath, ".cursor/rules/manual.mdc"),
+    `---\nalwaysApply: false\n---\n# Manual\n\nAKIAABCDEFGHIJKLMNOP\n${"x".repeat(64 * 1024)}\n`,
   );
   await writeFile(
     join(repositoryPath, "src/.cursor/rules/nested.mdc"),
@@ -125,9 +129,51 @@ describe("captureCursorGuidanceV1", () => {
             path === ".cursor/rules/model-selected.mdc",
         ),
       );
+      assert.ok(
+        captured.graph.diagnostics.some(
+          ({ code, path }) =>
+            code === "UNSELECTED_MANUAL_MODE" && path === ".cursor/rules/manual.mdc",
+        ),
+      );
       assert.equal(captured.graph.occurrences.length, 1);
       assert.equal(captured.graph.edges.length, 2);
       assert.ok(captured.graph.nodes.some(({ resolvedPath }) => resolvedPath === "docs/shared.md"));
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves a direct repository-internal BASE symlink and retains its discovered path", async () => {
+    const repositoryPath = await repository();
+    try {
+      await git(repositoryPath, "add", ".");
+      await git(repositoryPath, "commit", "-m", "feature changes");
+      await git(repositoryPath, "switch", "main");
+      await writeFile(
+        join(repositoryPath, "docs/symlinked-rule.mdc"),
+        "---\nalwaysApply: true\n---\n# Symlinked rule\n",
+      );
+      await symlink(
+        "../../docs/symlinked-rule.mdc",
+        join(repositoryPath, ".cursor/rules/link.mdc"),
+      );
+      await git(repositoryPath, "add", ".");
+      await git(repositoryPath, "commit", "-m", "add direct Cursor symlink");
+      await git(repositoryPath, "switch", "feature/cursor-guidance");
+      await git(repositoryPath, "merge", "main", "--no-edit");
+      await writeFile(join(repositoryPath, "src/lib/code.ts"), "export const value = 3;\n");
+
+      const snapshot = await captureGitSnapshotV1(request(repositoryPath));
+      const captured = await captureCursorGuidanceV1(repositoryPath, snapshot.manifest);
+      const node = captured.graph.nodes.find(
+        ({ resolvedPath }) => resolvedPath === "docs/symlinked-rule.mdc",
+      );
+      assert.ok(node);
+      assert.ok(
+        node.directRecognitions.some(
+          ({ discoveredPath }) => discoveredPath === ".cursor/rules/link.mdc",
+        ),
+      );
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }

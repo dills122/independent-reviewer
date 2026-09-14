@@ -73,11 +73,11 @@ async function repository(): Promise<string> {
   );
   await writeFile(
     join(repositoryPath, ".kiro", "steering", "manual.md"),
-    "---\ninclusion: manual\n---\n# Manual\n",
+    `---\ninclusion: manual\n---\n# Manual\n\nAKIAABCDEFGHIJKLMNOP\n${"x".repeat(64 * 1024)}\n`,
   );
   await writeFile(
     join(repositoryPath, ".kiro", "steering", "auto.md"),
-    "---\ninclusion: auto\n---\n# Auto\n",
+    `---\ninclusion: auto\n---\n# Auto\n\nAKIAABCDEFGHIJKLMNOP\n${"x".repeat(64 * 1024)}\n`,
   );
   await writeFile(join(repositoryPath, "docs", "shared.md"), "# Shared\n");
   await writeFile(join(repositoryPath, "src", "code.ts"), "export const value = 1;\n");

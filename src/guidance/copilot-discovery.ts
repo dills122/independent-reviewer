@@ -4,6 +4,7 @@ import {
   type DirectGuidanceSourceInputV1,
   type GuidanceGraphV1,
   type GuidanceImportInputV1,
+  MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
   MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
   MAX_GUIDANCE_EDGES_V1,
   MAX_GUIDANCE_NODES_V1,
@@ -15,6 +16,7 @@ import {
   baseGuidanceBlobMetadataV1,
   GuidanceCaptureError,
   listBaseGuidanceBlobMetadataV1,
+  readBaseGuidanceFrontmatterV1,
   readBaseMarkdownGuidanceSourceV1,
   resolveBaseGuidanceBlobV1,
 } from "./base-markdown-source.js";
@@ -85,10 +87,12 @@ export async function captureCopilotGuidanceV1(
     repositoryPath,
     manifest.source.baseCommit,
     MODULAR_ROOT_V1,
+    {
+      include: (path) => path.endsWith(".instructions.md"),
+      maximumEntries: MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
+    },
   );
-  const modularPaths = [...modularMetadata.keys()]
-    .filter((path) => path.endsWith(".instructions.md"))
-    .sort();
+  const modularPaths = [...modularMetadata.keys()].sort();
   session.claimDirectCandidates([...fixedCandidates, ...modularPaths]);
 
   const metadataByPath = new Map<string, BaseGuidanceBlobMetadataV1>();
@@ -107,13 +111,42 @@ export async function captureCopilotGuidanceV1(
   }
 
   const sources = new Map<string, LoadedSourceV1>();
+  const directSourcesByDiscoveredPath = new Map<
+    string,
+    { resolvedPath: string; source: LoadedSourceV1 }
+  >();
   const modularMatchers = new Map<string, (candidatePath: string) => boolean>();
   const excludedModular = new Set<string>();
   const diagnostics = [];
   for (const path of [...metadataByPath.keys()].sort()) {
     const metadata = metadataByPath.get(path);
     if (!metadata) throw new Error(`Copilot guidance source ${path} has no BASE metadata.`);
-    const source = await readBaseMarkdownGuidanceSourceV1(repositoryPath, path, metadata);
+    const resolved = await resolveBaseGuidanceBlobV1(
+      repositoryPath,
+      manifest.source.baseCommit,
+      path,
+    );
+    if (!resolved) throw new Error(`Copilot guidance source ${path} has no resolved BASE source.`);
+    if (modularPaths.includes(path)) {
+      const frontmatter = parseCopilotFrontmatterV1(
+        path,
+        await readBaseGuidanceFrontmatterV1(
+          repositoryPath,
+          resolved.resolvedPath,
+          resolved.metadata,
+        ),
+      );
+      if (frontmatter.excludesCodeReview) {
+        excludedModular.add(path);
+        continue;
+      }
+      modularMatchers.set(path, compileGuidancePatternsV1(path, frontmatter.applyTo));
+    }
+    const source = await readBaseMarkdownGuidanceSourceV1(
+      repositoryPath,
+      resolved.resolvedPath,
+      resolved.metadata,
+    );
     if (source.content.trim().length === 0) {
       diagnostics.push(
         createGuidanceDiagnosticV1({
@@ -126,12 +159,8 @@ export async function captureCopilotGuidanceV1(
       );
       continue;
     }
-    sources.set(path, source);
-    if (modularPaths.includes(path)) {
-      const metadata = parseCopilotFrontmatterV1(path, source.content);
-      if (metadata.excludesCodeReview) excludedModular.add(path);
-      else modularMatchers.set(path, compileGuidancePatternsV1(path, metadata.applyTo));
-    }
+    sources.set(resolved.resolvedPath, source);
+    directSourcesByDiscoveredPath.set(path, { resolvedPath: resolved.resolvedPath, source });
   }
 
   const directSources = new Map<string, DirectGuidanceSourceInputV1>();
@@ -148,11 +177,11 @@ export async function captureCopilotGuidanceV1(
       guidancePathInDirectoryV1(directory, "GEMINI.md"),
     );
     const ordered = [
-      ...(sources.has(REPOSITORY_PATH_V1) ? [REPOSITORY_PATH_V1] : []),
-      ...agents.filter((path) => sources.has(path)),
-      ...claude.filter((path) => sources.has(path)),
-      ...(sources.has(DOT_CLAUDE_PATH_V1) ? [DOT_CLAUDE_PATH_V1] : []),
-      ...gemini.filter((path) => sources.has(path)),
+      ...(directSourcesByDiscoveredPath.has(REPOSITORY_PATH_V1) ? [REPOSITORY_PATH_V1] : []),
+      ...agents.filter((path) => directSourcesByDiscoveredPath.has(path)),
+      ...claude.filter((path) => directSourcesByDiscoveredPath.has(path)),
+      ...(directSourcesByDiscoveredPath.has(DOT_CLAUDE_PATH_V1) ? [DOT_CLAUDE_PATH_V1] : []),
+      ...gemini.filter((path) => directSourcesByDiscoveredPath.has(path)),
       ...modularPaths.filter(
         (path) =>
           !excludedModular.has(path) &&
@@ -165,11 +194,11 @@ export async function captureCopilotGuidanceV1(
         discoveryLimit(
           `more than ${MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1} recognitions were produced.`,
         );
-      const source = sources.get(path);
-      if (!source) throw new Error(`Selected Copilot source ${path} was not loaded.`);
-      const input = directSources.get(path) ?? {
-        resolvedPath: path,
-        contentDigest: source.contentDigest,
+      const direct = directSourcesByDiscoveredPath.get(path);
+      if (!direct) throw new Error(`Selected Copilot source ${path} was not loaded.`);
+      const input = directSources.get(direct.resolvedPath) ?? {
+        resolvedPath: direct.resolvedPath,
+        contentDigest: direct.source.contentDigest,
         directRecognitions: [],
       };
       const recognition = {
@@ -192,7 +221,7 @@ export async function captureCopilotGuidanceV1(
       } as const;
       session.claimDirectRecognition(input, recognition);
       input.directRecognitions.push(recognition);
-      directSources.set(path, input);
+      directSources.set(direct.resolvedPath, input);
     });
   }
   if (directSources.size > MAX_GUIDANCE_NODES_V1)

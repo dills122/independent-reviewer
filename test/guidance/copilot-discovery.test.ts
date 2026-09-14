@@ -66,7 +66,7 @@ async function repository(): Promise<string> {
   );
   await writeFile(
     join(repositoryPath, ".github/instructions/excluded.instructions.md"),
-    "---\napplyTo: 'src/**'\nexcludeAgent: code-review\n---\n# Excluded\n",
+    `---\napplyTo: 'src/**'\nexcludeAgent: code-review\n---\n# Excluded\n\nAKIAABCDEFGHIJKLMNOP\n${"x".repeat(64 * 1024)}\n`,
   );
   await writeFile(join(repositoryPath, "AGENTS.md"), "# Root agents\n");
   await writeFile(join(repositoryPath, "src/AGENTS.md"), "# Source agents\n");

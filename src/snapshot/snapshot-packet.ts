@@ -62,6 +62,20 @@ function readPacketJsonV1(packetPath: string, fileName: string): Promise<unknown
   });
 }
 
+function frozenBaseImportResolverV1(repositoryPath: string, baseCommit: string) {
+  return async (requestedPath: string) => {
+    const resolved = await resolveBaseGuidanceBlobV1(repositoryPath, baseCommit, requestedPath);
+    if (!resolved)
+      throw new Error(`Guidance import ${requestedPath} does not resolve in frozen BASE.`);
+    const source = await readBaseMarkdownGuidanceSourceV1(
+      repositoryPath,
+      resolved.resolvedPath,
+      resolved.metadata,
+    );
+    return { resolvedPath: resolved.resolvedPath, contentDigest: source.contentDigest };
+  };
+}
+
 export interface InspectedSnapshotPacketV1 {
   manifest: SnapshotManifestV1;
   contextMap: ReviewContextMapV1;
@@ -77,6 +91,13 @@ export interface InspectedSnapshotPacket
   extends Omit<InspectedSnapshotPacketV1, "canonicalInputs" | "authorPacket"> {
   canonicalInputs: ReviewCanonicalInputs;
   authorPacket?: ReviewAuthor;
+}
+
+export interface SnapshotPacketInspectionOptionsV1 {
+  /** Trusted local repository used to re-resolve persisted imports against frozen BASE. */
+  guidanceRepositoryPath?: string;
+  /** Provider-bound readers fail closed when an import exists but BASE authority is absent. */
+  requireGuidanceImportResolution?: boolean;
 }
 
 const PacketMetadataV1Schema = z.strictObject({
@@ -421,21 +442,7 @@ export async function writeSnapshotPacketV1(
         if (!bytes) throw new Error(`Guidance blob ${node.contentDigest.value} is missing.`);
         return bytes;
       },
-      async (requestedPath) => {
-        const resolved = await resolveBaseGuidanceBlobV1(
-          request.repository.path,
-          captured.manifest.source.baseCommit,
-          requestedPath,
-        );
-        if (!resolved)
-          throw new Error(`Guidance import ${requestedPath} does not resolve in frozen BASE.`);
-        const source = await readBaseMarkdownGuidanceSourceV1(
-          request.repository.path,
-          resolved.resolvedPath,
-          resolved.metadata,
-        );
-        return { resolvedPath: resolved.resolvedPath, contentDigest: source.contentDigest };
-      },
+      frozenBaseImportResolverV1(request.repository.path, captured.manifest.source.baseCommit),
     );
   }
   for (const record of records) {
@@ -523,8 +530,16 @@ async function readOptionalAuthorPacket(packetPath: string): Promise<ReviewAutho
   }
 }
 
-/** Validates packet metadata, identities, and every manifest-referenced blob. */
-export async function inspectSnapshotPacket(packetPath: string): Promise<InspectedSnapshotPacket> {
+/**
+ * Validates packet metadata, identities, and every manifest-referenced blob.
+ *
+ * Default inspection is portable structural validation. Provider-bound callers must additionally
+ * supply trusted repository authority and require frozen-BASE import resolution.
+ */
+export async function inspectSnapshotPacket(
+  packetPath: string,
+  options: SnapshotPacketInspectionOptionsV1 = {},
+): Promise<InspectedSnapshotPacket> {
   const manifest = SnapshotManifestV1Schema.parse(
     await readPacketJsonV1(packetPath, MANIFEST_FILE),
   );
@@ -578,8 +593,21 @@ export async function inspectSnapshotPacket(packetPath: string): Promise<Inspect
         throw new Error(`Guidance blob ${node.contentDigest.value} failed digest verification.`);
       }
     });
-    await assertGuidanceImportOccurrencesV1(guidanceGraph, (node) =>
-      readFile(join(packetPath, BLOBS_DIRECTORY, node.contentDigest.value)),
+    if (
+      options.requireGuidanceImportResolution === true &&
+      guidanceGraph.occurrences.length > 0 &&
+      options.guidanceRepositoryPath === undefined
+    ) {
+      throw new Error(
+        "A trusted repository path is required to revalidate guidance imports against frozen BASE.",
+      );
+    }
+    await assertGuidanceImportOccurrencesV1(
+      guidanceGraph,
+      (node) => readFile(join(packetPath, BLOBS_DIRECTORY, node.contentDigest.value)),
+      options.guidanceRepositoryPath === undefined
+        ? undefined
+        : frozenBaseImportResolverV1(options.guidanceRepositoryPath, manifest.source.baseCommit),
     );
   }
   assertCanonicalInputsMatch(manifest, canonicalInputs);
@@ -647,8 +675,9 @@ export async function readSnapshotBlobV1(
 
 export async function inspectSnapshotPacketV1(
   packetPath: string,
+  options: SnapshotPacketInspectionOptionsV1 = {},
 ): Promise<InspectedSnapshotPacketV1> {
-  const packet = await inspectSnapshotPacket(packetPath);
+  const packet = await inspectSnapshotPacket(packetPath, options);
   return {
     ...packet,
     canonicalInputs: PersistedCanonicalInputsV1Schema.parse(packet.canonicalInputs),

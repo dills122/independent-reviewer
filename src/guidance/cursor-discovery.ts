@@ -4,6 +4,7 @@ import {
   type DirectGuidanceSourceInputV1,
   type GuidanceGraphV1,
   type GuidanceImportInputV1,
+  MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
   MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
   MAX_GUIDANCE_EDGES_V1,
   MAX_GUIDANCE_NODES_V1,
@@ -14,6 +15,7 @@ import {
   type BaseGuidanceBlobMetadataV1,
   GuidanceCaptureError,
   listBaseGuidanceBlobMetadataV1,
+  readBaseGuidanceFrontmatterV1,
   readBaseMarkdownGuidanceSourceV1,
   resolveBaseGuidanceBlobV1,
 } from "./base-markdown-source.js";
@@ -74,6 +76,7 @@ function targetWithinScope(targetPath: string, scope: string): boolean {
 }
 
 type LoadedSourceV1 = Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>>;
+type ResolvedDirectSourceV1 = { resolvedPath: string; source: LoadedSourceV1 };
 
 /** Discovers deterministic always-on and glob-attached Cursor project rules from frozen BASE. */
 export async function captureCursorGuidanceV1(
@@ -95,25 +98,59 @@ export async function captureCursorGuidanceV1(
       repositoryPath,
       manifest.source.baseCommit,
       root,
+      {
+        include: (path) => path.endsWith(".mdc"),
+        maximumEntries: MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
+      },
     );
     for (const [path, metadata] of listed) {
-      if (path.endsWith(".mdc")) ruleMetadata.set(path, metadata);
+      session.claimDirectCandidates([path]);
+      ruleMetadata.set(path, metadata);
     }
   }
-  session.claimDirectCandidates([...ruleMetadata.keys()]);
   const rulePaths = [...ruleMetadata.keys()].sort((left, right) => {
     const depthDifference = scopeDepth(left) - scopeDepth(right);
     return depthDifference === 0 ? (left < right ? -1 : left > right ? 1 : 0) : depthDifference;
   });
 
   const sources = new Map<string, LoadedSourceV1>();
+  const directSourcesByDiscoveredPath = new Map<string, ResolvedDirectSourceV1>();
   const alwaysApply = new Set<string>();
   const matchers = new Map<string, (candidatePath: string) => boolean>();
   const diagnostics = [];
   for (const path of rulePaths) {
     const metadata = ruleMetadata.get(path);
     if (!metadata) throw new Error(`Cursor rule ${path} has no BASE metadata.`);
-    const source = await readBaseMarkdownGuidanceSourceV1(repositoryPath, path, metadata);
+    const resolved = await resolveBaseGuidanceBlobV1(
+      repositoryPath,
+      manifest.source.baseCommit,
+      path,
+    );
+    if (!resolved) throw new Error(`Cursor rule ${path} has no resolved BASE source.`);
+    const frontmatter = parseCursorFrontmatterV1(
+      path,
+      await readBaseGuidanceFrontmatterV1(repositoryPath, resolved.resolvedPath, resolved.metadata),
+    );
+    if (frontmatter.mode === "agentRequested" || frontmatter.mode === "manual") {
+      diagnostics.push(
+        createGuidanceDiagnosticV1({
+          code:
+            frontmatter.mode === "manual"
+              ? "UNSELECTED_MANUAL_MODE"
+              : "UNSELECTED_MODEL_SELECTED_MODE",
+          severity: "EXCLUSION",
+          path,
+          startUtf16: 0,
+          omittedCount: null,
+        }),
+      );
+      continue;
+    }
+    const source = await readBaseMarkdownGuidanceSourceV1(
+      repositoryPath,
+      resolved.resolvedPath,
+      resolved.metadata,
+    );
     if (source.content.trim().length === 0) {
       diagnostics.push(
         createGuidanceDiagnosticV1({
@@ -126,29 +163,21 @@ export async function captureCursorGuidanceV1(
       );
       continue;
     }
-    sources.set(path, source);
-    const frontmatter = parseCursorFrontmatterV1(path, source.content);
+    sources.set(resolved.resolvedPath, source);
+    directSourcesByDiscoveredPath.set(path, { resolvedPath: resolved.resolvedPath, source });
     if (frontmatter.alwaysApply) alwaysApply.add(path);
     else if (frontmatter.globs.length > 0)
       matchers.set(path, compileGuidancePatternsV1(path, frontmatter.globs));
-    else {
-      diagnostics.push(
-        createGuidanceDiagnosticV1({
-          code: "UNSELECTED_MODEL_SELECTED_MODE",
-          severity: "EXCLUSION",
-          path,
-          startUtf16: 0,
-          omittedCount: null,
-        }),
-      );
-    }
   }
 
   const directSources = new Map<string, DirectGuidanceSourceInputV1>();
   let recognitionCount = 0;
   for (const target of targets) {
     const selected = rulePaths.filter((path) => {
-      if (!sources.has(path) || !targetWithinScope(target.applicabilityPath, ruleScope(path)))
+      if (
+        !directSourcesByDiscoveredPath.has(path) ||
+        !targetWithinScope(target.applicabilityPath, ruleScope(path))
+      )
         return false;
       return alwaysApply.has(path) || matchers.get(path)?.(target.applicabilityPath) === true;
     });
@@ -158,11 +187,11 @@ export async function captureCursorGuidanceV1(
         discoveryLimit(
           `more than ${MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1} recognitions were produced.`,
         );
-      const source = sources.get(path);
-      if (!source) throw new Error(`Selected Cursor rule ${path} was not loaded.`);
-      const input = directSources.get(path) ?? {
-        resolvedPath: path,
-        contentDigest: source.contentDigest,
+      const direct = directSourcesByDiscoveredPath.get(path);
+      if (!direct) throw new Error(`Selected Cursor rule ${path} was not loaded.`);
+      const input = directSources.get(direct.resolvedPath) ?? {
+        resolvedPath: direct.resolvedPath,
+        contentDigest: direct.source.contentDigest,
         directRecognitions: [],
       };
       const recognition = {
@@ -174,7 +203,7 @@ export async function captureCursorGuidanceV1(
       } as const;
       session.claimDirectRecognition(input, recognition);
       input.directRecognitions.push(recognition);
-      directSources.set(path, input);
+      directSources.set(direct.resolvedPath, input);
     });
   }
   if (directSources.size > MAX_GUIDANCE_NODES_V1)

@@ -164,6 +164,7 @@ const COMMAND_SPECS_V1 = defineCommandSpecsV1({
     summary: "Validate a packet and report what it contains.",
     options: {
       packet: { type: "string", description: "Path to the snapshot packet.", required: true },
+      repo: { type: "string", description: "Frozen-BASE repository (default current directory)." },
       json: { type: "boolean", description: "Emit the versioned inspection report as JSON." },
     },
   },
@@ -774,7 +775,7 @@ async function review(
         expectedConfigId: config.configId,
         suppliedConfig: config,
       });
-      const admission = await preflightReview(prepared.packetPath, config);
+      const admission = await preflightReview(prepared.packetPath, config, prepared.repositoryRoot);
       io.stdout(
         `Dry-run: ${prepared.captured.manifest.paths.length} changed paths, ${prepared.captured.manifest.exclusions.length} exclusions. No provider calls.`,
       );
@@ -817,7 +818,7 @@ async function review(
   await warnUnignoredPacketLocation(prepared.repositoryRoot, prepared.packetPath, io);
   io.stdout(`Prepared snapshot packet: ${prepared.packetPath}`);
   if (prepared.claim) {
-    await preflightReview(prepared.packetPath, config);
+    await preflightReview(prepared.packetPath, config, prepared.repositoryRoot);
     await prepared.claim();
   }
   const progress = createProgressOutput(
@@ -826,7 +827,7 @@ async function review(
   );
   try {
     const result = await withReviewProgress(progress.observe, () =>
-      runTwoStageReview(prepared.packetPath, config, provider),
+      runTwoStageReview(prepared.packetPath, config, provider, prepared.repositoryRoot),
     );
     io.stdout(
       prepared.standards
@@ -871,7 +872,7 @@ async function review(
           ? `--config ${quote(resolve(effectiveOptions.config))}`
           : `--model ${quote(config.model)} --max-cost ${config.budgets.maxTotalCostUsd}`;
         io.stderr(
-          `A final-only retry may be available. This command revalidates eligibility: independent-reviewer resume-final --packet ${quote(prepared.packetPath)} ${resumeConfig}`,
+          `A final-only retry may be available. This command revalidates eligibility: independent-reviewer resume-final --packet ${quote(prepared.packetPath)} --repo ${quote(prepared.repositoryRoot)} ${resumeConfig}`,
         );
       } else if (persisted)
         io.stderr(
@@ -892,14 +893,18 @@ async function resumeFinal(
 ): Promise<number> {
   const config = await resolveReviewConfigV1(options);
   const { provider } = await resolveLiveReviewContextV1(config, dependencies);
-  const result = await resumeFinalReview(resolve(options.packet), config, provider);
+  const repositoryPath = resolve(options.repo ?? process.cwd());
+  const result = await resumeFinalReview(resolve(options.packet), config, provider, repositoryPath);
   io.stdout(`Verdict: ${reviewVerdictLabel(result.report)}`);
   io.stdout(`Report: ${result.markdownPath}`);
   return reviewOutcomeExitCodeV1(result.report.verdict);
 }
 
 async function inspect(options: InspectCommandOptionsV1, io: CliIoV1): Promise<void> {
-  const inspected = await inspectSnapshotPacket(resolve(options.packet));
+  const inspected = await inspectSnapshotPacket(resolve(options.packet), {
+    guidanceRepositoryPath: resolve(options.repo ?? process.cwd()),
+    requireGuidanceImportResolution: true,
+  });
   const report = buildInspectionReport(inspected);
   if (options.json) {
     io.stdout(JSON.stringify(report, null, 2));
