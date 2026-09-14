@@ -37,10 +37,11 @@ Latest provider-free gate (2026-09-14): formatting, lint, typecheck, 600
 coverage tests, and 32 E2E tests pass under Node.js 24. Dependency audit reports
 zero vulnerabilities when rerun with registry access. No provider call made.
 
-Separately approved paid validation on the rebased Slice 3 branch completed
-3/14 cases; all three completed verdicts matched their human labels. Every
-incomplete case ended on upstream shared-pool 429 capacity errors. See
-[multi-harness paid E2E](../validation/2026-09-14-multi-harness-paid-e2e.md).
+Separately approved paid validation on the rebased Slice 3 branch initially
+completed 3/14 cases before upstream shared-pool 429 capacity errors. A later
+targeted recovery completed all 11 previously incomplete cases, and all 14
+combined verdicts matched their human labels. See [multi-harness paid
+E2E](../validation/2026-09-14-multi-harness-paid-e2e.md).
 
 Expanded Slice 3 qualification (2026-09-14): 46 focused provider-free cases
 pass, within a 110-test guidance suite. Coverage includes canonical multi-family closure under

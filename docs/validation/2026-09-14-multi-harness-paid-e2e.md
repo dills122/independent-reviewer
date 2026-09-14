@@ -65,3 +65,39 @@ Private evidence remains under:
 - `.review-runs/full-matrix-2026-09-11/post-rebase-guidance-live-2026-09-14-347f41e/`
 
 Both directories are excluded from Git.
+
+## Targeted recovery — 2026-09-14
+
+After explicit paid authorization to retry every incomplete case, capacity was
+materially healthier:
+
+- `resume-final` revalidated and completed `requirements/clean_multi` and
+  `requirements/wrong_concern` as `READY`, matching both human labels. Each
+  resume used one successful call; together they reported `$0.000547637` of new
+  successful-call cost.
+- A fresh targeted run completed the remaining 9/9 cases, and all nine verdicts
+  matched their human labels. It started 26 calls: 24 succeeded and two failed
+  before bounded recovery. Successful calls reported `$0.006603348`.
+- The complete recovery wave therefore finished 11/11 cases with expected
+  verdicts. It added 28 calls, 26 successes, two failed calls of unknown cost,
+  and `$0.007150985` in reported successful-call cost.
+
+One `requirements/two_bugs` finding-verification attempt timed out as
+`TRANSPORT_UNCERTAIN`; the in-process, conservatively charged retry defined by
+ADR-006 succeeded. One `standards/clean` final attempt received HTTP 502 from
+DeepInfra after a prior CoreWeave 429; its bounded retry succeeded. No other
+recovery call failed.
+
+Combining the original and recovery waves, every one of the 14 human-labeled
+cases produced the expected validated verdict. Across both waves, 63 calls
+started, 38 succeeded, and 25 failed. Successful calls reported `$0.010213712`;
+failed-call cost remains unknown and must not be inferred as zero.
+
+Private recovery evidence remains under:
+
+- the resumed case directories within
+  `.review-runs/full-matrix-2026-09-11/post-rebase-guidance-live-2026-09-14-347f41e/`; and
+- `.review-runs/full-matrix-2026-09-11/failed-retry-live-2026-09-14-eb38824/`.
+
+These directories are excluded from Git. No completed case was rerun, and no
+additional paid call followed the successful recovery wave.
