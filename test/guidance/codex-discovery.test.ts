@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -161,6 +161,39 @@ describe("captureCodexGuidanceV1", () => {
       );
       assert.equal(
         captured.graph.nodes.some(({ resolvedPath }) => resolvedPath === "src/lib/AGENTS.md"),
+        false,
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves direct BASE instruction symlinks while retaining discovered provenance", async () => {
+    const repositoryPath = await repository();
+    try {
+      await git(repositoryPath, "add", ".");
+      await git(repositoryPath, "commit", "-m", "feature changes");
+      await git(repositoryPath, "switch", "main");
+      await mkdir(join(repositoryPath, "docs"), { recursive: true });
+      await writeFile(join(repositoryPath, "docs/root-agents.md"), "# Symlinked root guidance\n");
+      await unlink(join(repositoryPath, "AGENTS.md"));
+      await symlink("docs/root-agents.md", join(repositoryPath, "AGENTS.md"));
+      await git(repositoryPath, "add", ".");
+      await git(repositoryPath, "commit", "-m", "symlink root guidance");
+      await git(repositoryPath, "switch", "feature/codex-guidance");
+      await git(repositoryPath, "merge", "main", "--no-edit");
+      await writeFile(join(repositoryPath, "src/lib/code.ts"), "export const value = 3;\n");
+
+      const captured = await capture(repositoryPath);
+      const node = captured.graph.nodes.find(
+        ({ resolvedPath }) => resolvedPath === "docs/root-agents.md",
+      );
+      assert.ok(node);
+      assert.ok(
+        node.directRecognitions.some(({ discoveredPath }) => discoveredPath === "AGENTS.md"),
+      );
+      assert.equal(
+        captured.graph.nodes.some(({ resolvedPath }) => resolvedPath === "AGENTS.md"),
         false,
       );
     } finally {

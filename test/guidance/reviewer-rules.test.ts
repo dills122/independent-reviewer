@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -115,6 +115,34 @@ describe("captureReviewerRulesGuidanceV1", () => {
     }
   });
 
+  it("resolves direct BASE reviewer-rule symlinks and retains the canonical discovered path", async () => {
+    const path = await repository("# Original rules\n");
+    try {
+      await git(path, "add", ".");
+      await git(path, "commit", "-m", "feature changes");
+      await git(path, "switch", "main");
+      await mkdir(join(path, "docs"), { recursive: true });
+      await writeFile(join(path, "docs/reviewer-rules.md"), "# Symlinked reviewer rules\n");
+      await unlink(join(path, RULES_PATH));
+      await symlink("../docs/reviewer-rules.md", join(path, RULES_PATH));
+      await git(path, "add", ".");
+      await git(path, "commit", "-m", "symlink reviewer rules");
+      await git(path, "switch", "feature/guidance");
+      await git(path, "merge", "main", "--no-edit");
+      await writeFile(join(path, "code.ts"), "export const after = 3;\n");
+
+      const captured = await capture(path);
+      const node = captured.graph.nodes[0];
+      assert.ok(node);
+      assert.equal(node.resolvedPath, "docs/reviewer-rules.md");
+      assert.ok(
+        node.directRecognitions.every(({ discoveredPath }) => discoveredPath === RULES_PATH),
+      );
+    } finally {
+      await rm(path, { recursive: true, force: true });
+    }
+  });
+
   it("records empty BASE rules without creating a guidance blob", async () => {
     const path = await repository("");
     try {
@@ -128,10 +156,12 @@ describe("captureReviewerRulesGuidanceV1", () => {
     }
   });
 
-  it("accepts the 64 KiB source cap and rejects one byte above it before reading content", async () => {
+  it("accepts below and at the 64 KiB source cap and rejects one byte above it", async () => {
+    const belowLimit = await repository(`\n${"x".repeat(65_534)}`);
     const atLimit = await repository(`\n${"x".repeat(65_535)}`);
     const aboveLimit = await repository(`\n${"x".repeat(65_536)}`);
     try {
+      assert.equal((await capture(belowLimit)).graph.nodes.length, 1);
       assert.equal((await capture(atLimit)).graph.nodes.length, 1);
       await assert.rejects(
         capture(aboveLimit),
@@ -139,6 +169,7 @@ describe("captureReviewerRulesGuidanceV1", () => {
           error instanceof GuidanceCaptureError && error.code === "GUIDANCE_SOURCE_SIZE_LIMIT",
       );
     } finally {
+      await rm(belowLimit, { recursive: true, force: true });
       await rm(atLimit, { recursive: true, force: true });
       await rm(aboveLimit, { recursive: true, force: true });
     }

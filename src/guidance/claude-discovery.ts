@@ -4,6 +4,7 @@ import {
   type DirectGuidanceSourceInputV1,
   type GuidanceGraphV1,
   type GuidanceImportInputV1,
+  MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
   MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
   MAX_GUIDANCE_EDGES_V1,
   MAX_GUIDANCE_NODES_V1,
@@ -16,6 +17,7 @@ import {
   GuidanceCaptureError,
   listBaseGuidanceBlobMetadataV1,
   readBaseMarkdownGuidanceSourceV1,
+  readResolvedBaseMarkdownGuidanceSourceV1,
   resolveBaseGuidanceBlobV1,
 } from "./base-markdown-source.js";
 import { resolveClaudeImportPathV1, scanClaudeImportOccurrencesV1 } from "./claude-imports.js";
@@ -77,8 +79,12 @@ export async function captureClaudeGuidanceV1(
     repositoryPath,
     manifest.source.baseCommit,
     CLAUDE_RULES_ROOT_V1,
+    {
+      include: (path) => path.endsWith(".md"),
+      maximumEntries: MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
+    },
   );
-  const rules = [...ruleMetadata.keys()].filter((path) => path.endsWith(".md")).sort();
+  const rules = [...ruleMetadata.keys()].sort();
   session.claimDirectCandidates([...fixedCandidates, ...rules]);
 
   const metadataByPath = new Map<string, BaseGuidanceBlobMetadataV1>();
@@ -97,11 +103,21 @@ export async function captureClaudeGuidanceV1(
   }
 
   const sources = new Map<string, Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>>>();
+  const directSourcesByDiscoveredPath = new Map<
+    string,
+    NonNullable<Awaited<ReturnType<typeof readResolvedBaseMarkdownGuidanceSourceV1>>>
+  >();
   const ruleMatchers = new Map<string, ((path: string) => boolean) | undefined>();
   for (const path of [...metadataByPath.keys()].sort()) {
     const metadata = metadataByPath.get(path);
     if (!metadata) throw new Error(`Guidance source ${path} has no BASE metadata.`);
-    const source = await readBaseMarkdownGuidanceSourceV1(repositoryPath, path, metadata);
+    const loaded = await readResolvedBaseMarkdownGuidanceSourceV1(
+      repositoryPath,
+      manifest.source.baseCommit,
+      path,
+    );
+    if (!loaded) throw new Error(`Guidance source ${path} has no resolved BASE source.`);
+    const { source } = loaded;
     if (source.content.trim().length === 0) {
       session.addDiagnostic(
         createGuidanceDiagnosticV1({
@@ -114,7 +130,8 @@ export async function captureClaudeGuidanceV1(
       );
       continue;
     }
-    sources.set(path, source);
+    sources.set(loaded.resolvedPath, source);
+    directSourcesByDiscoveredPath.set(path, loaded);
     if (rules.includes(path)) {
       const { paths } = parseGuidanceFrontmatterV1(path, source.content);
       ruleMatchers.set(path, paths ? compileGuidancePatternsV1(path, paths) : undefined);
@@ -124,10 +141,12 @@ export async function captureClaudeGuidanceV1(
   let recognitionCount = 0;
   for (const target of targets) {
     const ordered = [
-      ...(candidatesByTarget.get(target.targetId) ?? []).filter((path) => sources.has(path)),
-      ...(sources.has(DOT_CLAUDE_PATH_V1) ? [DOT_CLAUDE_PATH_V1] : []),
+      ...(candidatesByTarget.get(target.targetId) ?? []).filter((path) =>
+        directSourcesByDiscoveredPath.has(path),
+      ),
+      ...(directSourcesByDiscoveredPath.has(DOT_CLAUDE_PATH_V1) ? [DOT_CLAUDE_PATH_V1] : []),
       ...rules.filter((path) => {
-        if (!sources.has(path)) return false;
+        if (!directSourcesByDiscoveredPath.has(path)) return false;
         const matcher = ruleMatchers.get(path);
         return matcher ? matcher(target.applicabilityPath) : true;
       }),
@@ -139,11 +158,11 @@ export async function captureClaudeGuidanceV1(
         discoveryLimit(
           `more than ${MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1} recognitions were produced.`,
         );
-      const source = sources.get(path);
-      if (!source) throw new Error(`Selected guidance source ${path} was not loaded.`);
-      const input = directSources.get(path) ?? {
-        resolvedPath: path,
-        contentDigest: source.contentDigest,
+      const loaded = directSourcesByDiscoveredPath.get(path);
+      if (!loaded) throw new Error(`Selected guidance source ${path} was not loaded.`);
+      const input = directSources.get(loaded.resolvedPath) ?? {
+        resolvedPath: loaded.resolvedPath,
+        contentDigest: loaded.source.contentDigest,
         directRecognitions: [],
       };
       const recognition = {
@@ -159,7 +178,7 @@ export async function captureClaudeGuidanceV1(
       } as const;
       session.claimDirectRecognition(input, recognition);
       input.directRecognitions.push(recognition);
-      directSources.set(path, input);
+      directSources.set(loaded.resolvedPath, input);
     });
   }
   if (directSources.size > MAX_GUIDANCE_NODES_V1)

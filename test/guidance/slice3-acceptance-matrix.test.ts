@@ -389,6 +389,72 @@ describe("Slice 3 provider-free acceptance matrix", () => {
     );
   });
 
+  it("merges direct BASE symlinks shared by every guidance family into one canonical node", async () => {
+    const repositoryPath = await initializeRepository("slice-3-direct-symlinks-");
+    try {
+      for (const directory of [".cursor/rules", ".github", ".kiro/steering", "docs", "src"]) {
+        await mkdir(join(repositoryPath, directory), { recursive: true });
+      }
+      await writeFile(
+        join(repositoryPath, "docs", "shared.md"),
+        "---\nalwaysApply: true\n---\n# Shared symlink guidance\n",
+      );
+      for (const path of ["AGENTS.md", "CLAUDE.md", "GEMINI.md"]) {
+        await symlink("docs/shared.md", join(repositoryPath, path));
+      }
+      await symlink(
+        "../docs/shared.md",
+        join(repositoryPath, ".github", "copilot-instructions.md"),
+      );
+      await symlink("../../docs/shared.md", join(repositoryPath, ".kiro", "steering", "always.md"));
+      await symlink("../../docs/shared.md", join(repositoryPath, ".cursor", "rules", "always.mdc"));
+      await writeFile(join(repositoryPath, "src", "code.ts"), "before\n");
+      await commitBase(repositoryPath);
+      await writeFile(join(repositoryPath, "src", "code.ts"), "after\n");
+
+      const snapshot = await captureGitSnapshotV1(request(repositoryPath));
+      const captured = await captureRepositoryGuidanceV1(repositoryPath, snapshot.manifest);
+
+      assert.equal(captured.graph.nodes.length, 1);
+      assert.equal(captured.blobs.size, 1);
+      const node = captured.graph.nodes[0];
+      assert.ok(node);
+      assert.equal(node.resolvedPath, "docs/shared.md");
+      assert.deepEqual(
+        [...new Set(node.directRecognitions.map(({ discoveredPath }) => discoveredPath))].sort(),
+        [
+          ".cursor/rules/always.mdc",
+          ".github/copilot-instructions.md",
+          ".kiro/steering/always.md",
+          "AGENTS.md",
+          "CLAUDE.md",
+          "GEMINI.md",
+        ],
+      );
+      assert.deepEqual(
+        [
+          ...new Set(
+            node.directRecognitions.map(({ familyId, sourceKind }) => `${familyId}:${sourceKind}`),
+          ),
+        ].sort(),
+        [
+          "CLAUDE:CLAUDE_MD",
+          "CODEX:CODEX_AGENTS",
+          "COPILOT:COPILOT_AGENTS",
+          "COPILOT:COPILOT_CLAUDE",
+          "COPILOT:COPILOT_GEMINI",
+          "COPILOT:COPILOT_REPOSITORY",
+          "CURSOR:CURSOR_RULE",
+          "GEMINI:GEMINI_CONTEXT",
+          "KIRO:KIRO_AGENTS",
+          "KIRO:KIRO_STEERING",
+        ],
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   for (const failure of [
     {
       name: "Gemini secret-bearing import",

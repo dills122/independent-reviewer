@@ -61,6 +61,11 @@ export interface ResolvedBaseGuidanceBlobV1 {
   metadata: BaseGuidanceBlobMetadataV1;
 }
 
+export interface ResolvedBaseMarkdownGuidanceSourceV1 {
+  resolvedPath: string;
+  source: BaseMarkdownGuidanceSourceV1;
+}
+
 export interface ListBaseGuidanceBlobMetadataOptionsV1 {
   include?: (path: string) => boolean;
   maximumEntries?: number;
@@ -402,4 +407,22 @@ export async function readBaseMarkdownGuidanceSourceV1(
     );
   }
   return { bytes, content, contentDigest: sha256BytesDigestV1(bytes) };
+}
+
+/** Resolves one direct frozen-BASE candidate, then applies complete source admission. */
+export async function readResolvedBaseMarkdownGuidanceSourceV1(
+  repositoryPath: string,
+  baseCommit: string,
+  discoveredPath: string,
+): Promise<ResolvedBaseMarkdownGuidanceSourceV1 | undefined> {
+  const resolved = await resolveBaseGuidanceBlobV1(repositoryPath, baseCommit, discoveredPath);
+  if (!resolved) return undefined;
+  return {
+    resolvedPath: resolved.resolvedPath,
+    source: await readBaseMarkdownGuidanceSourceV1(
+      repositoryPath,
+      resolved.resolvedPath,
+      resolved.metadata,
+    ),
+  };
 }

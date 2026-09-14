@@ -18,6 +18,7 @@ import {
   GuidanceCaptureError,
   listBaseGuidanceBlobMetadataV1,
   readBaseMarkdownGuidanceSourceV1,
+  readResolvedBaseMarkdownGuidanceSourceV1,
   resolveBaseGuidanceBlobV1,
 } from "./base-markdown-source.js";
 import {
@@ -77,8 +78,13 @@ export async function captureGeminiGuidanceV1(
   const settings = settingsMetadata
     ? parseGeminiSettingsV1(
         SETTINGS_PATH_V1,
-        (await readBaseMarkdownGuidanceSourceV1(repositoryPath, SETTINGS_PATH_V1, settingsMetadata))
-          .content,
+        (
+          await readResolvedBaseMarkdownGuidanceSourceV1(
+            repositoryPath,
+            manifest.source.baseCommit,
+            SETTINGS_PATH_V1,
+          )
+        )?.source.content ?? "",
       )
     : {
         contextFileNames: ["GEMINI.md"],
@@ -113,8 +119,13 @@ export async function captureGeminiGuidanceV1(
   for (const path of ignorePaths.sort()) {
     const metadata = ignoreMetadata.get(path);
     if (!metadata) throw new Error(`Gemini ignore source ${path} has no BASE metadata.`);
-    const source = await readBaseMarkdownGuidanceSourceV1(repositoryPath, path, metadata);
-    ignoreDocuments.push({ path, content: source.content });
+    const loaded = await readResolvedBaseMarkdownGuidanceSourceV1(
+      repositoryPath,
+      manifest.source.baseCommit,
+      path,
+    );
+    if (!loaded) throw new Error(`Gemini ignore source ${path} has no resolved BASE source.`);
+    ignoreDocuments.push({ path, content: loaded.source.content });
   }
   const isIgnored = buildGeminiIgnoreMatcherV1(ignoreDocuments);
 
@@ -153,17 +164,13 @@ export async function captureGeminiGuidanceV1(
   for (const path of contextPaths) {
     const metadata = contextMetadata.get(path);
     if (!metadata) throw new Error(`Gemini context ${path} has no BASE metadata.`);
-    const resolved = await resolveBaseGuidanceBlobV1(
+    const loaded = await readResolvedBaseMarkdownGuidanceSourceV1(
       repositoryPath,
       manifest.source.baseCommit,
       path,
     );
-    if (!resolved) throw new Error(`Gemini context ${path} has no resolved BASE source.`);
-    const source = await readBaseMarkdownGuidanceSourceV1(
-      repositoryPath,
-      resolved.resolvedPath,
-      resolved.metadata,
-    );
+    if (!loaded) throw new Error(`Gemini context ${path} has no resolved BASE source.`);
+    const { source } = loaded;
     if (source.content.trim().length === 0) {
       diagnostics.push(
         createGuidanceDiagnosticV1({
@@ -175,8 +182,8 @@ export async function captureGeminiGuidanceV1(
         }),
       );
     } else {
-      sources.set(resolved.resolvedPath, source);
-      directSourcesByDiscoveredPath.set(path, { resolvedPath: resolved.resolvedPath, source });
+      sources.set(loaded.resolvedPath, source);
+      directSourcesByDiscoveredPath.set(path, loaded);
     }
   }
 

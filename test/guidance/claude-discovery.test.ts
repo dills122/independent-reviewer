@@ -308,6 +308,59 @@ describe("captureClaudeGuidanceV1", () => {
     }
   });
 
+  it("resolves direct BASE file and rule symlinks before parsing and import traversal", async () => {
+    const repositoryPath = await repository();
+    try {
+      await git(repositoryPath, "add", ".");
+      await git(repositoryPath, "commit", "-m", "feature changes");
+      await git(repositoryPath, "switch", "main");
+      await writeFile(
+        join(repositoryPath, "docs", "direct-claude.md"),
+        "# Direct Claude\n\n@nested-direct.md\n",
+      );
+      await writeFile(join(repositoryPath, "docs", "nested-direct.md"), "# Nested direct\n");
+      await writeFile(
+        join(repositoryPath, "docs", "direct-rule.md"),
+        "---\npaths: [src/**]\n---\n# Direct rule\n",
+      );
+      await rm(join(repositoryPath, "CLAUDE.md"));
+      await symlink("docs/direct-claude.md", join(repositoryPath, "CLAUDE.md"));
+      await symlink(
+        "../../docs/direct-rule.md",
+        join(repositoryPath, ".claude", "rules", "linked.md"),
+      );
+      await git(repositoryPath, "add", ".");
+      await git(repositoryPath, "commit", "-m", "symlink direct Claude guidance");
+      await git(repositoryPath, "switch", "feature/claude-guidance");
+      await git(repositoryPath, "merge", "main", "--no-edit");
+      await writeFile(join(repositoryPath, "src/lib/code.ts"), "export const value = 3;\n");
+
+      const snapshot = await captureGitSnapshotV1(request(repositoryPath));
+      const captured = await captureClaudeGuidanceV1(repositoryPath, snapshot.manifest);
+      const direct = captured.graph.nodes.find(
+        ({ resolvedPath }) => resolvedPath === "docs/direct-claude.md",
+      );
+      const rule = captured.graph.nodes.find(
+        ({ resolvedPath }) => resolvedPath === "docs/direct-rule.md",
+      );
+      assert.ok(direct);
+      assert.ok(rule);
+      assert.ok(
+        direct.directRecognitions.some(({ discoveredPath }) => discoveredPath === "CLAUDE.md"),
+      );
+      assert.ok(
+        rule.directRecognitions.some(
+          ({ discoveredPath }) => discoveredPath === ".claude/rules/linked.md",
+        ),
+      );
+      assert.ok(
+        captured.graph.nodes.some(({ resolvedPath }) => resolvedPath === "docs/nested-direct.md"),
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("rejects an imported BASE symlink that escapes the repository", async () => {
     const repositoryPath = await repository();
     try {

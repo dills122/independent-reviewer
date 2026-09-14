@@ -10,7 +10,7 @@ import {
 import {
   baseGuidanceBlobMetadataV1,
   GuidanceCaptureError,
-  readBaseMarkdownGuidanceSourceV1,
+  readResolvedBaseMarkdownGuidanceSourceV1,
 } from "./base-markdown-source.js";
 import {
   createGuidanceDiscoverySessionV1,
@@ -85,12 +85,20 @@ export async function captureCodexGuidanceV1(
   if (selectedPaths.size > MAX_GUIDANCE_NODES_V1)
     discoveryLimit(`more than ${MAX_GUIDANCE_NODES_V1} applicable source nodes were selected.`);
 
-  const sources = new Map<string, Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>>>();
+  type LoadedSourceV1 = NonNullable<
+    Awaited<ReturnType<typeof readResolvedBaseMarkdownGuidanceSourceV1>>
+  >;
+  const sourcesByDiscoveredPath = new Map<string, LoadedSourceV1>();
   for (const path of [...selectedPaths].sort()) {
     const metadata = metadataByPath.get(path);
     if (!metadata) throw new Error(`Selected guidance source ${path} has no BASE metadata.`);
-    const source = await readBaseMarkdownGuidanceSourceV1(repositoryPath, path, metadata);
-    if (source.content.trim().length === 0) {
+    const loaded = await readResolvedBaseMarkdownGuidanceSourceV1(
+      repositoryPath,
+      manifest.source.baseCommit,
+      path,
+    );
+    if (!loaded) throw new Error(`Selected guidance source ${path} has no resolved BASE source.`);
+    if (loaded.source.content.trim().length === 0) {
       session.addDiagnostic(
         createGuidanceDiagnosticV1({
           code: "EMPTY_SOURCE",
@@ -101,7 +109,7 @@ export async function captureCodexGuidanceV1(
         }),
       );
     } else {
-      sources.set(path, source);
+      sourcesByDiscoveredPath.set(path, loaded);
     }
   }
 
@@ -109,7 +117,7 @@ export async function captureCodexGuidanceV1(
   let recognitionCount = 0;
   for (const target of targets) {
     const selected = (selectedByTarget.get(target.targetId) ?? []).filter((path) =>
-      sources.has(path),
+      sourcesByDiscoveredPath.has(path),
     );
     selected.forEach((path, nativeOrder) => {
       recognitionCount += 1;
@@ -117,11 +125,11 @@ export async function captureCodexGuidanceV1(
         discoveryLimit(
           `more than ${MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1} recognitions were produced.`,
         );
-      const source = sources.get(path);
-      if (!source) throw new Error(`Selected guidance source ${path} was not loaded.`);
-      const input = directSources.get(path) ?? {
-        resolvedPath: path,
-        contentDigest: source.contentDigest,
+      const loaded = sourcesByDiscoveredPath.get(path);
+      if (!loaded) throw new Error(`Selected guidance source ${path} was not loaded.`);
+      const input = directSources.get(loaded.resolvedPath) ?? {
+        resolvedPath: loaded.resolvedPath,
+        contentDigest: loaded.source.contentDigest,
         directRecognitions: [],
       };
       const recognition = {
@@ -133,7 +141,7 @@ export async function captureCodexGuidanceV1(
       } as const;
       session.claimDirectRecognition(input, recognition);
       input.directRecognitions.push(recognition);
-      directSources.set(path, input);
+      directSources.set(loaded.resolvedPath, input);
     });
   }
 
@@ -144,7 +152,7 @@ export async function captureCodexGuidanceV1(
       session.finalizeDiagnostics(),
     ),
     blobs: new Map(
-      [...sources.values()].map((source) => [
+      [...sourcesByDiscoveredPath.values()].map(({ source }) => [
         source.contentDigest.value,
         Uint8Array.from(source.bytes),
       ]),
