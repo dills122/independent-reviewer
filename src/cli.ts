@@ -18,6 +18,7 @@ import {
   assembleStandardsRequest,
   loadLocalSettings,
   MAX_LOCAL_JSON_BYTES_V1,
+  type StandardsCliOptionsV1,
   saveLocalSettings,
 } from "./cli/standards-input.js";
 import {
@@ -210,66 +211,48 @@ const COMMAND_SPECS_V1 = defineCommandSpecsV1({
 
 type CommandNameV1 = keyof typeof COMMAND_SPECS_V1;
 
-interface InitCommandOptionsV1 {
+type CamelCaseOptionNameV1<Name extends string> = Name extends `${infer Head}-${infer Tail}`
+  ? `${Head}${Capitalize<CamelCaseOptionNameV1<Tail>>}`
+  : Name;
+
+type CommandOptionValueV1<Spec extends CommandOptionSpecV1> = Spec["type"] extends "boolean"
+  ? boolean
+  : string;
+
+type CommandOptionsFromSpecV1<Spec extends CommandSpecV1> = {
+  [Name in keyof Spec["options"] as Spec["options"][Name] extends { required: true }
+    ? CamelCaseOptionNameV1<Name & string>
+    : never]-?: CommandOptionValueV1<Spec["options"][Name]>;
+} & {
+  [Name in keyof Spec["options"] as Spec["options"][Name] extends { required: true }
+    ? never
+    : CamelCaseOptionNameV1<Name & string>]?: CommandOptionValueV1<Spec["options"][Name]>;
+};
+
+type CommandOptionsV1<Name extends CommandNameV1> = CommandOptionsFromSpecV1<
+  (typeof COMMAND_SPECS_V1)[Name]
+>;
+type InitCommandOptionsV1 = CommandOptionsV1<"init">;
+type PrepareCommandOptionsV1 = CommandOptionsV1<"prepare">;
+type InspectCommandOptionsV1 = CommandOptionsV1<"inspect">;
+type ReviewCommandOptionsV1 = CommandOptionsV1<"review">;
+type ResumeFinalCommandOptionsV1 = CommandOptionsV1<"resume-final">;
+type ConfigShowCommandOptionsV1 = CommandOptionsV1<"config">;
+
+interface SimpleSettingsCommandOptionsV1 {
   repo?: string;
   model?: string;
   maxCost?: string;
+}
+
+interface ReviewConfigurationOptionsV1 extends SimpleSettingsCommandOptionsV1 {
   config?: string;
-  standards?: string;
-  author?: string;
 }
 
-interface PrepareCommandOptionsV1 {
-  request: string;
-  base?: string;
-  output?: string;
-  exclude?: string;
-}
-
-interface InspectCommandOptionsV1 {
-  packet: string;
-  json?: boolean;
-}
-
-interface ReviewCommandOptionsV1 extends InitCommandOptionsV1 {
-  dryRun?: boolean;
-  newFlow?: boolean;
-  quiet?: boolean;
+interface PacketCommandOptionsV1 extends StandardsCliOptionsV1 {
   request?: string;
-  base?: string;
   output?: string;
   exclude?: string;
-}
-
-interface ResumeFinalCommandOptionsV1 {
-  packet: string;
-  config?: string;
-  repo?: string;
-  model?: string;
-  maxCost?: string;
-}
-
-interface ConfigShowCommandOptionsV1 {
-  repo?: string;
-  model?: string;
-  maxCost?: string;
-  resolved?: boolean;
-}
-
-/** Converts Commander's typed camel-case result at the existing input-adapter boundary. */
-function optionMapV1(command: Command, values: object): Map<string, string | true> {
-  const options = new Map<string, string | true>();
-  const record = values as Record<string, unknown>;
-  for (const definition of command.options) {
-    if (!definition.long) continue;
-    const value = record[definition.attributeName()];
-    if (typeof value === "string") {
-      options.set(definition.long, value);
-    } else if (value === true) {
-      options.set(definition.long, true);
-    }
-  }
-  return options;
 }
 
 interface CliProgramV1 {
@@ -360,33 +343,33 @@ function createCliProgramV1(
   };
 
   const initCommand = addOptions(program.command("init"), COMMAND_SPECS_V1.init);
-  initCommand.action(async (values: InitCommandOptionsV1) => {
+  initCommand.action(async () => {
     io.stdout(
-      `Saved review settings: ${await initializeReviewSettingsV1(optionMapV1(initCommand, values))}`,
+      `Saved review settings: ${await initializeReviewSettingsV1(initCommand.opts<InitCommandOptionsV1>())}`,
     );
   });
 
   const prepareCommand = addOptions(program.command("prepare"), COMMAND_SPECS_V1.prepare);
-  prepareCommand.action(async (values: PrepareCommandOptionsV1) => {
-    await prepare(optionMapV1(prepareCommand, values), io);
+  prepareCommand.action(async () => {
+    await prepare(prepareCommand.opts<PrepareCommandOptionsV1>(), io);
   });
 
   const inspectCommand = addOptions(program.command("inspect"), COMMAND_SPECS_V1.inspect);
-  inspectCommand.action(async (values: InspectCommandOptionsV1) => {
-    await inspect(optionMapV1(inspectCommand, values), io);
+  inspectCommand.action(async () => {
+    await inspect(inspectCommand.opts<InspectCommandOptionsV1>(), io);
   });
 
   const reviewCommand = addOptions(program.command("review"), COMMAND_SPECS_V1.review);
-  reviewCommand.action(async (values: ReviewCommandOptionsV1) => {
-    result = await review(optionMapV1(reviewCommand, values), io, dependencies);
+  reviewCommand.action(async () => {
+    result = await review(reviewCommand.opts<ReviewCommandOptionsV1>(), io, dependencies);
   });
 
   const resumeCommand = addOptions(
     program.command("resume-final"),
     COMMAND_SPECS_V1["resume-final"],
   );
-  resumeCommand.action(async (values: ResumeFinalCommandOptionsV1) => {
-    result = await resumeFinal(optionMapV1(resumeCommand, values), io, dependencies);
+  resumeCommand.action(async () => {
+    result = await resumeFinal(resumeCommand.opts<ResumeFinalCommandOptionsV1>(), io, dependencies);
   });
 
   const configCommand = program
@@ -399,8 +382,8 @@ function createCliProgramV1(
     .showHelpAfterError()
     .configureOutput(output);
   const configShowCommand = addOptions(configCommand.command("show"), COMMAND_SPECS_V1.config);
-  configShowCommand.action(async (values: ConfigShowCommandOptionsV1) => {
-    await showSimpleReviewConfigV1(optionMapV1(configShowCommand, values), io);
+  configShowCommand.action(async () => {
+    await showSimpleReviewConfigV1(configShowCommand.opts<ConfigShowCommandOptionsV1>(), io);
   });
 
   return {
@@ -440,9 +423,8 @@ function commanderFailureV1(error: CommanderError, args: string[], output: CliPr
   return [message, ...rest].join("\n");
 }
 
-function maxCostOptionV1(options: Map<string, string | true>): number | undefined {
-  const value = options.get("--max-cost");
-  if (typeof value !== "string") return undefined;
+function maxCostOptionV1(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
   if (!/^(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value)) {
     throw new Error("--max-cost must be a positive finite decimal number.");
   }
@@ -454,26 +436,23 @@ function maxCostOptionV1(options: Map<string, string | true>): number | undefine
 }
 
 async function resolveSimpleSettingsForOptionsV1(
-  options: Map<string, string | true>,
+  options: SimpleSettingsCommandOptionsV1,
 ): Promise<ResolvedSimpleReviewSettingsV1> {
-  const repository = await resolveRepositoryRootV1(
-    typeof options.get("--repo") === "string" ? String(options.get("--repo")) : process.cwd(),
-  );
-  const maxCostUsd = maxCostOptionV1(options);
+  const repository = await resolveRepositoryRootV1(options.repo ?? process.cwd());
+  const maxCostUsd = maxCostOptionV1(options.maxCost);
   return resolveSimpleReviewSettingsV1({
     local: await readLocalSimpleReviewSettingsV1(repository),
     cli: {
-      ...(typeof options.get("--model") === "string" ? { model: options.get("--model") } : {}),
+      ...(options.model ? { model: options.model } : {}),
       ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
     },
   });
 }
 
-async function initializeReviewSettingsV1(options: Map<string, string | true>): Promise<string> {
-  const usesSimpleSettings = options.has("--model") || options.has("--max-cost");
-  const usesAdvancedSettings = ["--config", "--standards", "--author"].some((name) =>
-    options.has(name),
-  );
+async function initializeReviewSettingsV1(options: InitCommandOptionsV1): Promise<string> {
+  const usesSimpleSettings = options.model !== undefined || options.maxCost !== undefined;
+  const usesAdvancedSettings =
+    options.config !== undefined || options.standards !== undefined || options.author !== undefined;
   if (usesSimpleSettings && usesAdvancedSettings) {
     throw new Error(
       "Use either advanced config/standards/author settings or simple model/cost settings, not both.",
@@ -481,13 +460,11 @@ async function initializeReviewSettingsV1(options: Map<string, string | true>): 
   }
   if (!usesSimpleSettings) return saveLocalSettings(options);
 
-  const repository = await resolveRepositoryRootV1(
-    typeof options.get("--repo") === "string" ? String(options.get("--repo")) : process.cwd(),
-  );
-  const maxCostUsd = maxCostOptionV1(options);
+  const repository = await resolveRepositoryRootV1(options.repo ?? process.cwd());
+  const maxCostUsd = maxCostOptionV1(options.maxCost);
   const resolved = resolveSimpleReviewSettingsV1({
     cli: {
-      ...(typeof options.get("--model") === "string" ? { model: options.get("--model") } : {}),
+      ...(options.model ? { model: options.model } : {}),
       ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
     },
   });
@@ -495,11 +472,11 @@ async function initializeReviewSettingsV1(options: Map<string, string | true>): 
 }
 
 async function showSimpleReviewConfigV1(
-  options: Map<string, string | true>,
+  options: ConfigShowCommandOptionsV1,
   io: CliIoV1,
 ): Promise<void> {
   const resolved = await resolveSimpleSettingsForOptionsV1(options);
-  const visible = options.has("--resolved")
+  const visible = options.resolved
     ? resolved
     : {
         schemaVersion: resolved.schemaVersion,
@@ -513,14 +490,14 @@ async function showSimpleReviewConfigV1(
 
 /** The run configuration for this invocation, from `--config` or from simple settings. */
 async function resolveReviewConfigV1(
-  options: Map<string, string | true>,
+  options: ReviewConfigurationOptionsV1,
 ): Promise<ReviewRunConfigV3> {
-  const configPath = options.get("--config");
-  const usesSimpleFlags = options.has("--model") || options.has("--max-cost");
-  if (typeof configPath === "string" && usesSimpleFlags) {
+  const configPath = options.config;
+  const usesSimpleFlags = options.model !== undefined || options.maxCost !== undefined;
+  if (configPath !== undefined && usesSimpleFlags) {
     throw new Error("Use either --config or simple model/cost settings, not both.");
   }
-  if (typeof configPath === "string") {
+  if (configPath !== undefined) {
     return ReviewRunConfigV3Schema.parse(
       await readStrictJsonFileV1(resolve(configPath), {
         maxBytes: MAX_LOCAL_JSON_BYTES_V1,
@@ -529,14 +506,6 @@ async function resolveReviewConfigV1(
     );
   }
   return (await resolveSimpleSettingsForOptionsV1(options)).reviewRunConfig;
-}
-
-function requiredOption(options: Map<string, string | true>, name: string): string {
-  const value = options.get(name);
-  if (typeof value !== "string") {
-    throw new Error(`Missing required option ${name}`);
-  }
-  return value;
 }
 
 /** The human-readable view of the same validated report the JSON view emits. */
@@ -589,16 +558,16 @@ async function repositoryDiscoversSteeringV1(repositoryPath: string): Promise<bo
 }
 
 async function preparePacket(
-  options: Map<string, string | true>,
+  options: PacketCommandOptionsV1,
   policy: PacketPreparationPolicyV1 = {},
 ): Promise<PreparedPacketV1> {
-  const requestOption = options.get("--request");
-  if (requestOption && ["--standards", "--author", "--new-flow"].some((key) => options.has(key)))
+  const requestOption = options.request;
+  if (requestOption && (options.standards || options.author || options.newFlow))
     throw new Error("Use either --request or standards/author inputs, not both.");
   const assembled = requestOption
     ? undefined
     : await assembleStandardsRequest(options, policy.suppliedConfig);
-  const requestPath = typeof requestOption === "string" ? resolve(requestOption) : undefined;
+  const requestPath = requestOption ? resolve(requestOption) : undefined;
   let request: ReviewRequest;
   if (assembled) request = assembled.request;
   else {
@@ -615,41 +584,40 @@ async function preparePacket(
       `Review request config reference ${request.reviewConfigRef} does not match ${policy.expectedConfigId}.`,
     );
   }
-  const base = options.get("--base");
-  const configPath = options.get("--config");
-  const excludePatterns = options.get("--exclude");
+  const base = options.base;
+  const configPath = options.config;
+  const excludePatterns = options.exclude;
   // Packet locations are resolved before capture so the packets themselves never become evidence:
   // a prior run's blobs, canonical inputs, and author packet would otherwise be captured as
   // untracked files and transmitted on the next review.
   const repositoryRoot = await resolveRepositoryRootV1(request.repository.path);
-  const requestedOutput = options.get("--output");
+  const requestedOutput = options.output;
   const defaultPacketRoot = join(repositoryRoot, ".review-runs");
-  const packetRoot =
-    typeof requestedOutput === "string" ? resolve(requestedOutput) : defaultPacketRoot;
+  const packetRoot = requestedOutput ? resolve(requestedOutput) : defaultPacketRoot;
   const priorPacketRoots =
-    typeof requestedOutput === "string" &&
+    requestedOutput !== undefined &&
     (await isStrictDescendantFileSystemPathV1(repositoryRoot, packetRoot))
       ? await findSiblingSnapshotPacketsV1(packetRoot)
       : [];
   const captured = await captureGitSnapshotV1(request, {
-    ...(typeof base === "string" ? { base } : {}),
+    ...(base ? { base } : {}),
     ...(policy.suppliedConfig
       ? { maxReferencedSourceBytes: policy.suppliedConfig.budgets.maxInitialEvidenceBytes }
       : {}),
     excludedFileSystemPaths: [
       ...(requestPath ? [requestPath] : []),
       ...(assembled?.excludedPaths ?? []),
-      ...(typeof configPath === "string" ? [resolve(configPath)] : []),
+      ...(configPath ? [resolve(configPath)] : []),
       defaultPacketRoot,
       packetRoot,
       ...priorPacketRoots,
     ],
-    ...(typeof excludePatterns === "string"
+    ...(excludePatterns
       ? { excludedPathPatterns: excludePatterns.split(",").filter((entry) => entry.length > 0) }
       : {}),
   });
   const packetPath =
-    typeof requestedOutput === "string"
+    requestedOutput !== undefined
       ? packetRoot
       : join(defaultPacketRoot, captured.manifest.snapshotId);
   // Reviewer rules are a property of the repository, not of how this run was configured, so every
@@ -761,7 +729,7 @@ function preparedGuidanceSummary(sourceCount: number | undefined): string {
     : `${sourceCount} source(s)`;
 }
 
-async function prepare(options: Map<string, string | true>, io: CliIoV1): Promise<void> {
+async function prepare(options: PrepareCommandOptionsV1, io: CliIoV1): Promise<void> {
   const { captured, packetPath, repositoryRoot, guidanceSourceCount } =
     await preparePacket(options);
   await warnUnignoredPacketLocation(repositoryRoot, packetPath, io);
@@ -783,22 +751,25 @@ export function reviewOutcomeExitCodeV1(verdict: FinalReviewReportV1["verdict"])
 }
 
 async function review(
-  options: Map<string, string | true>,
+  options: ReviewCommandOptionsV1,
   io: CliIoV1,
   dependencies: CliDependenciesV1,
 ): Promise<number> {
-  const explicitAdvancedConfig = options.has("--config");
-  const explicitSimpleSettings = options.has("--model") || options.has("--max-cost");
-  if (!options.has("--request")) {
-    await loadLocalSettings(options);
-    if (explicitSimpleSettings && !explicitAdvancedConfig) options.delete("--config");
+  const explicitAdvancedConfig = options.config !== undefined;
+  const explicitSimpleSettings = options.model !== undefined || options.maxCost !== undefined;
+  let effectiveOptions = options;
+  if (!options.request) {
+    effectiveOptions = { ...options, ...(await loadLocalSettings(options)) };
+    if (explicitSimpleSettings && !explicitAdvancedConfig) {
+      const { config: _localConfig, ...withoutLocalConfig } = effectiveOptions;
+      effectiveOptions = withoutLocalConfig;
+    }
   }
-  if (options.has("--dry-run")) {
-    const config = await resolveReviewConfigV1(options);
+  if (effectiveOptions.dryRun) {
+    const config = await resolveReviewConfigV1(effectiveOptions);
     const temporary = await mkdtemp(join(tmpdir(), "independent-reviewer-preflight-"));
     try {
-      const dryOptions = new Map(options);
-      dryOptions.set("--output", join(temporary, "packet"));
+      const dryOptions = { ...effectiveOptions, output: join(temporary, "packet") };
       const prepared = await preparePacket(dryOptions, {
         expectedConfigId: config.configId,
         suppliedConfig: config,
@@ -832,12 +803,12 @@ async function review(
       await rm(temporary, { recursive: true, force: true });
     }
   }
-  const config = await resolveReviewConfigV1(options);
+  const config = await resolveReviewConfigV1(effectiveOptions);
   const apiKey = dependencies.readOpenRouterApiKey();
   if (!apiKey || apiKey.trim().length === 0) {
     throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
   }
-  const prepared = await preparePacket(options, {
+  const prepared = await preparePacket(effectiveOptions, {
     expectedConfigId: config.configId,
     suppliedConfig: config,
   });
@@ -849,7 +820,10 @@ async function review(
     await preflightReview(prepared.packetPath, config);
     await prepared.claim();
   }
-  const progress = createProgressOutput(io.stderr, !prepared.standards || options.has("--quiet"));
+  const progress = createProgressOutput(
+    io.stderr,
+    !prepared.standards || effectiveOptions.quiet === true,
+  );
   try {
     const result = await withReviewProgress(progress.observe, () =>
       runTwoStageReview(prepared.packetPath, config, provider),
@@ -893,10 +867,9 @@ async function review(
       // the finding-verification stage was added, so this offer was unreachable (#121).
       if (evaluateResumeShapeV1(events).eligible) {
         const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
-        const resumeConfig =
-          typeof options.get("--config") === "string"
-            ? `--config ${quote(resolve(requiredOption(options, "--config")))}`
-            : `--model ${quote(config.model)} --max-cost ${config.budgets.maxTotalCostUsd}`;
+        const resumeConfig = effectiveOptions.config
+          ? `--config ${quote(resolve(effectiveOptions.config))}`
+          : `--model ${quote(config.model)} --max-cost ${config.budgets.maxTotalCostUsd}`;
         io.stderr(
           `A final-only retry may be available. This command revalidates eligibility: independent-reviewer resume-final --packet ${quote(prepared.packetPath)} ${resumeConfig}`,
         );
@@ -913,26 +886,22 @@ async function review(
 }
 
 async function resumeFinal(
-  options: Map<string, string | true>,
+  options: ResumeFinalCommandOptionsV1,
   io: CliIoV1,
   dependencies: CliDependenciesV1,
 ): Promise<number> {
   const config = await resolveReviewConfigV1(options);
   const { provider } = await resolveLiveReviewContextV1(config, dependencies);
-  const result = await resumeFinalReview(
-    resolve(requiredOption(options, "--packet")),
-    config,
-    provider,
-  );
+  const result = await resumeFinalReview(resolve(options.packet), config, provider);
   io.stdout(`Verdict: ${reviewVerdictLabel(result.report)}`);
   io.stdout(`Report: ${result.markdownPath}`);
   return reviewOutcomeExitCodeV1(result.report.verdict);
 }
 
-async function inspect(options: Map<string, string | true>, io: CliIoV1): Promise<void> {
-  const inspected = await inspectSnapshotPacket(resolve(requiredOption(options, "--packet")));
+async function inspect(options: InspectCommandOptionsV1, io: CliIoV1): Promise<void> {
+  const inspected = await inspectSnapshotPacket(resolve(options.packet));
   const report = buildInspectionReport(inspected);
-  if (options.get("--json") === true) {
+  if (options.json) {
     io.stdout(JSON.stringify(report, null, 2));
     return;
   }

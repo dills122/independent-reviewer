@@ -16,7 +16,15 @@ import { readStrictJsonFileV1 } from "../contracts/strict-json.js";
 import { resolveRepositoryRootV1 } from "../snapshot/git-capture.js";
 import { runGit } from "../snapshot/git-command.js";
 
-type Options = Map<string, string | true>;
+export interface StandardsCliOptionsV1 {
+  repo?: string;
+  config?: string;
+  standards?: string;
+  author?: string;
+  newFlow?: boolean;
+  base?: string;
+}
+
 export const MAX_LOCAL_JSON_BYTES_V1 = 1024 * 1024;
 export const LocalReviewSettingsV1Schema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -25,16 +33,14 @@ export const LocalReviewSettingsV1Schema = z.strictObject({
   author: NonEmptyTextSchema,
 });
 const FlowStateSchema = z.strictObject({ schemaVersion: z.literal(1), flowId: FlowIdSchema });
-function option(options: Options, name: string): string | undefined {
-  const value = options.get(name);
-  return typeof value === "string" ? value : undefined;
-}
 export async function localReviewDirectory(repo: string): Promise<string> {
   const result = await runGit(repo, ["rev-parse", "--git-path", "independent-reviewer"]);
   return resolve(repo, result.stdout.toString("utf8").trim());
 }
-export async function loadLocalSettings(options: Options): Promise<void> {
-  const repo = await resolveRepositoryRootV1(option(options, "--repo") ?? process.cwd());
+export async function loadLocalSettings(
+  options: StandardsCliOptionsV1,
+): Promise<StandardsCliOptionsV1> {
+  const repo = await resolveRepositoryRootV1(options.repo ?? process.cwd());
   const directory = await localReviewDirectory(repo);
   try {
     const settings = LocalReviewSettingsV1Schema.parse(
@@ -43,17 +49,22 @@ export async function loadLocalSettings(options: Options): Promise<void> {
         source: "local review settings",
       }),
     );
-    for (const name of ["config", "standards", "author"] as const)
-      if (!options.has(`--${name}`)) options.set(`--${name}`, settings[name]);
+    return {
+      ...options,
+      config: options.config ?? settings.config,
+      standards: options.standards ?? settings.standards,
+      author: options.author ?? settings.author,
+    };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return options;
   }
 }
-export async function saveLocalSettings(options: Options): Promise<string> {
-  const repo = await resolveRepositoryRootV1(option(options, "--repo") ?? process.cwd());
+export async function saveLocalSettings(options: StandardsCliOptionsV1): Promise<string> {
+  const repo = await resolveRepositoryRootV1(options.repo ?? process.cwd());
   const paths = Object.fromEntries(
     ["config", "standards", "author"].map((name) => {
-      const path = option(options, `--${name}`);
+      const path = options[name as "config" | "standards" | "author"];
       if (!path) throw new Error(`Provide --${name} when initializing review settings.`);
       return [name, resolve(path)];
     }),
@@ -100,13 +111,13 @@ async function readAuthor(path: string) {
 }
 /** No state is written until capture and admission succeed. Exclusive instance claims arbitrate concurrent starts. */
 export async function assembleStandardsRequest(
-  options: Options,
+  options: StandardsCliOptionsV1,
   suppliedConfig?: z.infer<typeof ReviewRunConfigV3Schema>,
 ) {
-  const repo = await resolveRepositoryRootV1(option(options, "--repo") ?? process.cwd());
-  const standardPath = option(options, "--standards");
-  const authorPath = option(options, "--author");
-  const configPath = option(options, "--config");
+  const repo = await resolveRepositoryRootV1(options.repo ?? process.cwd());
+  const standardPath = options.standards;
+  const authorPath = options.author;
+  const configPath = options.config;
   if (!standardPath || !authorPath || (!configPath && !suppliedConfig))
     throw new Error(
       "Provide --standards, --author and either --config or simple model/cost settings.",
@@ -130,7 +141,7 @@ export async function assembleStandardsRequest(
   const pointer = join(directory, "flow.json");
   let flowId = `flow_${randomUUID()}`;
   let existing = false;
-  if (!options.has("--new-flow"))
+  if (!options.newFlow)
     try {
       flowId = FlowStateSchema.parse(
         await readStrictJsonFileV1(pointer, {
@@ -162,7 +173,7 @@ export async function assembleStandardsRequest(
     reviewInstance: { number, maximum: 3 },
     repository: {
       path: repo,
-      ...(option(options, "--base") ? { base: option(options, "--base") } : {}),
+      ...(options.base ? { base: options.base } : {}),
     },
     canonicalInputs: {
       standards: [
@@ -189,7 +200,7 @@ export async function assembleStandardsRequest(
       await mkdir(directory, { recursive: true, mode: 0o700 });
       if (!existing) {
         const contents = jsonDocument({ schemaVersion: 1, flowId });
-        if (options.has("--new-flow")) {
+        if (options.newFlow) {
           const temporary = join(directory, `flow-${randomUUID()}.tmp`);
           await writeFile(temporary, contents, { flag: "wx", mode: 0o600 });
           await rename(temporary, pointer);

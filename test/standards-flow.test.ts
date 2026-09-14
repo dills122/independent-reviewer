@@ -794,12 +794,12 @@ test("saved settings never overwrite silently and direct inputs enforce three ex
     assert.equal(await runCliV1(init, io), 0);
     assert.equal(await runCliV1(init, io), 1);
     assert.match(errors.join("\n"), /Settings already exist/);
-    const options = new Map<string, string | true>([
-      ["--repo", f.repo],
-      ["--config", f.configPath],
-      ["--standards", standardPath],
-      ["--author", authorPath],
-    ]);
+    const options = {
+      repo: f.repo,
+      config: f.configPath,
+      standards: standardPath,
+      author: authorPath,
+    };
     const first = await assembleStandardsRequest(options);
     await first.claim();
     const second = await assembleStandardsRequest(options);
@@ -811,7 +811,7 @@ test("saved settings never overwrite silently and direct inputs enforce three ex
     assert.equal(third.request.reviewInstance.number, 3);
     await third.claim();
     await assert.rejects(assembleStandardsRequest(options), /all three instances/);
-    const next = await assembleStandardsRequest(new Map([...options, ["--new-flow", true]]));
+    const next = await assembleStandardsRequest({ ...options, newFlow: true });
     assert.notEqual(next.request.flowId, first.request.flowId);
     assert.equal(next.request.reviewInstance.number, 1);
     assert.match(await localReviewDirectory(f.repo), /\.git/);
