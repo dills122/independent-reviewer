@@ -123,12 +123,6 @@ interface CommandOptionSpecV1 {
 interface CommandSpecV1 {
   summary: string;
   options: Record<string, CommandOptionSpecV1>;
-  subcommand?: string;
-  run(
-    options: Map<string, string | true>,
-    io: CliIoV1,
-    dependencies: CliDependenciesV1,
-  ): Promise<number>;
 }
 
 const SNAPSHOT_PACKET_MARKERS_V1 = [
@@ -155,10 +149,6 @@ const COMMAND_SPECS_V1 = defineCommandSpecsV1({
       },
       author: { type: "string", description: "Author overview or packet file." },
     },
-    run: async (options, io) => {
-      io.stdout(`Saved review settings: ${await initializeReviewSettingsV1(options)}`);
-      return 0;
-    },
   },
   prepare: {
     summary: "Capture a frozen snapshot packet without contacting a provider.",
@@ -168,20 +158,12 @@ const COMMAND_SPECS_V1 = defineCommandSpecsV1({
       output: { type: "string", description: "Packet directory (default <repo>/.review-runs)." },
       exclude: { type: "string", description: "Comma-separated glob patterns to exclude." },
     },
-    run: async (options, io) => {
-      await prepare(options, io);
-      return 0;
-    },
   },
   inspect: {
     summary: "Validate a packet and report what it contains.",
     options: {
       packet: { type: "string", description: "Path to the snapshot packet.", required: true },
       json: { type: "boolean", description: "Emit the versioned inspection report as JSON." },
-    },
-    run: async (options, io) => {
-      await inspect(options, io);
-      return 0;
     },
   },
   review: {
@@ -204,7 +186,6 @@ const COMMAND_SPECS_V1 = defineCommandSpecsV1({
       output: { type: "string", description: "Packet directory (default <repo>/.review-runs)." },
       exclude: { type: "string", description: "Comma-separated glob patterns to exclude." },
     },
-    run: review,
   },
   "resume-final": {
     summary: "Retry only a final stage that failed with a definite provider error.",
@@ -215,143 +196,245 @@ const COMMAND_SPECS_V1 = defineCommandSpecsV1({
       model: { type: "string", description: "Supported review model profile." },
       "max-cost": { type: "string", description: "Maximum review cost in US dollars." },
     },
-    run: resumeFinal,
   },
   config: {
     summary: "Show simple settings or their resolved runtime policy.",
-    subcommand: "show",
     options: {
       repo: { type: "string", description: "Repository (default current directory)." },
       model: { type: "string", description: "Override supported review model profile." },
       "max-cost": { type: "string", description: "Override maximum review cost." },
       resolved: { type: "boolean", description: "Include complete resolved runtime policy." },
     },
-    run: async (options, io) => {
-      await showSimpleReviewConfigV1(options, io);
-      return 0;
-    },
   },
 });
 
 type CommandNameV1 = keyof typeof COMMAND_SPECS_V1;
 
-function isCommandNameV1(command: string): command is CommandNameV1 {
-  return Object.hasOwn(COMMAND_SPECS_V1, command);
+interface InitCommandOptionsV1 {
+  repo?: string;
+  model?: string;
+  maxCost?: string;
+  config?: string;
+  standards?: string;
+  author?: string;
 }
 
-function commandUsageV1(command: CommandNameV1): string {
-  const spec: CommandSpecV1 = COMMAND_SPECS_V1[command];
-  return spec.subcommand ? `${command} ${spec.subcommand}` : command;
+interface PrepareCommandOptionsV1 {
+  request: string;
+  base?: string;
+  output?: string;
+  exclude?: string;
 }
 
-function usageText(command?: CommandNameV1): string {
-  const commands = Object.keys(COMMAND_SPECS_V1) as CommandNameV1[];
-  if (!command) {
-    const lines = [
-      `Usage: independent-reviewer <${commands.map(commandUsageV1).join("|")}> [options]`,
-      "",
-      "Commands:",
-      ...commands.map(
-        (name) => `  ${commandUsageV1(name).padEnd(14)}${COMMAND_SPECS_V1[name].summary}`,
-      ),
-      "",
-      "Run 'independent-reviewer <command> --help' for command options.",
-      "Set OPENROUTER_API_KEY in the environment for 'review' and 'resume-final'.",
-    ];
-    return lines.join("\n");
-  }
-  const spec = COMMAND_SPECS_V1[command];
-  const lines = [
-    `Usage: independent-reviewer ${commandUsageV1(command)} [options]`,
-    "",
-    spec.summary,
-    "",
-    "Options:",
-  ];
-  for (const [name, option] of Object.entries(spec.options)) {
-    const valueHint = option.type === "string" ? " <value>" : "";
-    const requirement = option.required ? " (required)" : "";
-    const optionLabel = `  --${name}${valueHint}`.padEnd(24);
-    lines.push(`${optionLabel}${option.description}${requirement}`);
-  }
-  lines.push(`${"  --help".padEnd(24)}Print this message.`);
-  return lines.join("\n");
+interface InspectCommandOptionsV1 {
+  packet: string;
+  json?: boolean;
 }
 
-/**
- * Uses Commander for option grammar while retaining product-level uniqueness and dash-leading
- * value diagnostics required by digest-bound configuration.
- *
- * Every option is collected as a list so a repeated flag is rejected rather than silently taking
- * the last one: the configuration this tool runs on is digest-bound, and quietly preferring the
- * second `--config` is the wrong default.
- */
-function parseCommandOptions(command: CommandNameV1, args: string[]): Map<string, string | true> {
-  const spec: CommandSpecV1 = COMMAND_SPECS_V1[command];
-  for (const name of Object.keys(spec.options)) {
-    const flag = `--${name}`;
-    const count = args.filter(
-      (argument) => argument === flag || argument.startsWith(`${flag}=`),
-    ).length;
-    if (count > 1) throw new Error(`Option ${flag} was given ${count} times; give it once.`);
-  }
-  for (const [index, argument] of args.entries()) {
-    const option = argument.startsWith("--") ? spec.options[argument.slice(2)] : undefined;
-    if (option?.type === "string" && args[index + 1]?.startsWith("-")) {
-      throw new Error(
-        `Option ${argument} needs a value. Pass a dash-leading value as ${argument}=<value>.\n\n${usageText(command)}`,
-      );
-    }
-  }
-  const parser = new Command(command)
-    .helpOption(false)
-    .allowUnknownOption(false)
-    .allowExcessArguments(false)
-    .exitOverride()
-    .configureOutput({ writeOut: () => undefined, writeErr: () => undefined });
-  for (const [name, option] of Object.entries(spec.options)) {
-    parser.addOption(
-      new Option(option.type === "string" ? `--${name} <value>` : `--${name}`, option.description),
-    );
-  }
-  try {
-    parser.parse(args, { from: "user" });
-  } catch (error) {
-    if (error instanceof CommanderError && error.code === "commander.optionMissingArgument") {
-      const missing = args.find(
-        (argument, index) =>
-          spec.options[argument.slice(2)]?.type === "string" &&
-          (args[index + 1] === undefined || args[index + 1]?.startsWith("-")),
-      );
-      if (missing) {
-        throw new Error(
-          `Option ${missing} needs a value. Pass a dash-leading value as ${missing}=<value>.\n\n${usageText(command)}`,
-        );
-      }
-    }
-    const message =
-      error instanceof Error ? error.message.replace(/^error: /, "") : "Invalid arguments";
-    throw new Error(
-      `${message.charAt(0).toUpperCase()}${message.slice(1)}\n\n${usageText(command)}`,
-    );
-  }
+interface ReviewCommandOptionsV1 extends InitCommandOptionsV1 {
+  dryRun?: boolean;
+  newFlow?: boolean;
+  quiet?: boolean;
+  request?: string;
+  base?: string;
+  output?: string;
+  exclude?: string;
+}
 
+interface ResumeFinalCommandOptionsV1 {
+  packet: string;
+  config?: string;
+  repo?: string;
+  model?: string;
+  maxCost?: string;
+}
+
+interface ConfigShowCommandOptionsV1 {
+  repo?: string;
+  model?: string;
+  maxCost?: string;
+  resolved?: boolean;
+}
+
+/** Converts Commander's typed camel-case result at the existing input-adapter boundary. */
+function optionMapV1(command: Command, values: object): Map<string, string | true> {
   const options = new Map<string, string | true>();
-  for (const name of Object.keys(spec.options)) {
-    const definition = parser.options.find((candidate) => candidate.long === `--${name}`);
-    const value = definition ? parser.getOptionValue(definition.attributeName()) : undefined;
+  const record = values as Record<string, unknown>;
+  for (const definition of command.options) {
+    if (!definition.long) continue;
+    const value = record[definition.attributeName()];
     if (typeof value === "string") {
-      options.set(`--${name}`, value);
+      options.set(definition.long, value);
     } else if (value === true) {
-      options.set(`--${name}`, true);
-    }
-  }
-  for (const [name, option] of Object.entries(spec.options)) {
-    if (option.required && !options.has(`--${name}`)) {
-      throw new Error(`Missing required option --${name}\n\n${usageText(command)}`);
+      options.set(definition.long, true);
     }
   }
   return options;
+}
+
+interface CliProgramV1 {
+  program: Command;
+  result(): number;
+  stdout(): string;
+  stderr(): string;
+  configShowHelp(): string;
+}
+
+/** Commander owns command tree, option grammar, mandatory values, duplicate events, and help. */
+function createCliProgramV1(
+  args: readonly string[],
+  io: CliIoV1,
+  dependencies: CliDependenciesV1,
+): CliProgramV1 {
+  let result = 0;
+  let stdout = "";
+  let stderr = "";
+  const commands = Object.keys(COMMAND_SPECS_V1) as CommandNameV1[];
+  const output = {
+    writeOut: (message: string) => {
+      stdout += message;
+    },
+    writeErr: (message: string) => {
+      stderr += message;
+    },
+  };
+  const program = new Command()
+    .name("independent-reviewer")
+    .usage(
+      `<${commands.map((name) => (name === "config" ? "config show" : name)).join("|")}> [options]`,
+    )
+    .version(CLI_VERSION_V1, "-v, --version")
+    .helpOption("-h, --help", "Print this message.")
+    .helpCommand(false)
+    .enablePositionalOptions()
+    .showHelpAfterError()
+    .exitOverride()
+    .configureOutput(output)
+    .addHelpText(
+      "after",
+      "\nRun 'independent-reviewer <command> --help' for command options.\nSet OPENROUTER_API_KEY in the environment for 'review' and 'resume-final'.",
+    );
+  program.configureHelp({
+    subcommandTerm: (command) => (command.name() === "config" ? "config show" : command.name()),
+  });
+
+  const addOptions = (command: Command, spec: CommandSpecV1): Command => {
+    command
+      .description(spec.summary)
+      .helpOption("-h, --help", "Print this message.")
+      .showHelpAfterError()
+      .allowUnknownOption(false)
+      .allowExcessArguments(false)
+      .configureOutput(output);
+    for (const [name, optionSpec] of Object.entries(spec.options)) {
+      const flag = `--${name}`;
+      const option = new Option(
+        optionSpec.type === "string" ? `${flag} <value>` : flag,
+        `${optionSpec.description}${optionSpec.required ? " (required)" : ""}`,
+      );
+      if (optionSpec.required) option.makeOptionMandatory();
+      command.addOption(option);
+      let occurrences = 0;
+      command.on(`option:${option.name()}`, (value: unknown) => {
+        occurrences += 1;
+        if (occurrences > 1) {
+          command.error(`Option ${flag} was given ${occurrences} times; give it once.`, {
+            code: "commander.duplicateOption",
+          });
+        }
+        const stringValue = String(value);
+        const inlineDashValue = args.includes(`${flag}=${stringValue}`);
+        if (
+          optionSpec.type === "string" &&
+          (stringValue === "" || (stringValue.startsWith("-") && !inlineDashValue))
+        ) {
+          command.error(
+            `Option ${flag} needs a value. Pass a dash-leading value as ${flag}=<value>.`,
+            { code: "commander.optionInvalidArgument" },
+          );
+        }
+      });
+    }
+    return command;
+  };
+
+  const initCommand = addOptions(program.command("init"), COMMAND_SPECS_V1.init);
+  initCommand.action(async (values: InitCommandOptionsV1) => {
+    io.stdout(
+      `Saved review settings: ${await initializeReviewSettingsV1(optionMapV1(initCommand, values))}`,
+    );
+  });
+
+  const prepareCommand = addOptions(program.command("prepare"), COMMAND_SPECS_V1.prepare);
+  prepareCommand.action(async (values: PrepareCommandOptionsV1) => {
+    await prepare(optionMapV1(prepareCommand, values), io);
+  });
+
+  const inspectCommand = addOptions(program.command("inspect"), COMMAND_SPECS_V1.inspect);
+  inspectCommand.action(async (values: InspectCommandOptionsV1) => {
+    await inspect(optionMapV1(inspectCommand, values), io);
+  });
+
+  const reviewCommand = addOptions(program.command("review"), COMMAND_SPECS_V1.review);
+  reviewCommand.action(async (values: ReviewCommandOptionsV1) => {
+    result = await review(optionMapV1(reviewCommand, values), io, dependencies);
+  });
+
+  const resumeCommand = addOptions(
+    program.command("resume-final"),
+    COMMAND_SPECS_V1["resume-final"],
+  );
+  resumeCommand.action(async (values: ResumeFinalCommandOptionsV1) => {
+    result = await resumeFinal(optionMapV1(resumeCommand, values), io, dependencies);
+  });
+
+  const configCommand = program
+    .command("config")
+    .description(COMMAND_SPECS_V1.config.summary)
+    .helpOption("-h, --help", "Print this message.")
+    .helpCommand(false)
+    .showHelpAfterError()
+    .configureOutput(output);
+  const configShowCommand = addOptions(configCommand.command("show"), COMMAND_SPECS_V1.config);
+  configShowCommand.action(async (values: ConfigShowCommandOptionsV1) => {
+    await showSimpleReviewConfigV1(optionMapV1(configShowCommand, values), io);
+  });
+
+  return {
+    program,
+    result: () => result,
+    stdout: () => stdout.trimEnd(),
+    stderr: () => stderr.trimEnd(),
+    configShowHelp: () => configShowCommand.helpInformation().trimEnd(),
+  };
+}
+
+/** Keeps established diagnostics while all usage text comes from Commander's command model. */
+function commanderFailureV1(error: CommanderError, args: string[], output: CliProgramV1): string {
+  if (args.length === 1 && args[0] === "config" && error.code === "commander.help") {
+    return `config requires a subcommand: show\n\n${output.configShowHelp()}`;
+  }
+  if (args[0] === "config" && error.code === "commander.unknownCommand") {
+    const name = error.message.match(/unknown command '([^']+)'/)?.[1] ?? "unknown";
+    return `Unknown config command ${name}\n\n${output.configShowHelp()}`;
+  }
+  const captured = output.stderr();
+  if (!captured.startsWith("error: ")) return captured || error.message;
+  const [firstLine = error.message, ...rest] = captured.split("\n");
+  let message = firstLine.replace(/^error: /, "");
+  if (error.code === "commander.missingMandatoryOptionValue") {
+    const flag = message.match(/required option '(--[^ ]+)/)?.[1] ?? "option";
+    message = `Missing required option ${flag}`;
+  } else if (error.code === "commander.optionMissingArgument") {
+    const flag = message.match(/option '(--[^ ]+)/)?.[1] ?? "option";
+    message = `Option ${flag} needs a value. Pass a dash-leading value as ${flag}=<value>.`;
+  } else if (error.code === "commander.unknownCommand") {
+    const name = message.match(/unknown command '([^']+)'/)?.[1] ?? "unknown";
+    message = `Unknown command ${name}`;
+  } else {
+    message = `${message.charAt(0).toUpperCase()}${message.slice(1)}`;
+  }
+  return [message, ...rest].join("\n");
 }
 
 function maxCostOptionV1(options: Map<string, string | true>): number | undefined {
@@ -858,46 +941,29 @@ export async function runCliV1(
   io: CliIoV1 = processIo,
   dependencies: CliDependenciesV1 = processDependencies,
 ): Promise<number> {
-  const [command, ...optionArgs] = args;
-  // Help and version answer on stdout with exit 0: they are the successful outcome of the
-  // request, not a failure to parse it.
-  if (command === undefined || command === "--help" || command === "-h" || command === "help") {
-    io.stdout(usageText());
-    return 0;
-  }
-  if (command === "--version" || command === "-v") {
-    io.stdout(CLI_VERSION_V1);
-    return 0;
-  }
+  const commandArgs =
+    args.length === 0 || args[0] === "help"
+      ? ["--help"]
+      : args[0] === "config" && ["--help", "-h"].includes(args[1] ?? "")
+        ? ["config", "show", args[1] as string]
+        : args;
+  const cli = createCliProgramV1(commandArgs, io, dependencies);
   try {
-    if (!isCommandNameV1(command)) {
-      throw new Error(`Unknown command ${command}\n\n${usageText()}`);
-    }
-    const spec: CommandSpecV1 = COMMAND_SPECS_V1[command];
-    let commandOptionArgs = optionArgs;
-    if (spec.subcommand) {
-      const suppliedSubcommand = optionArgs[0];
-      if (suppliedSubcommand === undefined) {
-        throw new Error(
-          `${command} requires a subcommand: ${spec.subcommand}\n\n${usageText(command)}`,
-        );
-      }
-      if (![spec.subcommand, "--help", "-h"].includes(suppliedSubcommand)) {
-        throw new Error(
-          `Unknown ${command} command ${suppliedSubcommand}\n\n${usageText(command)}`,
-        );
-      }
-      if (suppliedSubcommand === spec.subcommand) {
-        commandOptionArgs = optionArgs.slice(1);
-      }
-    }
-    if (commandOptionArgs.includes("--help") || commandOptionArgs.includes("-h")) {
-      io.stdout(usageText(command));
+    await cli.program.parseAsync(commandArgs, { from: "user" });
+    if (cli.stdout()) io.stdout(cli.stdout());
+    return cli.result();
+  } catch (error) {
+    if (
+      error instanceof CommanderError &&
+      ["commander.helpDisplayed", "commander.version"].includes(error.code)
+    ) {
+      if (cli.stdout()) io.stdout(cli.stdout());
       return 0;
     }
-    const options = parseCommandOptions(command, commandOptionArgs);
-    return await spec.run(options, io, dependencies);
-  } catch (error) {
+    if (error instanceof CommanderError) {
+      io.stderr(commanderFailureV1(error, commandArgs, cli));
+      return 1;
+    }
     io.stderr(error instanceof Error ? error.message : "Unknown command failure");
     if (error instanceof ProviderCallError && error.responseMetadata !== null) {
       io.stderr(`Provider response metadata: ${JSON.stringify(error.responseMetadata)}`);
