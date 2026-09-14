@@ -307,6 +307,7 @@ function createCliProgramV1(
     .helpOption("-h, --help", "Print this message.")
     .helpCommand(false)
     .enablePositionalOptions()
+    .passThroughOptions()
     .showHelpAfterError()
     .exitOverride()
     .configureOutput(output)
@@ -393,6 +394,8 @@ function createCliProgramV1(
     .description(COMMAND_SPECS_V1.config.summary)
     .helpOption("-h, --help", "Print this message.")
     .helpCommand(false)
+    .enablePositionalOptions()
+    .passThroughOptions()
     .showHelpAfterError()
     .configureOutput(output);
   const configShowCommand = addOptions(configCommand.command("show"), COMMAND_SPECS_V1.config);

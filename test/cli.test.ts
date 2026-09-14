@@ -915,8 +915,12 @@ it("reports the missing config subcommand without entering a paid review path", 
 });
 
 it("reports argument mistakes precisely instead of claiming a value is missing", async () => {
+  const output: string[] = [];
   const errors: string[] = [];
-  const io = { stdout: () => undefined, stderr: (message: string) => errors.push(message) };
+  const io = {
+    stdout: (message: string) => output.push(message),
+    stderr: (message: string) => errors.push(message),
+  };
 
   // A repeated pinned option must be rejected, not silently last-wins.
   assert.equal(
@@ -952,6 +956,23 @@ it("reports argument mistakes precisely instead of claiming a value is missing",
 
   assert.equal(await runCliV1(["nonsense"], io), 1);
   assert.match(errors.at(-1) ?? "", /Unknown command nonsense/);
+
+  for (const args of [
+    ["nonsense", "--help"],
+    ["nonsense", "-h"],
+    ["nonsense", "--version"],
+    ["nonsense", "-v"],
+    ["config", "nonsense", "--help"],
+    ["config", "nonsense", "-h"],
+    ["config", "nonsense", "--version"],
+    ["config", "nonsense", "-v"],
+  ]) {
+    output.length = 0;
+    errors.length = 0;
+    assert.equal(await runCliV1(args, io), 1, args.join(" "));
+    assert.equal(output.length, 0, args.join(" "));
+    assert.match(errors.at(-1) ?? "", /Unknown (?:config )?command nonsense/, args.join(" "));
+  }
 });
 
 it("rejects duplicate properties in request and config JSON before provider access", async () => {
