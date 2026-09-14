@@ -8,6 +8,10 @@ import {
   baseGuidanceBlobMetadataV1,
   readBaseMarkdownGuidanceSourceV1,
 } from "./base-markdown-source.js";
+import {
+  createGuidanceDiscoverySessionV1,
+  type GuidanceDiscoverySessionV1,
+} from "./discovery-capacity.js";
 
 export {
   GuidanceCaptureError,
@@ -25,14 +29,19 @@ export interface CapturedReviewerRulesGuidanceV1 {
 export async function captureReviewerRulesGuidanceV1(
   repositoryPath: string,
   manifest: SnapshotManifestV1,
+  session: GuidanceDiscoverySessionV1 = createGuidanceDiscoverySessionV1(manifest),
 ): Promise<CapturedReviewerRulesGuidanceV1> {
+  session.claimDirectCandidates([REVIEWER_RULES_PATH_V1]);
   const metadata = await baseGuidanceBlobMetadataV1(
     repositoryPath,
     manifest.source.baseCommit,
     REVIEWER_RULES_PATH_V1,
   );
   if (!metadata) {
-    return { graph: buildReviewerRulesGuidanceGraphV1(manifest), blobs: new Map() };
+    return {
+      graph: buildReviewerRulesGuidanceGraphV1(manifest, undefined, session.finalizeDiagnostics()),
+      blobs: new Map(),
+    };
   }
   const source = await readBaseMarkdownGuidanceSourceV1(
     repositoryPath,
@@ -47,13 +56,23 @@ export async function captureReviewerRulesGuidanceV1(
       startUtf16: 0,
       omittedCount: null,
     });
+    session.addDiagnostic(diagnostic);
     return {
-      graph: buildReviewerRulesGuidanceGraphV1(manifest, undefined, [diagnostic]),
+      graph: buildReviewerRulesGuidanceGraphV1(manifest, undefined, session.finalizeDiagnostics()),
       blobs: new Map(),
     };
   }
+  const graph = buildReviewerRulesGuidanceGraphV1(manifest, source.contentDigest);
+  const node = graph.nodes[0];
+  if (!node) throw new Error("Reviewer guidance graph omitted its selected source.");
+  for (const recognition of node.directRecognitions)
+    session.claimDirectRecognition(node, recognition);
   return {
-    graph: buildReviewerRulesGuidanceGraphV1(manifest, source.contentDigest),
+    graph: buildReviewerRulesGuidanceGraphV1(
+      manifest,
+      source.contentDigest,
+      session.finalizeDiagnostics(),
+    ),
     blobs: new Map([[source.contentDigest.value, Uint8Array.from(source.bytes)]]),
   };
 }

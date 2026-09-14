@@ -143,9 +143,17 @@ describe("captureClaudeGuidanceV1", () => {
       }
 
       const combined = await captureRepositoryGuidanceV1(repositoryPath, snapshot.manifest);
-      assert.equal(combined.graph.occurrences.length, 3);
-      assert.equal(combined.graph.edges.length, 6);
-      assert.deepEqual(combined.graph, captured.graph);
+      assert.equal(combined.graph.occurrences.length, 6);
+      assert.equal(combined.graph.edges.length, 12);
+      assert.deepEqual(
+        combined.graph.occurrences.reduce<Record<string, number>>((counts, occurrence) => {
+          counts[occurrence.familyId] = (counts[occurrence.familyId] ?? 0) + 1;
+          return counts;
+        }, {}),
+        { CLAUDE: 3, COPILOT: 3 },
+      );
+      assert.equal(combined.graph.nodes.length, captured.graph.nodes.length);
+      assert.equal(combined.blobs.size, captured.blobs.size);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }

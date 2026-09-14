@@ -122,8 +122,8 @@ describe("captureCodexGuidanceV1", () => {
       const snapshot = await captureGitSnapshotV1(request(repositoryPath));
       const captured = await captureRepositoryGuidanceV1(repositoryPath, snapshot.manifest);
 
-      assert.equal(captured.graph.nodes.length, 3);
-      assert.equal(captured.blobs.size, 3);
+      assert.equal(captured.graph.nodes.length, 4);
+      assert.equal(captured.blobs.size, 4);
       assert.equal(
         captured.graph.nodes.filter(({ semanticTier }) => semanticTier === "REVIEWER_SPECIFIC")
           .length,
@@ -134,7 +134,7 @@ describe("captureCodexGuidanceV1", () => {
           .flatMap(({ directRecognitions }) => directRecognitions)
           .map(({ familyId }) => familyId)
           .sort(),
-        ["CODEX", "CODEX", "INDEPENDENT_REVIEWER"],
+        ["CODEX", "CODEX", "COPILOT", "COPILOT", "INDEPENDENT_REVIEWER", "KIRO", "KIRO"],
       );
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });

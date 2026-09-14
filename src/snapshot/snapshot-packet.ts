@@ -36,6 +36,10 @@ import {
   ReviewRequestSchema,
 } from "../contracts/standards-review.js";
 import { readStrictJsonFileV1 } from "../contracts/strict-json.js";
+import {
+  readBaseMarkdownGuidanceSourceV1,
+  resolveBaseGuidanceBlobV1,
+} from "../guidance/base-markdown-source.js";
 import { assertGuidanceImportOccurrencesV1 } from "../guidance/import-verification.js";
 import type { CapturedReviewerRulesGuidanceV1 } from "../guidance/reviewer-rules.js";
 import { buildFallbackReviewContextMapV1 } from "../planning/fallback-context-map.js";
@@ -410,11 +414,29 @@ export async function writeSnapshotPacketV1(
         records.push({ digest: node.contentDigest.value, byteLength: bytes.length });
       }
     }
-    await assertGuidanceImportOccurrencesV1(options.guidance.graph, async (node) => {
-      const bytes = options.guidance?.blobs.get(node.contentDigest.value);
-      if (!bytes) throw new Error(`Guidance blob ${node.contentDigest.value} is missing.`);
-      return bytes;
-    });
+    await assertGuidanceImportOccurrencesV1(
+      options.guidance.graph,
+      async (node) => {
+        const bytes = options.guidance?.blobs.get(node.contentDigest.value);
+        if (!bytes) throw new Error(`Guidance blob ${node.contentDigest.value} is missing.`);
+        return bytes;
+      },
+      async (requestedPath) => {
+        const resolved = await resolveBaseGuidanceBlobV1(
+          request.repository.path,
+          captured.manifest.source.baseCommit,
+          requestedPath,
+        );
+        if (!resolved)
+          throw new Error(`Guidance import ${requestedPath} does not resolve in frozen BASE.`);
+        const source = await readBaseMarkdownGuidanceSourceV1(
+          request.repository.path,
+          resolved.resolvedPath,
+          resolved.metadata,
+        );
+        return { resolvedPath: resolved.resolvedPath, contentDigest: source.contentDigest };
+      },
+    );
   }
   for (const record of records) {
     const bytes = packetBlobs.get(record.digest);

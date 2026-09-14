@@ -232,12 +232,15 @@ direct files and scoped rules now use strict library-backed YAML frontmatter,
 bounded brace expansion, and patched glob matching. Relative BASE-only Claude
 `@path` imports now preserve occurrence/edge provenance, recurse through four
 hops, follow bounded repository-internal symlinks, and fail closed on invalid or
-over-limit graphs. `mdast-util-from-markdown` is already supplied by
+over-limit graphs. Gemini, Kiro, Copilot, and Cursor BASE adapters are now
+implemented and registered with shared cross-family capacity accounting,
+deterministic diagnostic compaction, and frozen-BASE destination verification.
+`mdast-util-from-markdown` is already supplied by
 `remark-parse`; `agent-install/agents-md` was evaluated but reads and edits live
 working-tree files and parses headings rather than supplying frozen Git
 discovery/applicability semantics, so it remains a possible setup-UX dependency,
-not a runtime capture dependency. Gemini, Kiro, Copilot, Cursor, and ignore
-adapters remain pending.
+not a runtime capture dependency. Provider-free qualification and independent
+review remain before Slice 3 closes.
 
 **Acceptance criteria:**
 
