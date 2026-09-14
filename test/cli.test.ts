@@ -859,6 +859,35 @@ it("prints help and version on stdout without a packet or provider", async () =>
   assert.match(printed, /OPENROUTER_API_KEY/);
 });
 
+it("keeps version root-only and routes config help through config show", async () => {
+  const output: string[] = [];
+  const errors: string[] = [];
+  const io = {
+    stdout: (message: string) => output.push(message),
+    stderr: (message: string) => errors.push(message),
+  };
+
+  assert.equal(await runCliV1(["review", "--version"], io), 1);
+  assert.equal(output.length, 0);
+  assert.equal(errors.at(-1)?.split("\n")[0], "Unknown option '--version'");
+
+  errors.length = 0;
+  assert.equal(await runCliV1(["config", "--help"], io), 0);
+  const configHelp = output.at(-1)?.split("\n") ?? [];
+  assert.equal(configHelp[0], "Usage: independent-reviewer config show [options]");
+  assert.equal(
+    configHelp.find((line) => line.includes("--resolved")),
+    "  --resolved          Include complete resolved runtime policy.",
+  );
+
+  assert.equal(await runCliV1(["prepare", "--help"], io), 0);
+  const prepareHelp = output.at(-1)?.split("\n") ?? [];
+  assert.equal(
+    prepareHelp.find((line) => line.includes("--request")),
+    "  --request <value>  Path to the review request JSON. (required)",
+  );
+});
+
 it("reports the missing config subcommand without entering a paid review path", async () => {
   const errors: string[] = [];
   let credentialReads = 0;
@@ -886,8 +915,12 @@ it("reports the missing config subcommand without entering a paid review path", 
 });
 
 it("reports argument mistakes precisely instead of claiming a value is missing", async () => {
+  const output: string[] = [];
   const errors: string[] = [];
-  const io = { stdout: () => undefined, stderr: (message: string) => errors.push(message) };
+  const io = {
+    stdout: (message: string) => output.push(message),
+    stderr: (message: string) => errors.push(message),
+  };
 
   // A repeated pinned option must be rejected, not silently last-wins.
   assert.equal(
@@ -903,11 +936,43 @@ it("reports argument mistakes precisely instead of claiming a value is missing",
   assert.equal(await runCliV1(["prepare", "--request", "--weird.json"], io), 1);
   assert.match(errors.at(-1) ?? "", /--request=/);
 
+  assert.equal(await runCliV1(["prepare", "--request=--weird.json"], io), 1);
+  assert.doesNotMatch(errors.at(-1) ?? "", /needs a value/);
+
+  assert.equal(await runCliV1(["prepare", "--request="], io), 1);
+  assert.match(errors.at(-1) ?? "", /Option --request needs a value/);
+
   assert.equal(await runCliV1(["prepare"], io), 1);
   assert.match(errors.at(-1) ?? "", /Missing required option --request/);
 
+  assert.equal(await runCliV1(["review", "--dry-run", "--dry-run"], io), 1);
+  assert.match(errors.at(-1) ?? "", /--dry-run was given 2 times/);
+
+  assert.equal(
+    await runCliV1(["review", "--max-cost", "1", "--max-cost", "2", "--dry-run"], io),
+    1,
+  );
+  assert.match(errors.at(-1) ?? "", /--max-cost was given 2 times/);
+
   assert.equal(await runCliV1(["nonsense"], io), 1);
   assert.match(errors.at(-1) ?? "", /Unknown command nonsense/);
+
+  for (const args of [
+    ["nonsense", "--help"],
+    ["nonsense", "-h"],
+    ["nonsense", "--version"],
+    ["nonsense", "-v"],
+    ["config", "nonsense", "--help"],
+    ["config", "nonsense", "-h"],
+    ["config", "nonsense", "--version"],
+    ["config", "nonsense", "-v"],
+  ]) {
+    output.length = 0;
+    errors.length = 0;
+    assert.equal(await runCliV1(args, io), 1, args.join(" "));
+    assert.equal(output.length, 0, args.join(" "));
+    assert.match(errors.at(-1) ?? "", /Unknown (?:config )?command nonsense/, args.join(" "));
+  }
 });
 
 it("rejects duplicate properties in request and config JSON before provider access", async () => {
