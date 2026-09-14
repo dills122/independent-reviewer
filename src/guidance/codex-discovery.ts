@@ -5,8 +5,6 @@ import {
   type GuidanceGraphV1,
   MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
   MAX_GUIDANCE_NODES_V1,
-  MAX_GUIDANCE_TARGETS_V1,
-  projectGuidanceTargetsV1,
   type SnapshotManifestV1,
 } from "../contracts/index.js";
 import {
@@ -14,10 +12,11 @@ import {
   GuidanceCaptureError,
   readBaseMarkdownGuidanceSourceV1,
 } from "./base-markdown-source.js";
+import {
+  createGuidanceDiscoverySessionV1,
+  type GuidanceDiscoverySessionV1,
+} from "./discovery-capacity.js";
 import { guidanceAncestorDirectoriesV1, guidancePathInDirectoryV1 } from "./discovery-paths.js";
-
-const MAX_SNAPSHOT_ENTRIES_V1 = 4_096;
-const MAX_DIRECT_CANDIDATES_V1 = 4_096;
 
 export interface CapturedCodexGuidanceV1 {
   graph: GuidanceGraphV1;
@@ -36,12 +35,9 @@ function discoveryLimit(message: string): never {
 export async function captureCodexGuidanceV1(
   repositoryPath: string,
   manifest: SnapshotManifestV1,
+  session: GuidanceDiscoverySessionV1 = createGuidanceDiscoverySessionV1(manifest),
 ): Promise<CapturedCodexGuidanceV1> {
-  if (manifest.paths.length > MAX_SNAPSHOT_ENTRIES_V1)
-    discoveryLimit(`snapshot contains more than ${MAX_SNAPSHOT_ENTRIES_V1} entries.`);
-  const targets = projectGuidanceTargetsV1(manifest);
-  if (targets.length > MAX_GUIDANCE_TARGETS_V1)
-    discoveryLimit(`snapshot projects more than ${MAX_GUIDANCE_TARGETS_V1} targets.`);
+  const targets = session.targets;
 
   const candidates = new Set<string>();
   const candidatesByTarget = new Map<string, Array<{ agents: string; override: string }>>();
@@ -57,11 +53,10 @@ export async function captureCodexGuidanceV1(
       override,
     ])) {
       candidates.add(candidate);
-      if (candidates.size > MAX_DIRECT_CANDIDATES_V1)
-        discoveryLimit(`more than ${MAX_DIRECT_CANDIDATES_V1} direct candidates were recognized.`);
     }
     candidatesByTarget.set(target.targetId, targetCandidates);
   }
+  session.claimDirectCandidates([...candidates]);
 
   const metadataByPath = new Map<string, Awaited<ReturnType<typeof baseGuidanceBlobMetadataV1>>>();
   for (const path of [...candidates].sort()) {
@@ -91,13 +86,12 @@ export async function captureCodexGuidanceV1(
     discoveryLimit(`more than ${MAX_GUIDANCE_NODES_V1} applicable source nodes were selected.`);
 
   const sources = new Map<string, Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>>>();
-  const diagnostics = [];
   for (const path of [...selectedPaths].sort()) {
     const metadata = metadataByPath.get(path);
     if (!metadata) throw new Error(`Selected guidance source ${path} has no BASE metadata.`);
     const source = await readBaseMarkdownGuidanceSourceV1(repositoryPath, path, metadata);
     if (source.content.trim().length === 0) {
-      diagnostics.push(
+      session.addDiagnostic(
         createGuidanceDiagnosticV1({
           code: "EMPTY_SOURCE",
           severity: "WARNING",
@@ -130,19 +124,25 @@ export async function captureCodexGuidanceV1(
         contentDigest: source.contentDigest,
         directRecognitions: [],
       };
-      input.directRecognitions.push({
+      const recognition = {
         familyId: "CODEX",
         sourceKind: path.endsWith("AGENTS.override.md") ? "CODEX_AGENTS_OVERRIDE" : "CODEX_AGENTS",
         nativeOrder,
         applicableTargetId: target.targetId,
         discoveredPath: path,
-      });
+      } as const;
+      session.claimDirectRecognition(input, recognition);
+      input.directRecognitions.push(recognition);
       directSources.set(path, input);
     });
   }
 
   return {
-    graph: buildDirectGuidanceGraphV1(manifest, [...directSources.values()], diagnostics),
+    graph: buildDirectGuidanceGraphV1(
+      manifest,
+      [...directSources.values()],
+      session.finalizeDiagnostics(),
+    ),
     blobs: new Map(
       [...sources.values()].map((source) => [
         source.contentDigest.value,

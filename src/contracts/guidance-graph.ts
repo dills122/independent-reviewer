@@ -12,6 +12,9 @@ import {
 } from "./snapshot-manifest.js";
 
 export const MAX_GUIDANCE_TARGETS_V1 = 8_192;
+export const MAX_GUIDANCE_SNAPSHOT_ENTRIES_V1 = 4_096;
+export const MAX_GUIDANCE_APPLICABILITY_PATHS_V1 = 8_192;
+export const MAX_GUIDANCE_DIRECT_CANDIDATES_V1 = 4_096;
 export const MAX_GUIDANCE_NODES_V1 = 256;
 export const MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1 = 65_536;
 export const MAX_GUIDANCE_APPLICABILITY_PAIRS_V1 = 65_536;
@@ -231,7 +234,7 @@ function recognitionOrder(
   );
 }
 
-function diagnosticOrder(
+export function compareGuidanceDiagnosticsV1(
   left: z.infer<typeof GuidanceDiagnosticV1Schema>,
   right: z.infer<typeof GuidanceDiagnosticV1Schema>,
 ): number {
@@ -288,7 +291,7 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
     });
   if (!alreadyCanonical(graph.edges, (left, right) => compareUtf16(left.edgeId, right.edgeId)))
     context.addIssue({ code: "custom", path: ["edges"], message: "must be canonical and unique" });
-  if (!alreadyCanonical(graph.diagnostics, diagnosticOrder))
+  if (!alreadyCanonical(graph.diagnostics, compareGuidanceDiagnosticsV1))
     context.addIssue({
       code: "custom",
       path: ["diagnostics"],
@@ -638,6 +641,27 @@ export function createGuidanceDiagnosticV1(
   });
 }
 
+/** Retains canonical first 255 diagnostics plus one content-free overflow summary. */
+export function compactGuidanceDiagnosticsV1(
+  diagnostics: readonly GuidanceDiagnosticV1[],
+): GuidanceDiagnosticV1[] {
+  const unique = [
+    ...new Map(diagnostics.map((diagnostic) => [diagnostic.diagnosticId, diagnostic])).values(),
+  ].sort(compareGuidanceDiagnosticsV1);
+  if (unique.length <= MAX_GUIDANCE_DIAGNOSTICS_V1) return unique;
+  const retained = unique.slice(0, MAX_GUIDANCE_DIAGNOSTICS_V1 - 1);
+  retained.push(
+    createGuidanceDiagnosticV1({
+      code: "DIAGNOSTIC_LIMIT_EXCEEDED",
+      severity: "WARNING",
+      path: null,
+      startUtf16: null,
+      omittedCount: unique.length - retained.length,
+    }),
+  );
+  return retained.sort(compareGuidanceDiagnosticsV1);
+}
+
 /** Projects manifest entries into exact paths/sides used for guidance applicability. */
 export function projectGuidanceTargetsV1(manifest: SnapshotManifestV1): GuidanceTargetV1[] {
   const targets = manifest.paths.flatMap((entry) => {
@@ -843,9 +867,7 @@ export function buildGuidanceGraphV1(
     nodes,
     occurrences,
     edges,
-    diagnostics: [
-      ...new Map(diagnostics.map((diagnostic) => [diagnostic.diagnosticId, diagnostic])).values(),
-    ].sort(diagnosticOrder),
+    diagnostics: compactGuidanceDiagnosticsV1(diagnostics),
   });
 }
 
