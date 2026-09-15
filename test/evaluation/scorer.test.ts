@@ -376,4 +376,85 @@ describe("evaluation scorer", () => {
       /adjudication references must cover exact artifact set/i,
     );
   });
+
+  it("scores true-root retention and false-root removal between preliminary and final", () => {
+    const graph = makeEvaluationGraph();
+    const baseline = scoreGraph(graph);
+    assert.equal(metric(baseline.metrics, "STAGE_RETENTION_RATE").value, 1);
+
+    const attempt = graph.attempts.find(
+      ({ caseId, variantId }) => caseId === "case_defect" && variantId === "variant_baseline",
+    );
+    assert.ok(attempt);
+    const preliminaryFalse = graph.adjudications.find(
+      ({ attemptId, label }) => attemptId === attempt.attemptId && label === "INVALID_DEFECT",
+    );
+    assert.ok(preliminaryFalse);
+    const preliminaryClaim = attempt.findingClaims.find(
+      ({ findingReference }) => findingReference === preliminaryFalse.findingReference,
+    );
+    assert.ok(preliminaryClaim);
+    const finalReference = `${preliminaryClaim.findingReference}_final`;
+    attempt.findingClaims.push({
+      ...preliminaryClaim,
+      findingReference: finalReference,
+      emittedAtStage: "FINAL",
+    });
+    graph.adjudications.push({
+      ...preliminaryFalse,
+      adjudicationId: "adjudication_persisted_false",
+      findingReference: finalReference,
+      adjudicatedAt: "2026-09-15T12:06:00.000Z",
+    });
+
+    const persisted = scoreGraph(graph);
+    const retention = metric(persisted.metrics, "STAGE_RETENTION_RATE");
+
+    assert.deepEqual(
+      {
+        numerator: retention.numerator,
+        denominator: retention.denominator,
+        value: retention.value,
+      },
+      { numerator: 3, denominator: 4, value: 0.75 },
+    );
+  });
+
+  it("reports pooled global counts beside exact case and family breakdowns", () => {
+    const score = scoreGraph(makeEvaluationGraph());
+    const defect = score.caseBreakdowns.find(({ caseId }) => caseId === "case_defect");
+    const clean = score.caseBreakdowns.find(({ caseId }) => caseId === "case_clean");
+    const family = score.familyBreakdowns.find(({ familyId }) => familyId === "family_checkout");
+    assert.ok(defect);
+    assert.ok(clean);
+    assert.ok(family);
+
+    assert.deepEqual(
+      {
+        numerator: metric(defect.metrics, "KNOWN_DEFECT_RECALL_COMPLETED").numerator,
+        denominator: metric(defect.metrics, "KNOWN_DEFECT_RECALL_COMPLETED").denominator,
+      },
+      { numerator: 2, denominator: 2 },
+    );
+    assert.equal(metric(clean.metrics, "KNOWN_DEFECT_RECALL_COMPLETED").value, null);
+    assert.deepEqual(
+      {
+        numerator: metric(family.metrics, "CLEAN_FALSE_POSITIVE_RATE").numerator,
+        denominator: metric(family.metrics, "CLEAN_FALSE_POSITIVE_RATE").denominator,
+      },
+      { numerator: 2, denominator: 2 },
+    );
+    assert.deepEqual(
+      score.metrics.map(({ metric: name, numerator, denominator }) => ({
+        metric: name,
+        numerator,
+        denominator,
+      })),
+      family.metrics.map(({ metric: name, numerator, denominator }) => ({
+        metric: name,
+        numerator,
+        denominator,
+      })),
+    );
+  });
 });

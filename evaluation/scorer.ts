@@ -1,3 +1,4 @@
+import { compareUtf16 } from "../src/contracts/primitives.js";
 import {
   digestEvaluationArtifactV1,
   type EvaluationAdjudicationRecordV1,
@@ -54,22 +55,24 @@ function aggregateMetricCounts(groups: readonly (readonly MetricCount[])[]): Met
 }
 
 function scoredMetrics(counts: readonly MetricCount[], independentUnit: "CASE" | "FAMILY") {
-  return counts.map(({ metric, numerator, denominator }) => ({
-    metric,
-    numerator,
-    denominator,
-    value: denominator === 0 ? null : numerator / denominator,
-    interval:
-      denominator === 0
-        ? null
-        : {
-            method: "CONSERVATIVE_BOUNDS_V1",
-            confidenceLevel: 0.95,
-            lower: 0,
-            upper: 1,
-            independentUnit,
-          },
-  }));
+  return [...counts]
+    .sort((left, right) => compareUtf16(left.metric, right.metric))
+    .map(({ metric, numerator, denominator }) => ({
+      metric,
+      numerator,
+      denominator,
+      value: denominator === 0 ? null : numerator / denominator,
+      interval:
+        denominator === 0
+          ? null
+          : {
+              method: "CONSERVATIVE_BOUNDS_V1",
+              confidenceLevel: 0.95,
+              lower: 0,
+              upper: 1,
+              independentUnit,
+            },
+    }));
 }
 
 function summarize(values: readonly number[]) {
