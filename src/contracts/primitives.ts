@@ -8,11 +8,16 @@ import * as z from "zod";
  * surfaces as an opaque parse failure inside a review run rather than at the boundary.
  */
 export type IdentifierPrefixV1 =
+  | "adjudication"
+  | "attempt"
   | "brief"
+  | "case"
   | "check"
   | "config"
   | "context"
   | "evidence"
+  | "experiment"
+  | "family"
   | "finding"
   | "flow"
   | "guidance"
@@ -23,15 +28,21 @@ export type IdentifierPrefixV1 =
   | "guidance_target"
   | "hunk"
   | "input"
+  | "obligation"
+  | "pair"
   | "plan"
   | "producer"
   | "reference"
   | "region"
   | "relation"
+  | "root"
   | "rule"
+  | "score"
   | "repo"
   | "snapshot"
-  | "unit";
+  | "uncertainty"
+  | "unit"
+  | "variant";
 
 export function prefixedIdentifier(prefix: IdentifierPrefixV1): z.ZodString {
   return z

@@ -67,3 +67,14 @@ provider bills.
 Corpus expansion and scored quality gates continue under
 [GitHub issue #160](https://github.com/dills122/independent-reviewer/issues/160). This first slice
 owns reproducible selection, fixture construction, paid admission, and result accounting.
+
+## Evaluator artifact contracts
+
+`artifact-contracts.ts` defines package-private v1 contracts for case manifests, family-preserving
+development/holdout splits, experiment manifests, terminal attempt records, finding adjudications,
+and score reports. Exact source, engine, split, and artifact digests bind comparisons to frozen
+inputs. Oracle inventory remains structurally separate from permitted reviewer inputs; zero-
+denominator metrics and unresolved adjudications stay explicitly unavailable or unresolved.
+
+These contracts do not yet score matrix reports or change provider behavior. Finding matching,
+scorer execution, corpus split allocation, and matrix artifact integration remain later #160 work.
