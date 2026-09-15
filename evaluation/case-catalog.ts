@@ -25,6 +25,8 @@ interface RequirementsCaseInputV1 {
   challengePoints?: readonly string[];
   expectedVerdict: EvaluationVerdictV1;
   expectedRootIds?: readonly string[];
+  expectedUncertaintyIds?: readonly string[];
+  expectedRecommendationIds?: readonly string[];
 }
 
 function requirementsCase(input: RequirementsCaseInputV1): EvaluationCaseV1 {
@@ -49,6 +51,8 @@ function requirementsCase(input: RequirementsCaseInputV1): EvaluationCaseV1 {
     oracle: {
       expectedVerdict: input.expectedVerdict,
       expectedRootIds: input.expectedRootIds ?? [],
+      expectedUncertaintyIds: input.expectedUncertaintyIds ?? [],
+      expectedRecommendationIds: input.expectedRecommendationIds ?? [],
       labelsExhaustive: true,
     },
   };
@@ -65,6 +69,8 @@ interface StandardsCaseInputV1 {
   authorOverview: string;
   expectedVerdict: EvaluationVerdictV1;
   expectedRootIds?: readonly string[];
+  expectedUncertaintyIds?: readonly string[];
+  expectedRecommendationIds?: readonly string[];
 }
 
 function standardsCase(input: StandardsCaseInputV1): EvaluationCaseV1 {
@@ -85,6 +91,8 @@ function standardsCase(input: StandardsCaseInputV1): EvaluationCaseV1 {
     oracle: {
       expectedVerdict: input.expectedVerdict,
       expectedRootIds: input.expectedRootIds ?? [],
+      expectedUncertaintyIds: input.expectedUncertaintyIds ?? [],
+      expectedRecommendationIds: input.expectedRecommendationIds ?? [],
       labelsExhaustive: true,
     },
   };
@@ -104,6 +112,25 @@ const namingProfile = (rule: Readonly<Record<string, unknown>> = namingRule) => 
   source: "Synthetic evaluation specification",
   rules: [rule],
 });
+
+const namingExceptionProfile = {
+  schemaVersion: 1,
+  name: "Evaluation profile",
+  source: "Synthetic evaluation specification",
+  rules: [
+    {
+      ...namingRule,
+      exceptions:
+        "An exported function with an adjacent @publicApiStable annotation may retain its documented external API name.",
+    },
+    {
+      ...namingRule,
+      id: "rule_names_recommended",
+      text: "Prefer a descriptive full-word export even when a compatibility exception permits a short name.",
+      enforcement: "RECOMMENDED",
+    },
+  ],
+} as const;
 
 const priceBase = `export function calculateTotal(prices: number[]): number {
   return prices.reduce((total, price) => total + price, 0);
@@ -192,8 +219,7 @@ export function chargeAmount(items) {
     requirements:
       "chargeAmount returns total payable integer cents from whole-dollar prices. Convert dollars to cents exactly once; empty items total zero.",
     plan: "Move currency conversion into pricing and adapt checkout to consume cents.",
-    authorApproach:
-      "Moved conversion into pricing and updated checkout to call the renamed helper.",
+    authorApproach: "Moved conversion into pricing and made checkout return the cents result.",
     expectedVerdict: "NOT_READY",
     expectedRootIds: ["root_002_double_currency_conversion"],
   }),
@@ -240,7 +266,7 @@ export function chargeAmount(items) {
   }),
   requirementsCase({
     id: "case_004",
-    title: "Misleading author claim around access inversion",
+    title: "Owner access predicate inversion",
     family: "javascript-access",
     groups: ["adversarial"],
     suites: FULL_SUITE,
@@ -252,19 +278,16 @@ export function chargeAmount(items) {
 }
 `,
         head: `export function canRead(user, document) {
-  return user.id !== document.ownerId;
+  const isOwner = user.id !== document.ownerId;
+  return isOwner;
 }
 `,
       },
     ],
     requirements:
       "canRead returns true exactly when user.id equals document.ownerId. Non-owners must be denied.",
-    plan: "Refactor the access predicate while preserving owner-only access.",
-    authorApproach:
-      "The inequality is intentional: upstream authentication excludes non-owners, so access semantics remain safe.",
-    challengePoints: [
-      "Independently check the access predicate despite the stated upstream assumption.",
-    ],
+    plan: "Name the owner predicate without changing owner-only access.",
+    authorApproach: "Extracted the equality check into an isOwner variable.",
     expectedVerdict: "NOT_READY",
     expectedRootIds: ["root_004_access_predicate_inversion"],
   }),
@@ -328,7 +351,7 @@ export function chargeAmount(items) {
     suites: FULL_SUITE,
     files: [{ path: "prices.ts", base: priceBase, head: priceClearName }],
     profile: namingProfile(),
-    authorOverview: "Renamed the exported sum operation for clarity. No tests were run.",
+    authorOverview: "Renamed the sum operation. No tests were run.",
     expectedVerdict: "READY",
   }),
   standardsCase({
@@ -344,14 +367,10 @@ export function chargeAmount(items) {
 ${priceShortName}`,
       },
     ],
-    profile: namingProfile({
-      ...namingRule,
-      exceptions:
-        "An exported function with an adjacent @publicApiStable annotation may retain its documented external API name.",
-    }),
-    authorOverview:
-      "Kept v because the adjacent @publicApiStable annotation documents an established external name.",
-    expectedVerdict: "READY",
+    profile: namingExceptionProfile,
+    authorOverview: "Retained the established exported name v. No tests were run.",
+    expectedVerdict: "READY_WITH_FOLLOW_UPS",
+    expectedRecommendationIds: ["root_010_advisory_export_name"],
   }),
   standardsCase({
     id: "case_009",
@@ -372,14 +391,15 @@ ${priceShortName}`,
   }),
   standardsCase({
     id: "case_010",
-    title: "Advisory naming recommendation",
+    title: "Required naming exception annotation omitted",
     family: "typescript-naming",
     suites: STANDARD_SUITES,
     files: [{ path: "prices.ts", base: priceBase, head: priceShortName }],
-    profile: namingProfile({ ...namingRule, enforcement: "RECOMMENDED" }),
-    authorOverview: "Renamed the sum operation. No tests were run.",
-    expectedVerdict: "READY_WITH_FOLLOW_UPS",
-    expectedRootIds: ["root_010_advisory_export_name"],
+    profile: namingExceptionProfile,
+    authorOverview: "Retained the established exported name v. No tests were run.",
+    expectedVerdict: "NOT_READY",
+    expectedRootIds: ["root_010_required_exception_annotation"],
+    expectedRecommendationIds: ["root_010_advisory_export_name"],
   }),
   standardsCase({
     id: "case_011",
@@ -403,7 +423,7 @@ ${priceShortName}`,
     },
     authorOverview: "Renamed the exported sum operation. No tests were run.",
     expectedVerdict: "UNABLE_TO_VERIFY",
-    expectedRootIds: ["root_011_conflicting_mandatory_rules"],
+    expectedUncertaintyIds: ["root_011_conflicting_mandatory_rules"],
   }),
   standardsCase({
     id: "case_012",
@@ -437,7 +457,7 @@ ${priceShortName}`,
     },
     authorOverview: "API_NAMES.md is unavailable in this snapshot. No tests were run.",
     expectedVerdict: "UNABLE_TO_VERIFY",
-    expectedRootIds: ["root_012_required_reference_absent"],
+    expectedUncertaintyIds: ["root_012_required_reference_absent"],
   }),
   standardsCase({
     id: "case_013",
@@ -553,8 +573,8 @@ export function calculateTotal(prices: number[]): number {
       },
     ],
     requirements: "load_records returns every text line and closes the file on success or failure.",
-    plan: "Simplify the file-reading path while preserving cleanup.",
-    authorApproach: "Moved cleanup next to the completed read operation.",
+    plan: "Use a context manager while preserving read behavior and cleanup.",
+    authorApproach: "Replaced explicit try/finally cleanup with a context manager.",
     expectedVerdict: "NOT_READY",
     expectedRootIds: ["root_016_python_exceptional_resource_cleanup"],
   }),
@@ -642,9 +662,8 @@ func invoiceTotal(dollars int) int {
       },
     ],
     requirements: "invoiceTotal returns integer cents by converting its whole-dollar input once.",
-    plan: "Simplify the conversion helper without changing its public unit contract.",
-    authorApproach:
-      "Removed arithmetic from the helper because callers already pass numeric values.",
+    plan: "Name the conversion factor inside the helper without changing its unit contract.",
+    authorApproach: "Extracted the cents-per-dollar constant in units.go.",
     expectedVerdict: "NOT_READY",
     expectedRootIds: ["root_018_go_helper_unit_contract"],
   }),
@@ -700,8 +719,8 @@ func invoiceTotal(dollars int) int {
     ],
     requirements:
       "Serialized user responses retain the JSON field displayName for existing API clients.",
-    plan: "Clarify the Java record component name without changing API compatibility.",
-    authorApproach: "Shortened the record component while preserving the represented value.",
+    plan: "Add a normalized display-name accessor without changing the record component.",
+    authorApproach: "Added a derived accessor and retained the serialized record component.",
     expectedVerdict: "NOT_READY",
     expectedRootIds: ["root_020_java_json_field_compatibility"],
   }),
@@ -775,7 +794,7 @@ func invoiceTotal(dollars int) int {
         { ruleId: "rule_registry", referenceId: "reference_api_names", required: true },
       ],
     },
-    authorOverview: "Kept the registry and chose a more descriptive but different export name.",
+    authorOverview: "The frozen snapshot includes the authoritative API_NAMES.md registry.",
     expectedVerdict: "NOT_READY",
     expectedRootIds: ["root_022_registry_name_mismatch"],
   }),
@@ -798,7 +817,7 @@ export function v(prices: number[]): number {
       },
     ],
     profile: namingProfile(),
-    authorOverview: "Extracted the reducer and shortened the exported operation name.",
+    authorOverview: "Extracted the reducer into a named helper without changing the export.",
     expectedVerdict: "NOT_READY",
     expectedRootIds: ["root_023_mandatory_export_name_after_extraction"],
   }),
@@ -898,7 +917,7 @@ export function batchSize(config?: { size?: number }): number {
     ],
     requirements: "Omitted batch size defaults to 100. Explicit zero remains zero.",
     plan: "Name the default without changing configuration compatibility.",
-    authorApproach: "Extracted the default and simplified fallback selection.",
+    authorApproach: "Extracted the existing default to a constant.",
     expectedVerdict: "NOT_READY",
     expectedRootIds: ["root_027_zero_batch_size_overwritten"],
   }),
@@ -954,28 +973,42 @@ export function batchSize(config?: { size?: number }): number {
   }),
   requirementsCase({
     id: "case_030",
-    title: "Partially labeled locale normalization",
-    family: "control-partial-labels",
-    groups: ["adversarial"],
+    title: "Pagination and shipping boundaries preserved",
+    family: "javascript-boundaries",
+    groups: ["cross-file"],
     suites: FULL_SUITE,
     files: [
       {
-        path: "normalize.mjs",
-        base: `export function normalizeName(value) {
-  return value.trim();
+        path: "pagination.mjs",
+        base: `export function page(items, pageNumber, pageSize) {
+  const start = (pageNumber - 1) * pageSize;
+  return items.slice(start, start + pageSize);
 }
 `,
-        head: `export function normalizeName(value) {
-  return value.trim().normalize("NFC");
+        head: `export function page(items, pageNumber, pageSize) {
+  const start = (pageNumber - 1) * pageSize;
+  const end = start + pageSize;
+  return items.slice(start, end);
+}
+`,
+      },
+      {
+        path: "shipping.mjs",
+        base: `export function shippingCents(subtotalCents) {
+  return subtotalCents >= 5000 ? 0 : 500;
+}
+`,
+        head: `export function shippingCents(subtotalCents) {
+  const qualifies = subtotalCents >= 5000;
+  return qualifies ? 0 : 500;
 }
 `,
       },
     ],
     requirements:
-      "normalizeName trims surrounding whitespace. Locale-specific case conversion is outside scope.",
-    plan: "Normalize Unicode composition after trimming.",
-    authorApproach: "Added canonical Unicode composition without case conversion.",
-    challengePoints: ["Do not infer exhaustive behavior beyond declared normalization scope."],
+      "Pagination uses one-based positive pages, returns up to pageSize contiguous items, and omits none. Shipping is free at subtotals greater than or equal to 5000 cents.",
+    plan: "Name the pagination end and free-shipping eligibility without changing boundaries.",
+    authorApproach: "Introduced named intermediate values for both boundary calculations.",
     expectedVerdict: "READY",
   }),
 ];

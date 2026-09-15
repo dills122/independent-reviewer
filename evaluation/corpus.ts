@@ -5,6 +5,14 @@ import { EVALUATION_CASES_V1 } from "./case-catalog.js";
 
 const OpaqueCaseIdSchema = z.string().regex(/^case_\d{3}$/);
 const CorpusSplitSchema = z.enum(["DEVELOPMENT", "HOLDOUT"]);
+const ControlRoleSchema = z.enum([
+  "MISSING_REQUIRED_CONTEXT",
+  "IRRELEVANT_MISSING_CONTEXT",
+  "MISLEADING_AUTHOR_CONCERN",
+  "UNSUPPORTED_AUTHOR_DEFENSE",
+  "CONFLICTING_APPLICABLE_STANDARDS",
+  "POST_AUTHOR_CLAIM_CHANGE",
+]);
 const PairSchema = z.strictObject({
   pairId: prefixedIdentifier("pair"),
   role: z.enum(["DEFECT", "CLEAN"]),
@@ -20,6 +28,13 @@ const RootSchema = z.strictObject({
 });
 const UncertaintySchema = z.strictObject({
   uncertaintyId: prefixedIdentifier("uncertainty"),
+  sourceOracleId: prefixedIdentifier("root"),
+  obligationId: prefixedIdentifier("obligation"),
+  description: NonEmptyTextSchema,
+});
+const RecommendationSchema = z.strictObject({
+  recommendationId: z.string().regex(/^recommendation_[A-Za-z0-9][A-Za-z0-9_-]*$/),
+  sourceOracleId: prefixedIdentifier("root"),
   obligationId: prefixedIdentifier("obligation"),
   description: NonEmptyTextSchema,
 });
@@ -32,6 +47,7 @@ const CorpusCaseDefinitionV1Schema = z.strictObject({
   caseId: OpaqueCaseIdSchema,
   familyId: prefixedIdentifier("family"),
   pair: PairSchema.nullable(),
+  controlRole: ControlRoleSchema.nullable(),
   split: CorpusSplitSchema,
   provenance: z.strictObject({
     kind: z.literal("SYNTHETIC"),
@@ -47,6 +63,7 @@ const CorpusCaseDefinitionV1Schema = z.strictObject({
   obligations: z.array(ObligationSchema).min(1),
   expectedRoots: z.array(RootSchema),
   expectedUncertainties: z.array(UncertaintySchema),
+  expectedRecommendations: z.array(RecommendationSchema),
   labelsExhaustive: z.boolean(),
   evaluatorOnly: z.strictObject({
     hiddenTest: PrivateArtifactSchema,
@@ -69,6 +86,7 @@ const EvaluationCorpusDefinitionV1Schema = z
       string,
       { familyIds: Set<string>; roles: string[]; splits: Set<string> }
     >();
+    const controlRoleCounts = new Map<string, number>();
 
     for (const [index, entry] of corpus.cases.entries()) {
       if (seenCaseIds.has(entry.caseId)) {
@@ -112,6 +130,15 @@ const EvaluationCorpusDefinitionV1Schema = z
           });
         }
       }
+      for (const recommendation of entry.expectedRecommendations) {
+        if (!obligationIds.has(recommendation.obligationId)) {
+          context.addIssue({
+            code: "custom",
+            message: "recommendation references unknown obligation",
+            path: ["cases", index, "expectedRecommendations"],
+          });
+        }
+      }
       if (entry.expectedRoots.length > 0 && entry.evaluatorOnly.fixingPatch === null) {
         context.addIssue({
           code: "custom",
@@ -142,6 +169,13 @@ const EvaluationCorpusDefinitionV1Schema = z
       }
 
       if (entry.pair !== null) {
+        if (entry.controlRole !== null) {
+          context.addIssue({
+            code: "custom",
+            message: "paired case cannot declare a control role",
+            path: ["cases", index, "controlRole"],
+          });
+        }
         const members = pairMembers.get(entry.pair.pairId) ?? {
           familyIds: new Set<string>(),
           roles: [],
@@ -151,6 +185,17 @@ const EvaluationCorpusDefinitionV1Schema = z
         members.roles.push(entry.pair.role);
         members.splits.add(entry.split);
         pairMembers.set(entry.pair.pairId, members);
+      } else if (entry.controlRole === null) {
+        context.addIssue({
+          code: "custom",
+          message: "unpaired case must declare one canonical control role",
+          path: ["cases", index, "controlRole"],
+        });
+      } else {
+        controlRoleCounts.set(
+          entry.controlRole,
+          (controlRoleCounts.get(entry.controlRole) ?? 0) + 1,
+        );
       }
     }
 
@@ -176,6 +221,15 @@ const EvaluationCorpusDefinitionV1Schema = z
         });
       }
     }
+    for (const role of ControlRoleSchema.options) {
+      if (controlRoleCounts.get(role) !== 1) {
+        context.addIssue({
+          code: "custom",
+          message: `control role ${role} must occur exactly once`,
+          path: ["cases"],
+        });
+      }
+    }
   });
 
 export type EvaluationCorpusCaseDefinitionV1 = z.output<typeof CorpusCaseDefinitionV1Schema>;
@@ -186,11 +240,10 @@ const PAIRS = {
   case_002: ["pair_checkout", "DEFECT"],
   case_003: ["pair_boundaries", "DEFECT"],
   case_004: ["pair_access", "DEFECT"],
-  case_005: ["pair_boundaries", "CLEAN"],
   case_006: ["pair_naming_direct", "DEFECT"],
   case_007: ["pair_naming_direct", "CLEAN"],
   case_008: ["pair_naming_exception", "CLEAN"],
-  case_009: ["pair_naming_exception", "DEFECT"],
+  case_010: ["pair_naming_exception", "DEFECT"],
   case_013: ["pair_naming_extraction", "CLEAN"],
   case_014: ["pair_naming_registry", "CLEAN"],
   case_015: ["pair_python_resource", "CLEAN"],
@@ -206,6 +259,16 @@ const PAIRS = {
   case_025: ["pair_state_lifecycle", "DEFECT"],
   case_026: ["pair_default_compatibility", "CLEAN"],
   case_027: ["pair_default_compatibility", "DEFECT"],
+  case_030: ["pair_boundaries", "CLEAN"],
+} as const;
+
+const CONTROL_ROLES = {
+  case_005: "MISLEADING_AUTHOR_CONCERN",
+  case_009: "UNSUPPORTED_AUTHOR_DEFENSE",
+  case_011: "CONFLICTING_APPLICABLE_STANDARDS",
+  case_012: "MISSING_REQUIRED_CONTEXT",
+  case_028: "IRRELEVANT_MISSING_CONTEXT",
+  case_029: "POST_AUTHOR_CLAIM_CHANGE",
 } as const;
 
 const HOLDOUT_FAMILIES = new Set([
@@ -213,39 +276,145 @@ const HOLDOUT_FAMILIES = new Set([
   "typescript-naming-registry",
   "go-helper-contract",
   "java-api-compatibility",
-  "control-partial-labels",
+  "control-irrelevant-context",
 ]);
 
-const ROOT_DESCRIPTIONS: Readonly<Record<string, string>> = {
-  root_002_double_currency_conversion: "Cents returned by pricing are multiplied by 100 again.",
-  root_003_pagination_exclusive_end: "Inclusive arithmetic drops the last item from each page.",
-  root_003_shipping_threshold_equality: "A subtotal of exactly 5000 cents loses free shipping.",
-  root_004_access_predicate_inversion: "Owner equality is inverted, granting non-owner access.",
-  root_006_mandatory_export_name: "Single-letter exported name violates mandatory naming rule.",
-  root_009_unsupported_mandatory_defense:
-    "Author preference does not satisfy or except mandatory naming rule.",
-  root_016_python_exceptional_resource_cleanup:
-    "Read failure bypasses close after try/finally removal.",
-  root_018_go_helper_unit_contract: "Helper stops converting whole dollars into cents.",
-  root_020_java_json_field_compatibility:
-    "Record component rename changes existing serialized JSON field.",
-  root_022_registry_name_mismatch: "Exported name contradicts required frozen registry value.",
-  root_023_mandatory_export_name_after_extraction:
-    "Helper extraction also introduces prohibited single-letter export.",
-  root_025_completed_job_reopened: "Completed jobs are added to retryable states and reopen.",
-  root_027_zero_batch_size_overwritten: "Truthy fallback replaces explicit zero with default.",
-  root_029_author_cannot_replace_cache_requirement:
-    "Changed TTL exceeds frozen requirement despite author assertion.",
+type OracleClassification =
+  | { kind: "ROOT"; description: string }
+  | { kind: "UNCERTAINTY"; uncertaintyId: `uncertainty_${string}`; description: string }
+  | {
+      kind: "RECOMMENDATION";
+      recommendationId: `recommendation_${string}`;
+      description: string;
+    };
+
+const ORACLE_CLASSIFICATIONS: Readonly<Record<string, OracleClassification>> = {
+  root_002_double_currency_conversion: {
+    kind: "ROOT",
+    description: "Cents returned by pricing are multiplied by 100 again.",
+  },
+  root_003_pagination_exclusive_end: {
+    kind: "ROOT",
+    description: "Inclusive arithmetic drops the last item from each page.",
+  },
+  root_003_shipping_threshold_equality: {
+    kind: "ROOT",
+    description: "A subtotal of exactly 5000 cents loses free shipping.",
+  },
+  root_004_access_predicate_inversion: {
+    kind: "ROOT",
+    description: "Owner equality is inverted, granting non-owner access.",
+  },
+  root_006_mandatory_export_name: {
+    kind: "ROOT",
+    description: "Single-letter exported name violates mandatory naming rule.",
+  },
+  root_009_unsupported_mandatory_defense: {
+    kind: "ROOT",
+    description: "Author preference does not satisfy or except mandatory naming rule.",
+  },
+  root_010_advisory_export_name: {
+    kind: "RECOMMENDATION",
+    recommendationId: "recommendation_010_advisory_export_name",
+    description: "A descriptive full-word export remains useful non-blocking advice.",
+  },
+  root_010_required_exception_annotation: {
+    kind: "ROOT",
+    description: "Short exported name lacks annotation required by mandatory exception.",
+  },
+  root_011_conflicting_mandatory_rules: {
+    kind: "UNCERTAINTY",
+    uncertaintyId: "uncertainty_011_conflicting_rules",
+    description: "Conflicting mandatory rules prevent one valid status.",
+  },
+  root_012_required_reference_absent: {
+    kind: "UNCERTAINTY",
+    uncertaintyId: "uncertainty_012_missing_registry",
+    description: "Required authoritative naming registry is absent.",
+  },
+  root_016_python_exceptional_resource_cleanup: {
+    kind: "ROOT",
+    description: "Read failure bypasses close after try/finally removal.",
+  },
+  root_018_go_helper_unit_contract: {
+    kind: "ROOT",
+    description: "Helper stops converting whole dollars into cents.",
+  },
+  root_020_java_json_field_compatibility: {
+    kind: "ROOT",
+    description: "Record component rename changes existing serialized JSON field.",
+  },
+  root_022_registry_name_mismatch: {
+    kind: "ROOT",
+    description: "Exported name contradicts required frozen registry value.",
+  },
+  root_023_mandatory_export_name_after_extraction: {
+    kind: "ROOT",
+    description: "Helper extraction also introduces prohibited single-letter export.",
+  },
+  root_025_completed_job_reopened: {
+    kind: "ROOT",
+    description: "Completed jobs are added to retryable states and reopen.",
+  },
+  root_027_zero_batch_size_overwritten: {
+    kind: "ROOT",
+    description: "Truthy fallback replaces explicit zero with default.",
+  },
+  root_029_author_cannot_replace_cache_requirement: {
+    kind: "ROOT",
+    description: "Changed TTL exceeds frozen requirement despite author assertion.",
+  },
 };
 
-const UNCERTAINTIES: Readonly<Record<string, readonly [string, string][]>> = {
-  case_011: [
-    ["uncertainty_011_conflicting_rules", "Conflicting mandatory rules prevent one valid status."],
-  ],
-  case_012: [
-    ["uncertainty_012_missing_registry", "Required authoritative naming registry is absent."],
-  ],
-};
+function classifiedOracle(
+  sourceOracleId: string,
+  expectedKind: OracleClassification["kind"],
+): OracleClassification {
+  const classification = ORACLE_CLASSIFICATIONS[sourceOracleId];
+  if (!classification) throw new Error(`Unknown catalog oracle ID ${sourceOracleId}.`);
+  if (classification.kind !== expectedKind) {
+    throw new Error(
+      `Catalog oracle ID ${sourceOracleId} is ${classification.kind}, not ${expectedKind}.`,
+    );
+  }
+  return classification;
+}
+
+export function classifyEvaluationCaseOracleV1(
+  testCase: (typeof EVALUATION_CASES_V1)[number],
+  obligationId: `obligation_${string}`,
+) {
+  const roots = testCase.oracle.expectedRootIds.map((rootId) => {
+    const classification = classifiedOracle(rootId, "ROOT");
+    if (classification.kind !== "ROOT") throw new Error("Unreachable oracle classification.");
+    return { rootId, obligationId, description: classification.description };
+  });
+  const uncertainties = testCase.oracle.expectedUncertaintyIds.map((sourceOracleId) => {
+    const classification = classifiedOracle(sourceOracleId, "UNCERTAINTY");
+    if (classification.kind !== "UNCERTAINTY") {
+      throw new Error("Unreachable oracle classification.");
+    }
+    return {
+      uncertaintyId: classification.uncertaintyId,
+      sourceOracleId,
+      obligationId,
+      description: classification.description,
+    };
+  });
+  const recommendations = testCase.oracle.expectedRecommendationIds.map((sourceOracleId) => {
+    const classification = classifiedOracle(sourceOracleId, "RECOMMENDATION");
+    if (classification.kind !== "RECOMMENDATION") {
+      throw new Error("Unreachable oracle classification.");
+    }
+    return {
+      recommendationId: classification.recommendationId,
+      sourceOracleId,
+      obligationId,
+      description: classification.description,
+    };
+  });
+  return { roots, uncertainties, recommendations };
+}
 
 function familyId(family: string): `family_${string}` {
   return `family_${family.replaceAll("-", "_")}`;
@@ -310,18 +479,11 @@ function definitionForCase(
 ): EvaluationCorpusCaseDefinitionV1 {
   const obligationId = `obligation_${testCase.id}` as const;
   const pairTuple = PAIRS[testCase.id as keyof typeof PAIRS];
-  const roots = testCase.oracle.expectedRootIds
-    .filter((rootId) => ROOT_DESCRIPTIONS[rootId] !== undefined)
-    .map((rootId) => ({
-      rootId,
-      obligationId,
-      description: ROOT_DESCRIPTIONS[rootId] ?? rootId,
-    }));
-  const uncertainties = (UNCERTAINTIES[testCase.id] ?? []).map(([uncertaintyId, description]) => ({
-    uncertaintyId,
+  const controlRole = CONTROL_ROLES[testCase.id as keyof typeof CONTROL_ROLES] ?? null;
+  const { roots, uncertainties, recommendations } = classifyEvaluationCaseOracleV1(
+    testCase,
     obligationId,
-    description,
-  }));
+  );
   const hiddenReference = `oracles/v1/${testCase.id}/assertion.json`;
   const patchReference = `oracles/v1/${testCase.id}/correction.patch`;
   const obligationText =
@@ -333,6 +495,7 @@ function definitionForCase(
     caseId: testCase.id,
     familyId: familyId(testCase.family),
     pair: pairTuple ? { pairId: pairTuple[0], role: pairTuple[1] } : null,
+    controlRole,
     split: HOLDOUT_FAMILIES.has(testCase.family) ? "HOLDOUT" : "DEVELOPMENT",
     provenance: {
       kind: "SYNTHETIC",
@@ -344,7 +507,8 @@ function definitionForCase(
     obligations: [{ obligationId, text: obligationText }],
     expectedRoots: roots,
     expectedUncertainties: uncertainties,
-    labelsExhaustive: testCase.id !== "case_030",
+    expectedRecommendations: recommendations,
+    labelsExhaustive: testCase.oracle.labelsExhaustive,
     evaluatorOnly: {
       hiddenTest: {
         reference: hiddenReference,
@@ -353,6 +517,7 @@ function definitionForCase(
           expectedVerdict: testCase.oracle.expectedVerdict,
           roots,
           uncertainties,
+          recommendations,
           assertion: "Evaluate declared obligation against reconstructed BASE and HEAD.",
         }),
       },

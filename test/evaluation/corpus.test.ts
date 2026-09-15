@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  classifyEvaluationCaseOracleV1,
   EVALUATION_CORPUS_V1,
   validateEvaluationCorpusDefinitionV1,
 } from "../../evaluation/corpus.js";
@@ -29,6 +30,30 @@ describe("evaluation corpus definition", () => {
       8,
     );
     assert.equal([...pairs.values()].filter(([member]) => member?.split === "HOLDOUT").length, 4);
+    assert.deepEqual(
+      Object.fromEntries(controls.map((entry) => [entry.caseId, entry.controlRole])),
+      {
+        case_005: "MISLEADING_AUTHOR_CONCERN",
+        case_009: "UNSUPPORTED_AUTHOR_DEFENSE",
+        case_011: "CONFLICTING_APPLICABLE_STANDARDS",
+        case_012: "MISSING_REQUIRED_CONTEXT",
+        case_028: "IRRELEVANT_MISSING_CONTEXT",
+        case_029: "POST_AUTHOR_CLAIM_CHANGE",
+      },
+    );
+    const catalogById = new Map(EVALUATION_CASES_V1.map((entry) => [entry.id, entry]));
+    assert.match(JSON.stringify(catalogById.get("case_005")?.reviewer), /worry.*off-by-one/i);
+    assert.match(JSON.stringify(catalogById.get("case_009")?.reviewer), /disregard naming/i);
+    assert.match(
+      JSON.stringify(catalogById.get("case_011")?.reviewer),
+      /exact single-letter name v/i,
+    );
+    assert.match(JSON.stringify(catalogById.get("case_012")?.reviewer), /required.*API_NAMES\.md/i);
+    assert.match(JSON.stringify(catalogById.get("case_028")?.reviewer), /unavailable.*unrelated/i);
+    assert.match(
+      JSON.stringify(catalogById.get("case_029")?.reviewer),
+      /intended requirement is now one hour/i,
+    );
     for (const members of pairs.values()) {
       assert.equal(members.length, 2);
       assert.deepEqual(
@@ -78,7 +103,45 @@ describe("evaluation corpus definition", () => {
       corpus.cases.filter(({ expectedUncertainties }) => expectedUncertainties.length > 0).length >=
         2,
     );
-    assert.ok(corpus.cases.some(({ labelsExhaustive }) => !labelsExhaustive));
+    assert.ok(corpus.cases.every(({ labelsExhaustive }) => labelsExhaustive));
+  });
+
+  it("classifies every catalog oracle without treating advice or uncertainty as a root", () => {
+    const corpus = validateEvaluationCorpusDefinitionV1(EVALUATION_CORPUS_V1);
+    const byId = new Map(corpus.cases.map((entry) => [entry.caseId, entry]));
+
+    assert.deepEqual(byId.get("case_010")?.expectedRecommendations, [
+      {
+        recommendationId: "recommendation_010_advisory_export_name",
+        sourceOracleId: "root_010_advisory_export_name",
+        obligationId: "obligation_case_010",
+        description: "A descriptive full-word export remains useful non-blocking advice.",
+      },
+    ]);
+    assert.equal(byId.get("case_011")?.expectedRoots.length, 0);
+    assert.equal(
+      byId.get("case_011")?.expectedUncertainties[0]?.sourceOracleId,
+      "root_011_conflicting_mandatory_rules",
+    );
+    assert.equal(byId.get("case_012")?.expectedRoots.length, 0);
+    assert.equal(
+      byId.get("case_012")?.expectedUncertainties[0]?.sourceOracleId,
+      "root_012_required_reference_absent",
+    );
+
+    const catalogCase = EVALUATION_CASES_V1[0];
+    assert.ok(catalogCase);
+    assert.throws(
+      () =>
+        classifyEvaluationCaseOracleV1(
+          {
+            ...catalogCase,
+            oracle: { ...catalogCase.oracle, expectedRootIds: ["root_unknown"] },
+          },
+          "obligation_unknown",
+        ),
+      /unknown catalog oracle ID root_unknown/i,
+    );
   });
 
   it("keeps BASE inventory and reviewer obligations fixed within every pair", () => {
@@ -102,6 +165,7 @@ describe("evaluation corpus definition", () => {
         second.repository.files.map(({ path, base }) => ({ path, base })),
       );
       assert.equal(first.reviewer.kind, second.reviewer.kind);
+      assert.deepEqual(first.reviewer, second.reviewer);
       if (first.reviewer.kind === "requirements" && second.reviewer.kind === "requirements") {
         assert.equal(first.reviewer.requirements, second.reviewer.requirements);
       }

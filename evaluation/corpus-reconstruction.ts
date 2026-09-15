@@ -132,6 +132,7 @@ export async function reconstructEvaluationCorpusCaseV1(
     caseId: definition.caseId,
     familyId: definition.familyId,
     pair: definition.pair,
+    controlRole: definition.controlRole,
     reviewMode: testCase.reviewMode === "requirements" ? "REQUIREMENTS" : "STANDARDS",
     source: {
       identityVersion: 1,
@@ -151,6 +152,7 @@ export async function reconstructEvaluationCorpusCaseV1(
       expectedVerdict: testCase.oracle.expectedVerdict,
       expectedRoots: definition.expectedRoots,
       expectedUncertainties: definition.expectedUncertainties,
+      expectedRecommendations: definition.expectedRecommendations,
       labelsExhaustive: definition.labelsExhaustive,
       artifacts: [
         { role: "HIDDEN_TEST", ...hiddenTest },
