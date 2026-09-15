@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -14,6 +14,35 @@ import {
 } from "../../src/snapshot/git-command.js";
 
 const execFileAsync = promisify(execFile);
+
+const gitCommandModuleUrl = new URL("../../src/snapshot/git-command.js", import.meta.url).href;
+
+async function runWithFreshFakeGit<T>(fakeGitProgram: string, callerProgram: string): Promise<T> {
+  const root = await mkdtemp(join(tmpdir(), "independent-reviewer-fake-git-"));
+  const fakeGitPath = join(root, "git");
+  const callerPath = join(root, "caller.mjs");
+  try {
+    await writeFile(fakeGitPath, `#!${process.execPath}\n${fakeGitProgram}`, { mode: 0o700 });
+    await writeFile(
+      callerPath,
+      `import { runGit, runGitNulRecords, runGitStdoutPrefix } from ${JSON.stringify(gitCommandModuleUrl)};\n${callerProgram}`,
+    );
+    const { stdout } = await execFileAsync(process.execPath, [callerPath], {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        HOME: root,
+        PATH: root,
+        ...(process.env.SystemRoot === undefined ? {} : { SystemRoot: process.env.SystemRoot }),
+        ...(process.env.PATHEXT === undefined ? {} : { PATHEXT: process.env.PATHEXT }),
+      },
+      timeout: 4_000,
+    });
+    return JSON.parse(stdout) as T;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
 async function createRepository(): Promise<string> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-git-command-"));
@@ -118,5 +147,123 @@ describe("runGit", () => {
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
+  });
+});
+
+describe("safe.directory preflight", () => {
+  it("forwards complete configured entries from a fresh process", async () => {
+    const observed = await runWithFreshFakeGit<{
+      count: string;
+      keys: string[];
+      values: string[];
+    }>(
+      `
+if (process.argv[2] === "config") {
+  process.stdout.write("/trusted/one\\n*\\n");
+} else {
+  process.stdout.write(JSON.stringify({
+    count: process.env.GIT_CONFIG_COUNT,
+    keys: [process.env.GIT_CONFIG_KEY_0, process.env.GIT_CONFIG_KEY_1],
+    values: [process.env.GIT_CONFIG_VALUE_0, process.env.GIT_CONFIG_VALUE_1],
+  }));
+}
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 100);
+console.log(result.stdout.toString("utf8"));
+`,
+    );
+
+    assert.deepEqual(observed, {
+      count: "2",
+      keys: ["safe.directory", "safe.directory"],
+      values: ["/trusted/one", "*"],
+    });
+  });
+
+  it("treats an unset key as an empty forwarding set", async () => {
+    const observed = await runWithFreshFakeGit<{ count: string }>(
+      `
+if (process.argv[2] === "config") {
+  process.exitCode = 1;
+} else {
+  process.stdout.write(JSON.stringify({ count: process.env.GIT_CONFIG_COUNT }));
+}
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 100);
+console.log(result.stdout.toString("utf8"));
+`,
+    );
+
+    assert.deepEqual(observed, { count: "0" });
+  });
+
+  it("discards output from a failed lookup", async () => {
+    const observed = await runWithFreshFakeGit<{ count: string }>(
+      `
+if (process.argv[2] === "config") {
+  process.stdout.write("/must-not-be-forwarded\\n");
+  process.exitCode = 2;
+} else {
+  process.stdout.write(JSON.stringify({ count: process.env.GIT_CONFIG_COUNT }));
+}
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 100);
+console.log(result.stdout.toString("utf8"));
+`,
+    );
+
+    assert.deepEqual(observed, { count: "0" });
+  });
+
+  it("discards overflow and stops its producer before running Git", async () => {
+    const observed = await runWithFreshFakeGit<{ count: string }>(
+      `
+if (process.argv[2] === "config") {
+  process.stdout.write(Buffer.alloc(1024 * 1024 + 1, 97));
+  setTimeout(() => {}, 30_000);
+} else {
+  process.stdout.write(JSON.stringify({ count: process.env.GIT_CONFIG_COUNT }));
+}
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 100);
+console.log(result.stdout.toString("utf8"));
+`,
+    );
+
+    assert.deepEqual(observed, { count: "0" });
+  });
+
+  it("bounds a shared stalled lookup for every Git wrapper", async () => {
+    const observed = await runWithFreshFakeGit<{
+      elapsedMs: number;
+      records: string[];
+      results: string[];
+    }>(
+      `
+if (process.argv[2] === "config") {
+  setTimeout(() => {}, 30_000);
+} else {
+  process.stdout.write(Buffer.from("ok\\0"));
+}
+`,
+      `
+const records = [];
+const startedAt = performance.now();
+const settled = await Promise.all([
+  runGit(process.cwd(), ["status"], [0], 100).then((result) => result.stdout.subarray(0, 2).toString("utf8")),
+  runGitNulRecords(process.cwd(), ["records"], (record) => records.push(record.toString("utf8")), 100).then(() => "records"),
+  runGitStdoutPrefix(process.cwd(), ["prefix"], 2, 100).then((result) => result.toString("utf8")),
+]);
+console.log(JSON.stringify({ elapsedMs: performance.now() - startedAt, records, results: settled }));
+`,
+    );
+
+    assert.ok(observed.elapsedMs < 2_500, `preflight took ${observed.elapsedMs} ms`);
+    assert.deepEqual(observed.records, ["ok"]);
+    assert.deepEqual(observed.results, ["ok", "records", "ok"]);
   });
 });

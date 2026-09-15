@@ -2,6 +2,17 @@ import { spawn } from "node:child_process";
 import { devNull } from "node:os";
 
 const MAX_GIT_OUTPUT_BYTES = 64 * 1024 * 1024;
+const MAX_SAFE_DIRECTORY_CONFIG_BYTES = 1024 * 1024;
+const MAX_SAFE_DIRECTORY_ENTRIES = 256;
+
+/**
+ * Process-wide configuration discovery has its own fixed ceiling instead of borrowing a caller's
+ * command timeout. Concurrent callers share this one lookup, so using whichever command arrived
+ * first would make forwarding depend on call order. One second permits a slow local protected-
+ * scope read while bounding startup. Timeout, overflow, or failure kills the producer, discards
+ * all output, and resolves the best-effort lookup empty; the command watchdog starts afterward.
+ */
+const SAFE_DIRECTORY_DISCOVERY_TIMEOUT_MS = 1_000;
 
 /** Default ceiling for a single Git invocation; a wedged Git must not hang the review. */
 export const DEFAULT_GIT_COMMAND_TIMEOUT_MS = 60_000;
@@ -42,32 +53,76 @@ function ambientGitEnvironment(): NodeJS.ProcessEnv {
 
 async function readConfiguredSafeDirectories(): Promise<readonly string[]> {
   return new Promise((resolve) => {
-    const child = spawn("git", ["config", "--get-all", "safe.directory"], {
-      shell: false,
-      stdio: ["ignore", "pipe", "ignore"],
-      env: ambientGitEnvironment(),
-    });
+    const start = () =>
+      spawn("git", ["config", "--get-all", "safe.directory"], {
+        shell: false,
+        stdio: ["ignore", "pipe", "ignore"],
+        env: ambientGitEnvironment(),
+      });
+    let child: ReturnType<typeof start>;
+    try {
+      child = start();
+    } catch {
+      resolve([]);
+      return;
+    }
     const chunks: Buffer[] = [];
     let length = 0;
+    let settled = false;
+    let watchdog: NodeJS.Timeout | undefined;
+
+    const settle = (safeDirectoryEntries: readonly string[], signal?: NodeJS.Signals): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
+      child.stdout.destroy();
+      if (signal !== undefined) child.kill(signal);
+      resolve(safeDirectoryEntries);
+    };
+
+    const fail = (): void => settle([], "SIGKILL");
+
+    watchdog = setTimeout(fail, SAFE_DIRECTORY_DISCOVERY_TIMEOUT_MS);
+    watchdog.unref();
+
     child.stdout.on("data", (chunk: Buffer) => {
+      if (settled) return;
       length += chunk.length;
       // A pathological config must not become a pathological argument list.
-      if (length <= 1024 * 1024) chunks.push(chunk);
+      if (length > MAX_SAFE_DIRECTORY_CONFIG_BYTES) {
+        fail();
+        return;
+      }
+      chunks.push(chunk);
     });
     // Exit status 1 simply means the key is unset, and any other failure means capture proceeds
     // without forwarding rather than refusing to run at all.
-    const settle = (): void => {
-      resolve(
-        Buffer.concat(chunks)
-          .toString("utf8")
+    child.stdout.on("error", fail);
+    child.on("error", fail);
+    child.on("close", (exitCode) => {
+      if (settled) return;
+      if (exitCode !== 0) {
+        settle([]);
+        return;
+      }
+      try {
+        const entries = new TextDecoder("utf-8", { fatal: true })
+          .decode(Buffer.concat(chunks, length))
           .split("\n")
           .map((line) => line.trim())
-          .filter((line) => line.length > 0)
-          .slice(0, 256),
-      );
-    };
-    child.on("error", () => resolve([]));
-    child.on("close", settle);
+          .filter((line) => line.length > 0);
+        if (
+          entries.length > MAX_SAFE_DIRECTORY_ENTRIES ||
+          entries.some((entry) => entry.includes("\0"))
+        ) {
+          settle([]);
+          return;
+        }
+        settle(entries);
+      } catch {
+        settle([]);
+      }
+    });
   });
 }
 
