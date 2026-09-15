@@ -114,6 +114,16 @@ const EvaluationCaseManifestBaseV1Schema = z.strictObject({
       role: z.enum(["DEFECT", "CLEAN"]),
     })
     .nullable(),
+  controlRole: z
+    .enum([
+      "MISSING_REQUIRED_CONTEXT",
+      "IRRELEVANT_MISSING_CONTEXT",
+      "MISLEADING_AUTHOR_CONCERN",
+      "UNSUPPORTED_AUTHOR_DEFENSE",
+      "CONFLICTING_APPLICABLE_STANDARDS",
+      "POST_AUTHOR_CLAIM_CHANGE",
+    ])
+    .nullable(),
   reviewMode: z.enum(["REQUIREMENTS", "STANDARDS"]),
   source: EvaluationSourceIdentityV1Schema,
   obligations: z
@@ -137,6 +147,15 @@ const EvaluationCaseManifestBaseV1Schema = z.strictObject({
     expectedUncertainties: z.array(
       z.strictObject({
         uncertaintyId: prefixedIdentifier("uncertainty"),
+        sourceOracleId: prefixedIdentifier("root"),
+        obligationId: prefixedIdentifier("obligation"),
+        description: NonEmptyTextSchema,
+      }),
+    ),
+    expectedRecommendations: z.array(
+      z.strictObject({
+        recommendationId: z.string().regex(/^recommendation_[A-Za-z0-9][A-Za-z0-9_-]*$/),
+        sourceOracleId: prefixedIdentifier("root"),
         obligationId: prefixedIdentifier("obligation"),
         description: NonEmptyTextSchema,
       }),
@@ -148,6 +167,13 @@ const EvaluationCaseManifestBaseV1Schema = z.strictObject({
 
 export const EvaluationCaseManifestV1Schema = EvaluationCaseManifestBaseV1Schema.superRefine(
   (manifest, context) => {
+    if ((manifest.pair === null) === (manifest.controlRole === null)) {
+      context.addIssue({
+        code: "custom",
+        message: "case manifest must declare exactly one pair or control role",
+        path: ["controlRole"],
+      });
+    }
     reportDuplicate(
       manifest.obligations.map(({ obligationId }) => obligationId),
       context,
@@ -172,6 +198,14 @@ export const EvaluationCaseManifestV1Schema = EvaluationCaseManifestBaseV1Schema
       ["oracleInventory", "expectedUncertainties"],
       "uncertainty ID",
     );
+    reportDuplicate(
+      manifest.oracleInventory.expectedRecommendations.map(
+        ({ recommendationId }) => recommendationId,
+      ),
+      context,
+      ["oracleInventory", "expectedRecommendations"],
+      "recommendation ID",
+    );
     const obligationIds = new Set(manifest.obligations.map(({ obligationId }) => obligationId));
     for (const [index, root] of manifest.oracleInventory.expectedRoots.entries()) {
       if (!obligationIds.has(root.obligationId)) {
@@ -188,6 +222,18 @@ export const EvaluationCaseManifestV1Schema = EvaluationCaseManifestBaseV1Schema
           code: "custom",
           message: `unknown obligation ID ${uncertainty.obligationId}`,
           path: ["oracleInventory", "expectedUncertainties", index, "obligationId"],
+        });
+      }
+    }
+    for (const [
+      index,
+      recommendation,
+    ] of manifest.oracleInventory.expectedRecommendations.entries()) {
+      if (!obligationIds.has(recommendation.obligationId)) {
+        context.addIssue({
+          code: "custom",
+          message: `unknown obligation ID ${recommendation.obligationId}`,
+          path: ["oracleInventory", "expectedRecommendations", index, "obligationId"],
         });
       }
     }
@@ -225,6 +271,9 @@ export const EvaluationCaseManifestV1Schema = EvaluationCaseManifestBaseV1Schema
     ),
     expectedUncertainties: [...manifest.oracleInventory.expectedUncertainties].sort((left, right) =>
       compareUtf16(left.uncertaintyId, right.uncertaintyId),
+    ),
+    expectedRecommendations: [...manifest.oracleInventory.expectedRecommendations].sort(
+      (left, right) => compareUtf16(left.recommendationId, right.recommendationId),
     ),
     artifacts: [...manifest.oracleInventory.artifacts].sort((left, right) =>
       compareByFields(left, right, ["role", "reference"]),

@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
+import { devNull } from "node:os";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { jsonDocument } from "../src/contracts/json-document.js";
 import { ReviewRequestV1Schema } from "../src/contracts/review-request.js";
-import { StandardsProfileSchema } from "../src/contracts/standards-review.js";
+import { ReviewAuthorSchema, StandardsProfileSchema } from "../src/contracts/standards-review.js";
 import type {
   EvaluationCaseV1,
   EvaluationRepositoryFileV1,
@@ -14,6 +15,30 @@ import type {
 } from "./matrix-types.js";
 
 const exec = promisify(execFile);
+const FIXTURE_GIT_ENV = {
+  GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+  GIT_AUTHOR_EMAIL: "fixture@example.invalid",
+  GIT_AUTHOR_NAME: "Evaluation Fixture",
+  GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+  GIT_COMMITTER_EMAIL: "fixture@example.invalid",
+  GIT_COMMITTER_NAME: "Evaluation Fixture",
+  GIT_ATTR_NOSYSTEM: "1",
+  GIT_CONFIG_GLOBAL: devNull,
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_TERMINAL_PROMPT: "0",
+  LANG: "C",
+  LC_ALL: "C",
+} as const;
+
+export interface PreparedEvaluationReviewerInputV1 {
+  role: "REQUIREMENTS" | "IMPLEMENTATION_PLAN" | "PROJECT_GUIDANCE" | "AUTHOR_PACKET";
+  reference: string;
+  content: string;
+}
+
+export interface PreparedEvaluationFixtureV1 extends PreparedEvaluationCaseV1 {
+  reviewerInputArtifacts: readonly PreparedEvaluationReviewerInputV1[];
+}
 
 function assertRepositoryPath(path: string): void {
   const normalized = normalize(path);
@@ -47,8 +72,27 @@ async function materializeFile(
   await writeFile(destination, content, "utf8");
 }
 
-async function git(repositoryPath: string, ...arguments_: string[]): Promise<void> {
-  await exec("git", ["-C", repositoryPath, ...arguments_]);
+export async function runEvaluationFixtureGitV1(
+  repositoryPath: string,
+  ...arguments_: string[]
+): Promise<string> {
+  const { stdout } = await exec(
+    "git",
+    [
+      "-c",
+      `core.hooksPath=${devNull}`,
+      "-c",
+      "commit.gpgsign=false",
+      "-C",
+      repositoryPath,
+      ...arguments_,
+    ],
+    {
+      env: FIXTURE_GIT_ENV,
+      encoding: "utf8",
+    },
+  );
+  return stdout;
 }
 
 function assertOracleSeparated(testCase: EvaluationCaseV1): void {
@@ -56,8 +100,13 @@ function assertOracleSeparated(testCase: EvaluationCaseV1): void {
     repository: testCase.repository,
     reviewer: testCase.reviewer,
   });
-  for (const rootId of testCase.oracle.expectedRootIds) {
-    if (reviewerData.includes(rootId)) {
+  const oracleIds = [
+    ...testCase.oracle.expectedRootIds,
+    ...testCase.oracle.expectedUncertaintyIds,
+    ...testCase.oracle.expectedRecommendationIds,
+  ];
+  for (const oracleId of oracleIds) {
+    if (reviewerData.includes(oracleId)) {
       throw new Error(`Evaluator oracle identifier leaked into reviewer data for ${testCase.id}.`);
     }
   }
@@ -126,11 +175,11 @@ function requirementsRequest(
   });
 }
 
-export async function prepareEvaluationCaseV1(
+export async function prepareEvaluationCorpusCaseV1(
   testCase: EvaluationCaseV1,
   caseRoot: string,
   configId = "config_evaluation_placeholder",
-): Promise<PreparedEvaluationCaseV1> {
+): Promise<PreparedEvaluationFixtureV1> {
   assertOracleSeparated(testCase);
   try {
     await mkdir(caseRoot, { recursive: false });
@@ -153,32 +202,64 @@ export async function prepareEvaluationCaseV1(
     throw new Error(`Evaluation case ${testCase.id} must contain baseline content.`);
   }
 
-  await git(repositoryPath, "init", "--initial-branch=main");
-  await git(repositoryPath, "config", "user.name", "Evaluation Fixture");
-  await git(repositoryPath, "config", "user.email", "fixture@example.invalid");
-  await git(repositoryPath, "config", "commit.gpgsign", "false");
+  await runEvaluationFixtureGitV1(repositoryPath, "init", "--initial-branch=main");
+  await runEvaluationFixtureGitV1(repositoryPath, "config", "user.name", "Evaluation Fixture");
+  await runEvaluationFixtureGitV1(
+    repositoryPath,
+    "config",
+    "user.email",
+    "fixture@example.invalid",
+  );
+  await runEvaluationFixtureGitV1(repositoryPath, "config", "commit.gpgsign", "false");
   for (const file of testCase.repository.files) {
     await materializeFile(repositoryPath, file, file.base);
   }
-  await git(repositoryPath, "add", ".");
-  await git(repositoryPath, "commit", "-m", "Fixture baseline");
+  await runEvaluationFixtureGitV1(repositoryPath, "add", ".");
+  await runEvaluationFixtureGitV1(repositoryPath, "commit", "-m", "Fixture baseline");
   for (const file of testCase.repository.files) {
     await materializeFile(repositoryPath, file, file.head);
   }
 
   let controlPath: string;
   let cliArguments: readonly string[];
+  let reviewerInputArtifacts: readonly PreparedEvaluationReviewerInputV1[];
   if (testCase.reviewer.kind === "requirements") {
     controlPath = join(caseRoot, "control.json");
     const request = requirementsRequest(testCase, testCase.reviewer, repositoryPath, configId);
     await writeFile(controlPath, jsonDocument(request), { flag: "wx", mode: 0o600 });
     cliArguments = ["--request", controlPath];
+    if (!request.authorPacket)
+      throw new Error("Evaluation requirements request has no author packet.");
+    reviewerInputArtifacts = [
+      {
+        role: "REQUIREMENTS",
+        reference: "inputs/requirements",
+        content: request.canonicalInputs.requirements[0]?.content ?? "",
+      },
+      {
+        role: "IMPLEMENTATION_PLAN",
+        reference: "inputs/implementation-plan",
+        content: request.canonicalInputs.implementationPlan.content,
+      },
+      {
+        role: "AUTHOR_PACKET",
+        reference: "inputs/author-packet",
+        content: jsonDocument(request.authorPacket),
+      },
+    ];
   } else {
     controlPath = join(caseRoot, "control.json");
     const authorPath = join(caseRoot, "author.md");
     const profile = StandardsProfileSchema.parse(testCase.reviewer.profile);
-    await writeFile(controlPath, jsonDocument(profile), { flag: "wx", mode: 0o600 });
-    await writeFile(authorPath, `${testCase.reviewer.authorOverview.trim()}\n`, {
+    const profileText = jsonDocument(profile);
+    const authorText = `${testCase.reviewer.authorOverview.trim()}\n`;
+    const authorPacket = ReviewAuthorSchema.parse({
+      schemaVersion: 2,
+      overview: authorText,
+      claimedVerification: [],
+    });
+    await writeFile(controlPath, profileText, { flag: "wx", mode: 0o600 });
+    await writeFile(authorPath, authorText, {
       flag: "wx",
       mode: 0o600,
     });
@@ -193,7 +274,27 @@ export async function prepareEvaluationCaseV1(
       authorPath,
       "--new-flow",
     ];
+    reviewerInputArtifacts = [
+      {
+        role: "PROJECT_GUIDANCE",
+        reference: "inputs/standards-profile",
+        content: profileText,
+      },
+      {
+        role: "AUTHOR_PACKET",
+        reference: "inputs/author-overview",
+        content: jsonDocument(authorPacket),
+      },
+    ];
   }
 
-  return { repositoryPath, controlPath, outputPath, cliArguments };
+  return { repositoryPath, controlPath, outputPath, cliArguments, reviewerInputArtifacts };
+}
+
+export async function prepareEvaluationCaseV1(
+  testCase: EvaluationCaseV1,
+  caseRoot: string,
+  configId = "config_evaluation_placeholder",
+): Promise<PreparedEvaluationCaseV1> {
+  return prepareEvaluationCorpusCaseV1(testCase, caseRoot, configId);
 }

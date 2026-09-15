@@ -26,9 +26,13 @@ engineering dimensions. The [evaluation protocol](plans/2026-09-14-review-qualit
 defines quality gates, the [next-wave execution index](plans/2026-09-15-next-wave-execution-index.md)
 owns parallel delivery order, and [deep research](research/2026-09-14-engineering-review-deep-research.md)
 records evidence and alternatives. Stage A has begun with a package-private
-[20-case tiered evaluation harness](../evaluation/README.md), and one explicitly
-authorized paid full-matrix sample is recorded. Finding-level scoring,
-split/holdout qualification, and repeated baseline sampling remain pending. This
+[30-case tiered evaluation corpus](../evaluation/README.md), and one explicitly
+authorized paid full-matrix sample is recorded. Finding-level scoring and
+repeated baseline sampling remain pending. Versioned family splits and
+evaluator-only reconstruction artifacts are implemented; split assignment is consumed only through
+joint validation with its digest-bound case manifest. Corpus includes three
+repository-history-derived reduced reverse-fix defects plus six explicitly typed canonical controls;
+ambient Git environment cannot alter reconstructed fixture identity. This
 does not change shipped review modes or accepted runtime contracts. Friendly
 operations continues as a bounded usability track. Build-dependent semantic
 indexers require execution isolation before qualification.

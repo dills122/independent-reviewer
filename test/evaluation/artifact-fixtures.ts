@@ -26,6 +26,7 @@ function makeCase(caseId: "case_defect" | "case_clean", role: "DEFECT" | "CLEAN"
     caseId,
     familyId: "family_checkout",
     pair: { pairId: "pair_checkout", role },
+    controlRole: null,
     reviewMode: "REQUIREMENTS",
     source: {
       identityVersion: 1,
@@ -53,6 +54,7 @@ function makeCase(caseId: "case_defect" | "case_clean", role: "DEFECT" | "CLEAN"
           ]
         : [],
       expectedUncertainties: [],
+      expectedRecommendations: [],
       labelsExhaustive: true,
       artifacts: defect
         ? [

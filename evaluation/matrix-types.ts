@@ -41,6 +41,8 @@ export interface StandardsReviewerInputV1 {
 export interface EvaluationOracleV1 {
   expectedVerdict: EvaluationVerdictV1;
   expectedRootIds: readonly string[];
+  expectedUncertaintyIds: readonly string[];
+  expectedRecommendationIds: readonly string[];
   labelsExhaustive: boolean;
 }
 

@@ -92,6 +92,26 @@ describe("evaluation artifact contracts", () => {
     );
   });
 
+  it("requires joint case-manifest and digest-bound family-split consumption", () => {
+    const { cases, split } = makeEvaluationGraph();
+    const caseManifest = first(cases);
+    assert.equal("split" in caseManifest, false);
+    assert.throws(
+      () => EvaluationCaseManifestV1Schema.parse({ ...caseManifest, split: "DEVELOPMENT" }),
+      /unrecognized/i,
+    );
+    const mismatched = {
+      ...split,
+      assignments: split.assignments.map((assignment, index) =>
+        index === 0 ? { ...assignment, caseManifestDigest: sha("9") } : assignment,
+      ),
+    };
+    assert.throws(
+      () => validateEvaluationFamilySplitV1(mismatched, cases),
+      /different case manifest identity/i,
+    );
+  });
+
   it("freezes complete metric and baseline/candidate comparison membership", () => {
     const { experiment } = makeEvaluationGraph();
     assert.doesNotThrow(() => EvaluationExperimentManifestV1Schema.parse(experiment));

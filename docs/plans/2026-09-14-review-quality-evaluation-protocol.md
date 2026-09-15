@@ -1,10 +1,11 @@
 # Review-quality evaluation protocol
 
 Status: implementation started for [#160](https://github.com/dills122/independent-reviewer/issues/160).
-Initial 20-case corpus, deterministic fixture builder, tiered selection, paid admission, and run
-accounting are implemented. The first paid Stage A sample is recorded in
-[tiered review matrix paid validation](../validation/2026-09-14-tiered-review-matrix.md). Split
-manifests, finding-level scorer, adjudication records, and repeated sampling remain pending.
+Thirty-case corpus, deterministic fixture builder, versioned family splits, evaluator-only oracle
+reconstruction, tiered selection, paid admission, and run accounting are implemented. The first paid
+Stage A sample is recorded in
+[tiered review matrix paid validation](../validation/2026-09-14-tiered-review-matrix.md).
+Finding-level scorer, adjudication records, and repeated sampling remain pending.
 
 ## Purpose
 
@@ -58,7 +59,8 @@ Names below describe future contracts, not currently exported schemas.
 
 | Artifact | Required content |
 | --- | --- |
-| Case manifest | Case/pair/family ID, source provenance and digests, BASE/HEAD or cumulative snapshot, mode, obligations, permitted reviewer inputs, expected roots/uncertainties, oracle references, label completeness, split |
+| Case manifest | Case/pair/family/control-role ID, source provenance and digests, BASE/HEAD or cumulative snapshot, mode, obligations, permitted reviewer inputs, expected roots/uncertainties/recommendations, oracle references, label completeness |
+| Family split manifest | Corpus/split version plus one development or holdout assignment for every case, bound to exact case-manifest digest and family ID |
 | Experiment manifest | Engine commit, corpus/scorer versions, model and provider policy, prompt/schema versions, depth/evidence variant, environment, seed where supported, repetition count, budgets, stop rules |
 | Attempt record | Case/repetition/variant, runtime run reference, terminal state, stage outcomes, valid usage, known cost, unknown-cost reservation, latency |
 | Adjudication record | Finding/claim digest, label, matched root, causal evidence, adjudicator identity/type, rationale, unresolved disagreement |
@@ -219,12 +221,26 @@ and do not tune semantic policy in response to 429/transport errors.
 
 ### First implementation slice
 
-The package-private [evaluation harness](../../evaluation/README.md) reconstructs 20 synthetic
-cases from clean Git baselines. Fixed `smoke` (4), `standard` (8), and `full` (20) suites plus group
-and exact-case selectors keep routine runs bounded. Live execution requires an explicit selector,
-confirmation, and aggregate cost ceiling before fixture creation or provider access. Opaque case
-IDs and construction-time leak guards keep evaluator root labels outside reviewer inputs.
+The package-private [evaluation harness](../../evaluation/README.md) reconstructs 30 mixed synthetic
+and repository-history-derived cases from clean Git baselines. Three defect cases are explicitly
+labeled reduced reverse fixes of repository regressions #128, #132, and #137; they retain exact
+source revision, parent, path/blob, issue/fix, environment, and honest no-license provenance. Fixed
+`smoke` (4), `standard` (8), and `full` (30) suites plus group and exact-case selectors keep routine
+runs bounded. Live execution requires an explicit selector, confirmation, and aggregate cost ceiling
+before fixture creation or provider access. Opaque case IDs and construction-time leak guards keep
+evaluator root labels outside reviewer inputs.
 
-This slice records versioned experiment manifests, per-case terminal results, validated verdicts,
+All six specified controls are unpaired and explicitly typed. Every pair shares BASE, reviewer mode,
+requirements or standards, and complete author framing; only intended HEAD correctness differs.
+Catalog oracle IDs are exhaustively classified as roots, uncertainties, or recommendations before
+reconstruction.
+
+This slice records versioned case and family split manifests, evaluator-only hidden assertions and
+correction artifacts, experiment manifests, per-case terminal results, validated verdicts,
 provider-reported usage, unknown-cost attempts, and conservative retry charges. It does not yet
-satisfy finding-level scoring, split/holdout qualification, or the approximately 30-case target.
+satisfy finding-level scoring or repeated baseline qualification.
+
+Split assignment is intentionally absent from case manifests. Evaluators MUST jointly consume the
+case manifest and family split manifest through `validateEvaluationFamilySplitV1`; the split entry's
+case-manifest digest and family ID bind the assignment to that exact case artifact. Reading or
+caching a split independently of this joint validation is not protocol-conformant.
