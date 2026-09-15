@@ -24,10 +24,12 @@ Start with a reproducible quality corpus and complete claim adjudication; then
 qualify frozen evidence access, reverse references, isolated checks, and explicit
 engineering dimensions. The [evaluation protocol](plans/2026-09-14-review-quality-evaluation-protocol.md)
 defines quality gates, and [deep research](research/2026-09-14-engineering-review-deep-research.md)
-records evidence and alternatives. This is planned work, not a change to shipped
-review modes or accepted runtime contracts. Friendly operations continues as a
-bounded usability track. Build-dependent semantic indexers require execution
-isolation before qualification.
+records evidence and alternatives. Stage A has begun with a package-private
+[20-case tiered evaluation harness](../evaluation/README.md); scoring and paid
+baseline sampling remain pending. This does not change shipped review modes or
+accepted runtime contracts. Friendly operations continues as a bounded usability
+track. Build-dependent semantic indexers require execution isolation before
+qualification.
 
 The staged lifecycle, evidence surface, verification boundary, and efficiency
 requirements are refined in the

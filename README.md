@@ -166,6 +166,7 @@ requirements workflow.
 - [Architecture and roadmap](docs/architecture-and-roadmap.md)
 - [Correctness and engineering review plan](docs/plans/2026-09-14-correctness-engineering-review-plan.md)
 - [Review-quality evaluation protocol](docs/plans/2026-09-14-review-quality-evaluation-protocol.md)
+- [Review-quality matrix](evaluation/README.md)
 - [Engineering review research](docs/research/2026-09-14-engineering-review-deep-research.md)
 - [Review protocol](docs/review-protocol-spec.md)
 - [Contributing](CONTRIBUTING.md)

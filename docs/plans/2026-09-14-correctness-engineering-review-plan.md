@@ -1,6 +1,6 @@
 # Correctness and engineering review delivery plan
 
-Status: planned; research-informed implementation sequence, not shipped behavior.
+Status: Stage A started; research-informed implementation sequence, not shipped product behavior.
 Parent: [#159](https://github.com/dills122/independent-reviewer/issues/159).
 Baseline: `6073c2f`. Planning requested 2026-09-14.
 
@@ -65,6 +65,12 @@ flowchart LR
    denominators, and incomplete labels.
 4. Freeze a bounded development/holdout corpus and one baseline configuration.
    Paid sampling is a separate explicitly authorized experiment.
+
+Progress: increment 1 now has a package-private 20-case synthetic corpus, clean-checkout fixture
+reconstruction, fixed `smoke`/`standard`/`full` suites, group and exact-case selection, and bounded
+live-run admission. Run artifacts preserve terminal state and cost uncertainty. Increment 2 remains
+open: corpus/split contracts, holdout allocation, and finding-level scoring are not implemented.
+See the [matrix operator guide](../../evaluation/README.md).
 
 Initial design target: 12 defect/clean pairs and six uncertainty/adversarial
 controls, approximately 30 cases. Target is a manageable baseline, not a claim
