@@ -83,7 +83,8 @@ retention credits both retained true roots and removed false roots without doubl
 duplicates, and failed attempts contribute no retention denominator. `matchedRootId` is semantic
 root identity for all supported defects: `MATCHED_DEFECT` names a case-oracle root,
 `NOVEL_VALID_DEFECT` names a non-oracle root, and `DUPLICATE` names a root credited in same attempt
-and stage. Defect, uncertainty, and useful/invalid recommendation labels remain claim-kind scoped.
+and stage. `INVALID_DEFECT` also names a non-oracle semantic root so wording-only restatements cannot
+be scored as removed between stages. Defect, uncertainty, and useful/invalid recommendation labels remain claim-kind scoped.
 Zero-denominator metrics, unresolved adjudications, terminal failures, and cost uncertainty remain
 visible. Execution-resource summaries remain empty until a later contract can bind them to retained
 attempt evidence.

@@ -92,6 +92,28 @@ describe("evaluation artifact graph", () => {
     const wrongRoot = makeEvaluationGraph();
     first(wrongRoot.adjudications).matchedRootId = "root_other";
     assert.throws(() => validateEvaluationArtifactGraphV1(wrongRoot), /case-oracle semantic root/i);
+
+    const missingFalseRoot = makeEvaluationGraph();
+    const invalid = first(
+      missingFalseRoot.adjudications.filter(({ label }) => label === "INVALID_DEFECT"),
+    );
+    Object.assign(invalid, { matchedRootId: null });
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(missingFalseRoot),
+      /INVALID_DEFECT requires matched root ID/i,
+    );
+
+    const oracleFalseRoot = makeEvaluationGraph();
+    const oracleInvalid = first(
+      oracleFalseRoot.adjudications.filter(
+        ({ caseId, label }) => caseId === "case_defect" && label === "INVALID_DEFECT",
+      ),
+    );
+    oracleInvalid.matchedRootId = "root_double_conversion";
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(oracleFalseRoot),
+      /invalid defect.*non-oracle semantic root/i,
+    );
   });
 
   it("enforces claim-kind labels and explicit recommendation validity", () => {
@@ -113,8 +135,7 @@ describe("evaluation artifact graph", () => {
 
     const wrongKind = makeEvaluationGraph();
     const adjudication = first(wrongKind.adjudications);
-    adjudication.label = "USEFUL_RECOMMENDATION";
-    adjudication.matchedRootId = null;
+    Object.assign(adjudication, { label: "USEFUL_RECOMMENDATION", matchedRootId: null });
     assert.throws(
       () => validateEvaluationArtifactGraphV1(wrongKind),
       /claim kind DEFECT cannot use adjudication label USEFUL_RECOMMENDATION/i,
@@ -171,12 +192,14 @@ describe("evaluation artifact graph", () => {
     persistedAttempt.findingClaims.push({
       ...falseClaim,
       findingReference: `${falseClaim.findingReference}_final`,
+      claimDigest: sha("9"),
       emittedAtStage: "FINAL",
     });
     const persistedFalse = {
       ...preliminaryFalse,
       adjudicationId: "adjudication_persisted_false",
       findingReference: `${falseClaim.findingReference}_final`,
+      claimDigest: sha("9"),
       adjudicatedAt: "2026-09-15T12:06:00.000Z",
     };
     const notRemoved = deriveEvaluationAttemptMetricCountsV1(

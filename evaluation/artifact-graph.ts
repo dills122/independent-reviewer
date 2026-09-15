@@ -184,19 +184,17 @@ export function deriveEvaluationAttemptMetricCountsV1(
   );
   const retainedRoots = [...preliminaryRoots].filter((rootId) => supportedRoots.has(rootId));
   const preliminaryFalseRoots = new Set(
-    preliminaryDefects.flatMap(({ findingReference, label }) => {
-      const digest = claimByReference.get(findingReference)?.claimDigest.value;
-      return label === "INVALID_DEFECT" && digest !== undefined ? [digest] : [];
-    }),
+    preliminaryDefects.flatMap(({ label, matchedRootId }) =>
+      label === "INVALID_DEFECT" && matchedRootId !== null ? [matchedRootId] : [],
+    ),
   );
-  const finalDefectDigests = new Set(
-    finalDefects.flatMap(({ findingReference }) => {
-      const digest = claimByReference.get(findingReference)?.claimDigest.value;
-      return digest === undefined ? [] : [digest];
-    }),
+  const finalFalseRoots = new Set(
+    finalDefects.flatMap(({ label, matchedRootId }) =>
+      label === "INVALID_DEFECT" && matchedRootId !== null ? [matchedRootId] : [],
+    ),
   );
   const removedFalseRoots = [...preliminaryFalseRoots].filter(
-    (digest) => !finalDefectDigests.has(digest),
+    (rootId) => !finalFalseRoots.has(rootId),
   );
   const expectedRootCount = expectedRoots.size;
   const supported = supportedRoots.size;
@@ -470,8 +468,13 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
       if (adjudication.label === "MATCHED_DEFECT" && !isOracleRoot) {
         throw new TypeError("matched defect must reference a case-oracle semantic root");
       }
-      if (adjudication.label === "NOVEL_VALID_DEFECT" && isOracleRoot) {
-        throw new TypeError("novel valid defect must reference a non-oracle semantic root");
+      if (
+        (adjudication.label === "NOVEL_VALID_DEFECT" || adjudication.label === "INVALID_DEFECT") &&
+        isOracleRoot
+      ) {
+        throw new TypeError(
+          `${adjudication.label.toLowerCase().replaceAll("_", " ")} must reference a non-oracle semantic root`,
+        );
       }
     }
     if (adjudication.matchedUncertaintyId !== null) {

@@ -197,6 +197,7 @@ describe("evaluation scorer", () => {
     assert.ok(cleanAdjudication);
     Object.assign(cleanAdjudication, {
       label: "UNRESOLVED",
+      matchedRootId: null,
       unresolvedDisagreement: "Gold labels are non-exhaustive; causal review pending.",
     });
     rebindExperiment(graph);
@@ -312,7 +313,7 @@ describe("evaluation scorer", () => {
     assert.ok(cleanCase);
     const source = cleanCase.reviewerInputInventory.find(({ role }) => role === "SOURCE_CHANGE");
     assert.ok(source);
-    adjudication.label = "USEFUL_RECOMMENDATION";
+    Object.assign(adjudication, { label: "USEFUL_RECOMMENDATION", matchedRootId: null });
     adjudication.causalEvidence = [
       { source: "CASE_INPUT", reference: source.reference, digest: source.digest },
     ];
@@ -366,6 +367,7 @@ describe("evaluation scorer", () => {
       assert.ok(adjudication);
       Object.assign(adjudication, {
         label: "SUPPORTED_UNCERTAINTY",
+        matchedRootId: null,
         matchedUncertaintyId: "uncertainty_missing_contract",
         causalEvidence: [
           { source: "CASE_INPUT", reference: source.reference, digest: source.digest },

@@ -904,10 +904,12 @@ export const EvaluationAdjudicationRecordV1Schema = z
     const requiresRoot =
       record.label === "MATCHED_DEFECT" ||
       record.label === "NOVEL_VALID_DEFECT" ||
+      record.label === "INVALID_DEFECT" ||
       record.label === "DUPLICATE";
     const supported =
-      requiresRoot ||
+      record.label === "MATCHED_DEFECT" ||
       record.label === "NOVEL_VALID_DEFECT" ||
+      record.label === "DUPLICATE" ||
       record.label === "SUPPORTED_UNCERTAINTY" ||
       record.label === "USEFUL_RECOMMENDATION";
     if (requiresRoot && record.matchedRootId === null) {

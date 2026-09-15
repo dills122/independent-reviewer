@@ -326,7 +326,11 @@ export function makeEvaluationGraph() {
         findingReference: claim.findingReference,
         claimDigest: claim.claimDigest,
         label,
-        matchedRootId: supported ? "root_double_conversion" : null,
+        matchedRootId: supported
+          ? "root_double_conversion"
+          : defect
+            ? "root_false_scenario"
+            : "root_false_clean_control",
         causalEvidence: supported
           ? [{ source: "CASE_INPUT", reference: sourceInput.reference, digest: sourceInput.digest }]
           : [],
