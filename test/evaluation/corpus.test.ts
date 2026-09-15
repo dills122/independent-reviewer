@@ -5,6 +5,7 @@ import {
   EVALUATION_CORPUS_V1,
   validateEvaluationCorpusDefinitionV1,
 } from "../../evaluation/corpus.js";
+import { EVALUATION_CASES_V1 } from "../../evaluation/matrix-selection.js";
 
 describe("evaluation corpus definition", () => {
   it("freezes 12 defect/clean pairs and six controls without splitting families", () => {
@@ -78,5 +79,35 @@ describe("evaluation corpus definition", () => {
         2,
     );
     assert.ok(corpus.cases.some(({ labelsExhaustive }) => !labelsExhaustive));
+  });
+
+  it("keeps BASE inventory and reviewer obligations fixed within every pair", () => {
+    const corpus = validateEvaluationCorpusDefinitionV1(EVALUATION_CORPUS_V1);
+    const catalogById = new Map<string, (typeof EVALUATION_CASES_V1)[number]>(
+      EVALUATION_CASES_V1.map((entry) => [entry.id, entry]),
+    );
+    const pairIds = new Set(
+      corpus.cases.flatMap(({ pair }) => (pair === null ? [] : [pair.pairId])),
+    );
+
+    for (const pairId of pairIds) {
+      const definitions = corpus.cases.filter(({ pair }) => pair?.pairId === pairId);
+      const cases = definitions.map(({ caseId }) => catalogById.get(caseId));
+      assert.equal(cases.length, 2);
+      const [first, second] = cases;
+      assert.ok(first);
+      assert.ok(second);
+      assert.deepEqual(
+        first.repository.files.map(({ path, base }) => ({ path, base })),
+        second.repository.files.map(({ path, base }) => ({ path, base })),
+      );
+      assert.equal(first.reviewer.kind, second.reviewer.kind);
+      if (first.reviewer.kind === "requirements" && second.reviewer.kind === "requirements") {
+        assert.equal(first.reviewer.requirements, second.reviewer.requirements);
+      }
+      if (first.reviewer.kind === "standards" && second.reviewer.kind === "standards") {
+        assert.deepEqual(first.reviewer.profile, second.reviewer.profile);
+      }
+    }
   });
 });
