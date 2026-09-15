@@ -23,13 +23,15 @@ and the [delivery plan](plans/2026-09-14-correctness-engineering-review-plan.md)
 Start with a reproducible quality corpus and complete claim adjudication; then
 qualify frozen evidence access, reverse references, isolated checks, and explicit
 engineering dimensions. The [evaluation protocol](plans/2026-09-14-review-quality-evaluation-protocol.md)
-defines quality gates, and [deep research](research/2026-09-14-engineering-review-deep-research.md)
+defines quality gates, the [next-wave execution index](plans/2026-09-15-next-wave-execution-index.md)
+owns parallel delivery order, and [deep research](research/2026-09-14-engineering-review-deep-research.md)
 records evidence and alternatives. Stage A has begun with a package-private
-[20-case tiered evaluation harness](../evaluation/README.md); scoring and paid
-baseline sampling remain pending. This does not change shipped review modes or
-accepted runtime contracts. Friendly operations continues as a bounded usability
-track. Build-dependent semantic indexers require execution isolation before
-qualification.
+[20-case tiered evaluation harness](../evaluation/README.md), and one explicitly
+authorized paid full-matrix sample is recorded. Finding-level scoring,
+split/holdout qualification, and repeated baseline sampling remain pending. This
+does not change shipped review modes or accepted runtime contracts. Friendly
+operations continues as a bounded usability track. Build-dependent semantic
+indexers require execution isolation before qualification.
 
 The staged lifecycle, evidence surface, verification boundary, and efficiency
 requirements are refined in the
@@ -301,13 +303,14 @@ burst limit returns 429 for back-to-back requests regardless of routing.
 Cost admission prices reserved input and output tokens at their respective
 provider ceilings, including each request fee, instead of pricing all tokens
 at the higher output rate.
-The retry preserves stage messages. A final retry excludes the pinned failed
-endpoint and uses the next endpoint already present in the allowlist; model,
-provider allowlist, price and privacy controls remain unchanged. Successful
-preliminary work is retained when the final call needs recovery. A
-possibly submitted timeout remains `TRANSPORT_UNCERTAIN`; it is not retried
-automatically. OpenRouter can return typed errors inside an HTTP `200`, so the
-adapter validates the body and finish reason rather than trusting status
+The retry preserves stage messages. When the failed returned endpoint is known,
+the retry excludes it while preserving model, provider policy, price, and privacy
+controls. Successful preliminary work is retained when the final call needs
+recovery. A possibly submitted timeout is charged conservatively and may receive
+the bounded in-run retry described above. If that path terminates as
+`TRANSPORT_UNCERTAIN`, `resume-final` refuses to replay it because submission may
+already have occurred. OpenRouter can return typed errors inside an HTTP `200`,
+so the adapter validates the body and finish reason rather than trusting status
 alone.[^or-errors]
 
 ## Lean delivery plan and acceptance gates

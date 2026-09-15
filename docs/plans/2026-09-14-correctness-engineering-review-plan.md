@@ -70,6 +70,7 @@ Progress: increment 1 now has a package-private 20-case synthetic corpus, clean-
 reconstruction, fixed `smoke`/`standard`/`full` suites, group and exact-case selection, and bounded
 live-run admission. Run artifacts preserve terminal state and cost uncertainty. Increment 2 remains
 open: corpus/split contracts, holdout allocation, and finding-level scoring are not implemented.
+One separately authorized paid full-matrix sample completed, but remains unscored and unrepeated.
 See the [matrix operator guide](../../evaluation/README.md).
 
 Initial design target: 12 defect/clean pairs and six uncertainty/adversarial

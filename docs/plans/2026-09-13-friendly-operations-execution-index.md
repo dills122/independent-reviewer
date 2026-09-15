@@ -1,20 +1,27 @@
 # Friendly reviewer operations execution index
 
-Status: in progress. Commander grammar merged in PR #154; all six harness
-adapters and paid recovery evidence merged in PR #156. Remaining milestone work
-is compact guidance presentation (#101), author lifecycle (#103), and completion
-of documentation/qualification (#149). Canonical scope and acceptance remain in
+Status: in progress. Commander grammar merged in
+[PR #154](https://github.com/dills122/independent-reviewer/pull/154); all six harness
+adapters and paid recovery evidence merged in
+[PR #156](https://github.com/dills122/independent-reviewer/pull/156), and compact
+guidance presentation merged in
+[PR #166](https://github.com/dills122/independent-reviewer/pull/166). Remaining
+milestone work is author lifecycle
+([#103](https://github.com/dills122/independent-reviewer/issues/103)) and completion
+of documentation/qualification
+([#149](https://github.com/dills122/independent-reviewer/issues/149)). Canonical
+scope and acceptance remain in
 [`2026-09-11-friendly-reviewer-operations-plan.md`](2026-09-11-friendly-reviewer-operations-plan.md).
 
 | ID | Issue | Delivery unit | Owner | Dependencies | Acceptance and verification | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| FO-3A | #148 | Gemini and Kiro BASE guidance adapters, imports, ignore semantics, and focused fixtures | guidance-gemini-kiro worker | Frozen `GuidanceGraphV1`; existing discovery helpers | Normative family-table selection, exclusion, import, cap, secret, and permutation fixtures pass | Complete; merged in #156 |
-| FO-3B | #148 | Copilot and Cursor BASE guidance adapters, imports, and focused fixtures | guidance-copilot-cursor worker | Frozen `GuidanceGraphV1`; existing discovery helpers | Normative family-table selection, exclusion, import, cap, secret, overlap, and permutation fixtures pass | Complete; merged in #156 |
-| FO-3I | #148 | Register adapters in canonical repository capture and prove shared-node merge | lead | FO-3A, FO-3B | Combined discovery corpus passes; multi-family content renders once with full provenance | Complete; merged in #156 after review remediation |
-| FO-4A | #101 | Compact prompt presentation provenance and add explicit envelope-byte regression ceilings | lead | Frozen graph identity; no graph-contract weakening | 13- and 121-target fixtures substantially reduce bytes; target IDs occur once per source presentation | Ready for review; V2 retains indexed direct/import provenance and V1 read compatibility |
-| FO-5A | #130 | Let Commander own grammar, required values, duplicate handling, and typed command options | cli-commander worker | Existing Commander dependency admission | Existing command grammar, help, exit codes, stdout, and stderr parity tests pass | Complete; merged in #154 |
-| FO-5B | #103 | Implement author-setting controls and friendly input lifecycle | unassigned | FO-4 trust/budget checkpoint, FO-5A | Every simple setting changes behavior; author default/opt-out/isolation/resume fixtures pass | Pending |
-| FO-6 | #149 | Update short-flow docs and provider-free multilingual qualification | lead | FO-3I, FO-4A, FO-5B | Schema generation, full repository check, context gate, and provider-free E2E matrix pass | In progress; public-doc refresh and paid multi-harness matrix complete; no-author path remains blocked by FO-5B |
+| FO-3A | [#148](https://github.com/dills122/independent-reviewer/issues/148) | Gemini and Kiro BASE guidance adapters, imports, ignore semantics, and focused fixtures | guidance-gemini-kiro worker | Frozen `GuidanceGraphV1`; existing discovery helpers | Normative family-table selection, exclusion, import, cap, secret, and permutation fixtures pass | Complete; merged in [#156](https://github.com/dills122/independent-reviewer/pull/156) |
+| FO-3B | [#148](https://github.com/dills122/independent-reviewer/issues/148) | Copilot and Cursor BASE guidance adapters, imports, and focused fixtures | guidance-copilot-cursor worker | Frozen `GuidanceGraphV1`; existing discovery helpers | Normative family-table selection, exclusion, import, cap, secret, overlap, and permutation fixtures pass | Complete; merged in [#156](https://github.com/dills122/independent-reviewer/pull/156) |
+| FO-3I | [#148](https://github.com/dills122/independent-reviewer/issues/148) | Register adapters in canonical repository capture and prove shared-node merge | lead | FO-3A, FO-3B | Combined discovery corpus passes; multi-family content renders once with full provenance | Complete; merged in [#156](https://github.com/dills122/independent-reviewer/pull/156) after review remediation |
+| FO-4A | [#101](https://github.com/dills122/independent-reviewer/issues/101) | Compact prompt presentation provenance and add explicit envelope-byte regression ceilings | lead | Frozen graph identity; no graph-contract weakening | 13- and 121-target fixtures substantially reduce bytes; target IDs occur once per source presentation | Complete; merged in [#166](https://github.com/dills122/independent-reviewer/pull/166) |
+| FO-5A | [#130](https://github.com/dills122/independent-reviewer/issues/130) | Let Commander own grammar, required values, duplicate handling, and typed command options | cli-commander worker | Existing Commander dependency admission | Existing command grammar, help, exit codes, stdout, and stderr parity tests pass | Complete; merged in [#154](https://github.com/dills122/independent-reviewer/pull/154) |
+| FO-5B | [#103](https://github.com/dills122/independent-reviewer/issues/103) | Implement author-setting controls and friendly input lifecycle | unassigned | FO-4 trust/budget checkpoint, FO-5A | Every simple setting changes behavior; author default/opt-out/isolation/resume fixtures pass | Pending |
+| FO-6 | [#149](https://github.com/dills122/independent-reviewer/issues/149) | Update short-flow docs and provider-free multilingual qualification | lead | FO-3I, FO-4A, FO-5B | Schema generation, full repository check, context gate, and provider-free E2E matrix pass | In progress; public-doc refresh and paid multi-harness matrix complete; no-author path remains blocked by FO-5B |
 
 ## Ownership boundaries
 
