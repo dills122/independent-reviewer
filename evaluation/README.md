@@ -104,7 +104,8 @@ failures remain missing delivery while semantic abstentions remain delivered rep
 through false-abstention policy. Recommendation adjudications stay visible in exact raw/evidence
 coverage but cannot inflate defect metrics. Current intervals use explicit conservative `[0, 1]`
 bounds because repeated calls are not independent cases or families. Artifact arrays are ordered by
-UTF-16 artifact ID before aggregation, and numeric totals use fixed-order compensated summation.
+UTF-16 artifact ID. Numeric totals retain each value's artifact ID, order by magnitude then numeric
+value then UTF-16 artifact ID, and use Neumaier compensated summation.
 
 `scorer-policy.ts` retains canonical policy bytes, scorer version, and their SHA-256 digest. Every
 experiment and score must claim those exact values. Separate raw-artifact reference is unnecessary:

@@ -27,13 +27,23 @@ function assertEqual(actual: string | number, expected: string | number, message
   if (actual !== expected) throw new TypeError(message);
 }
 
-export function sumEvaluationNumbersV1(values: readonly number[]): number {
-  const sorted = [...values].sort(
-    (left, right) => Math.abs(left) - Math.abs(right) || left - right,
+export interface EvaluationNumericContributionV1 {
+  artifactId: string;
+  value: number;
+}
+
+export function sumEvaluationNumbersV1(
+  contributions: readonly EvaluationNumericContributionV1[],
+): number {
+  const sorted = [...contributions].sort(
+    (left, right) =>
+      Math.abs(left.value) - Math.abs(right.value) ||
+      left.value - right.value ||
+      compareUtf16(left.artifactId, right.artifactId),
   );
   let sum = 0;
   let correction = 0;
-  for (const value of sorted) {
+  for (const { value } of sorted) {
     const next = sum + value;
     correction += Math.abs(sum) >= Math.abs(value) ? sum - next + value : value - next + sum;
     sum = next;
@@ -682,42 +692,82 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
   assertMetricIntervals(score.metrics, "FAMILY", "global");
   assertEqual(
     score.resources.providerAttempts,
-    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.providerAttempts)),
+    sumEvaluationNumbersV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.providerAttempts,
+      })),
+    ),
     "score provider-attempt total does not match attempts",
   );
   assertEqual(
     score.resources.evidenceBytes,
-    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.evidenceBytes)),
+    sumEvaluationNumbersV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.evidenceBytes,
+      })),
+    ),
     "score evidence-byte total does not match attempts",
   );
   assertEqual(
     score.resources.outputBytes,
-    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.outputBytes)),
+    sumEvaluationNumbersV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.outputBytes,
+      })),
+    ),
     "score output-byte total does not match attempts",
   );
   assertEqual(
     score.cost.reportedCostUsd,
-    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.knownCostUsd ?? 0)),
+    sumEvaluationNumbersV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.knownCostUsd ?? 0,
+      })),
+    ),
     "score reported cost does not match attempts",
   );
   assertEqual(
     score.cost.knownCostAttempts,
-    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.knownCostAttempts)),
+    sumEvaluationNumbersV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.knownCostAttempts,
+      })),
+    ),
     "score known-cost total does not match attempts",
   );
   assertEqual(
     score.cost.unknownCostAttempts,
-    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.unknownCostAttempts)),
+    sumEvaluationNumbersV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.unknownCostAttempts,
+      })),
+    ),
     "score unknown-cost total does not match attempts",
   );
   assertEqual(
     score.cost.conservativeChargeUsd,
-    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.conservativeChargeUsd)),
+    sumEvaluationNumbersV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.conservativeChargeUsd,
+      })),
+    ),
     "score conservative charge does not match attempts",
   );
   assertEqual(
     score.cost.admittedCeilingUsd,
-    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.admittedCeilingUsd)),
+    sumEvaluationNumbersV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.admittedCeilingUsd,
+      })),
+    ),
     "score admitted ceiling does not match attempts",
   );
   if (score.cost.admittedCeilingUsd > experiment.budgets.maxTotalCostUsd) {

@@ -10,6 +10,7 @@ import {
 } from "../../evaluation/artifact-contracts.js";
 import {
   EVALUATION_SCORER_POLICY_DIGEST_V1,
+  EVALUATION_SCORER_POLICY_V1,
   EVALUATION_SCORER_VERSION_V1,
 } from "../../evaluation/scorer-policy.js";
 
@@ -80,22 +81,24 @@ const metricNames = [
   "STAGE_RETENTION_RATE",
 ] as const;
 
-const interval = {
-  method: "Wilson score",
-  confidenceLevel: 0.95,
-  lower: 0,
-  upper: 1,
-  independentUnit: "CASE",
-};
 type MetricName = (typeof metricNames)[number];
 type Count = { metric: MetricName; numerator: number; denominator: number };
-const scoredMetrics = (counts: readonly Count[]) =>
+const scoredMetrics = (counts: readonly Count[], independentUnit: "CASE" | "FAMILY") =>
   counts.map(({ metric, numerator, denominator }) => ({
     metric,
     numerator,
     denominator,
     value: denominator === 0 ? null : numerator / denominator,
-    interval: denominator === 0 ? null : interval,
+    interval:
+      denominator === 0
+        ? null
+        : {
+            method: EVALUATION_SCORER_POLICY_V1.interval.method,
+            confidenceLevel: EVALUATION_SCORER_POLICY_V1.interval.confidenceLevel,
+            lower: EVALUATION_SCORER_POLICY_V1.interval.lower,
+            upper: EVALUATION_SCORER_POLICY_V1.interval.upper,
+            independentUnit,
+          },
   }));
 const attemptCounts = (defect: boolean): Count[] => [
   {
@@ -386,6 +389,7 @@ export function makeEvaluationGraph() {
     generatedAt: "2026-09-15T12:10:00.000Z",
     metrics: scoredMetrics(
       addCounts(attempts.map((attempt) => attemptCounts(attempt.caseId === "case_defect"))),
+      "FAMILY",
     ),
     adjudicationCoverage: {
       totalClaims: 10,
@@ -404,6 +408,7 @@ export function makeEvaluationGraph() {
             .filter(({ caseId }) => caseId === value.caseId)
             .map(() => attemptCounts(value.caseId === "case_defect")),
         ),
+        "CASE",
       ),
     })),
     familyBreakdowns: [
@@ -412,6 +417,7 @@ export function makeEvaluationGraph() {
         split: "DEVELOPMENT",
         metrics: scoredMetrics(
           addCounts(attempts.map((attempt) => attemptCounts(attempt.caseId === "case_defect"))),
+          "CASE",
         ),
       },
     ],

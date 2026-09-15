@@ -18,7 +18,7 @@ import {
   sumEvaluationNumbersV1,
   validateEvaluationArtifactGraphV1,
 } from "./artifact-graph.js";
-import { assertEvaluationScorerIdentityV1 } from "./scorer-policy.js";
+import { assertEvaluationScorerIdentityV1, EVALUATION_SCORER_POLICY_V1 } from "./scorer-policy.js";
 
 type MetricName = (typeof EvaluationMetricNameV1Schema.options)[number];
 type MetricCount = { metric: MetricName; numerator: number; denominator: number };
@@ -68,10 +68,10 @@ function scoredMetrics(counts: readonly MetricCount[], independentUnit: "CASE" |
         denominator === 0
           ? null
           : {
-              method: "CONSERVATIVE_BOUNDS_V1",
-              confidenceLevel: 0.95,
-              lower: 0,
-              upper: 1,
+              method: EVALUATION_SCORER_POLICY_V1.interval.method,
+              confidenceLevel: EVALUATION_SCORER_POLICY_V1.interval.confidenceLevel,
+              lower: EVALUATION_SCORER_POLICY_V1.interval.lower,
+              upper: EVALUATION_SCORER_POLICY_V1.interval.upper,
               independentUnit,
             },
     }));
@@ -368,27 +368,55 @@ export function scoreEvaluationArtifactsV1(
     },
     resources: {
       providerAttempts: sumEvaluationNumbersV1(
-        attempts.map((attempt) => attempt.usage.providerAttempts),
+        attempts.map((attempt) => ({
+          artifactId: attempt.attemptId,
+          value: attempt.usage.providerAttempts,
+        })),
       ),
-      evidenceBytes: sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.evidenceBytes)),
-      outputBytes: sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.outputBytes)),
+      evidenceBytes: sumEvaluationNumbersV1(
+        attempts.map((attempt) => ({
+          artifactId: attempt.attemptId,
+          value: attempt.usage.evidenceBytes,
+        })),
+      ),
+      outputBytes: sumEvaluationNumbersV1(
+        attempts.map((attempt) => ({
+          artifactId: attempt.attemptId,
+          value: attempt.usage.outputBytes,
+        })),
+      ),
       execution: [],
     },
     cost: {
       reportedCostUsd: sumEvaluationNumbersV1(
-        attempts.map((attempt) => attempt.usage.knownCostUsd ?? 0),
+        attempts.map((attempt) => ({
+          artifactId: attempt.attemptId,
+          value: attempt.usage.knownCostUsd ?? 0,
+        })),
       ),
       knownCostAttempts: sumEvaluationNumbersV1(
-        attempts.map((attempt) => attempt.usage.knownCostAttempts),
+        attempts.map((attempt) => ({
+          artifactId: attempt.attemptId,
+          value: attempt.usage.knownCostAttempts,
+        })),
       ),
       unknownCostAttempts: sumEvaluationNumbersV1(
-        attempts.map((attempt) => attempt.usage.unknownCostAttempts),
+        attempts.map((attempt) => ({
+          artifactId: attempt.attemptId,
+          value: attempt.usage.unknownCostAttempts,
+        })),
       ),
       conservativeChargeUsd: sumEvaluationNumbersV1(
-        attempts.map((attempt) => attempt.usage.conservativeChargeUsd),
+        attempts.map((attempt) => ({
+          artifactId: attempt.attemptId,
+          value: attempt.usage.conservativeChargeUsd,
+        })),
       ),
       admittedCeilingUsd: sumEvaluationNumbersV1(
-        attempts.map((attempt) => attempt.usage.admittedCeilingUsd),
+        attempts.map((attempt) => ({
+          artifactId: attempt.attemptId,
+          value: attempt.usage.admittedCeilingUsd,
+        })),
       ),
     },
     rawArtifactReferences: [

@@ -8,7 +8,10 @@ import {
   EvaluationExperimentManifestV1Schema,
   EvaluationFamilySplitManifestV1Schema,
 } from "../../evaluation/artifact-contracts.js";
-import { validateEvaluationArtifactGraphV1 } from "../../evaluation/artifact-graph.js";
+import {
+  sumEvaluationNumbersV1,
+  validateEvaluationArtifactGraphV1,
+} from "../../evaluation/artifact-graph.js";
 import { scoreEvaluationArtifactsV1 } from "../../evaluation/scorer.js";
 import {
   EVALUATION_SCORER_POLICY_DIGEST_V1,
@@ -596,6 +599,22 @@ describe("evaluation scorer", () => {
     );
   });
 
+  it("uses bound magnitude-ordered Neumaier aggregation with artifact identity tie-breaking", () => {
+    const contributions = [
+      { artifactId: "attempt_7", value: 10_000_000_000_000_000 },
+      { artifactId: "attempt_3", value: 10_000_000_000_000_000 },
+      { artifactId: "attempt_8", value: 1e-16 },
+      { artifactId: "attempt_2", value: 1e-16 },
+      { artifactId: "attempt_5", value: 1 },
+      { artifactId: "attempt_1", value: 1e-16 },
+      { artifactId: "attempt_4", value: 10_000_000_000_000_000 },
+      { artifactId: "attempt_6", value: 1 },
+    ];
+
+    assert.equal(sumEvaluationNumbersV1(contributions), 30_000_000_000_000_004);
+    assert.equal(sumEvaluationNumbersV1([...contributions].reverse()), 30_000_000_000_000_004);
+  });
+
   it("uses stable non-oracle semantic roots for novel defects and their duplicates", () => {
     const graph = makeEvaluationGraph();
     const attempt = graph.attempts.find(
@@ -690,6 +709,10 @@ describe("evaluation scorer", () => {
     assert.deepEqual(
       EVALUATION_SCORER_POLICY_DIGEST_V1,
       sha256BytesDigestV1(Buffer.from(EVALUATION_SCORER_POLICY_DOCUMENT_V1, "utf8")),
+    );
+    assert.equal(
+      JSON.parse(EVALUATION_SCORER_POLICY_DOCUMENT_V1).aggregation,
+      "MAGNITUDE_VALUE_UTF16_ARTIFACT_ID_ORDER_NEUMAIER_SUM_V1",
     );
 
     const wrongVersion = makeEvaluationGraph();
