@@ -59,7 +59,8 @@ Names below describe future contracts, not currently exported schemas.
 
 | Artifact | Required content |
 | --- | --- |
-| Case manifest | Case/pair/family/control-role ID, source provenance and digests, BASE/HEAD or cumulative snapshot, mode, obligations, permitted reviewer inputs, expected roots/uncertainties/recommendations, oracle references, label completeness, split |
+| Case manifest | Case/pair/family/control-role ID, source provenance and digests, BASE/HEAD or cumulative snapshot, mode, obligations, permitted reviewer inputs, expected roots/uncertainties/recommendations, oracle references, label completeness |
+| Family split manifest | Corpus/split version plus one development or holdout assignment for every case, bound to exact case-manifest digest and family ID |
 | Experiment manifest | Engine commit, corpus/scorer versions, model and provider policy, prompt/schema versions, depth/evidence variant, environment, seed where supported, repetition count, budgets, stop rules |
 | Attempt record | Case/repetition/variant, runtime run reference, terminal state, stage outcomes, valid usage, known cost, unknown-cost reservation, latency |
 | Adjudication record | Finding/claim digest, label, matched root, causal evidence, adjudicator identity/type, rationale, unresolved disagreement |
@@ -238,3 +239,8 @@ This slice records versioned case and family split manifests, evaluator-only hid
 correction artifacts, experiment manifests, per-case terminal results, validated verdicts,
 provider-reported usage, unknown-cost attempts, and conservative retry charges. It does not yet
 satisfy finding-level scoring or repeated baseline qualification.
+
+Split assignment is intentionally absent from case manifests. Evaluators MUST jointly consume the
+case manifest and family split manifest through `validateEvaluationFamilySplitV1`; the split entry's
+case-manifest digest and family ID bind the assignment to that exact case artifact. Reading or
+caching a split independently of this joint validation is not protocol-conformant.

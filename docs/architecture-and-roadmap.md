@@ -29,7 +29,8 @@ records evidence and alternatives. Stage A has begun with a package-private
 [30-case tiered evaluation corpus](../evaluation/README.md), and one explicitly
 authorized paid full-matrix sample is recorded. Finding-level scoring and
 repeated baseline sampling remain pending. Versioned family splits and
-evaluator-only reconstruction artifacts are implemented. Corpus includes three
+evaluator-only reconstruction artifacts are implemented; split assignment is consumed only through
+joint validation with its digest-bound case manifest. Corpus includes three
 repository-history-derived reduced reverse-fix defects plus six explicitly typed canonical controls;
 ambient Git environment cannot alter reconstructed fixture identity. This
 does not change shipped review modes or accepted runtime contracts. Friendly

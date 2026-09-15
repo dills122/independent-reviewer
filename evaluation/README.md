@@ -68,6 +68,11 @@ Git runs receive an explicit deterministic environment, fixed author and committ
 isolated configuration, disabled hooks and signing, and no ambient `GIT_*` authority channels. Thus
 identical clean checkouts produce identical BASE commit and case-manifest identities.
 
+Case manifests intentionally omit mutable development/holdout assignment. Evaluators must load each
+case manifest together with `family-split-manifest.json` and call
+`validateEvaluationFamilySplitV1`; its exact case-manifest digest and family binding make the split
+authoritative only for that jointly validated case artifact.
+
 Corpus v1 contains 12 defect/clean pairs and six controls. Eight pairs are development data and four
 are holdout data. Controls cover missing required context, irrelevant missing context, misleading
 author concern, unsupported author defense, conflicting applicable standards, and post-author claim
