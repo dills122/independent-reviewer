@@ -901,7 +901,10 @@ export const EvaluationAdjudicationRecordV1Schema = z
     adjudicatedAt: z.iso.datetime(),
   })
   .superRefine((record, context) => {
-    const requiresRoot = record.label === "MATCHED_DEFECT" || record.label === "DUPLICATE";
+    const requiresRoot =
+      record.label === "MATCHED_DEFECT" ||
+      record.label === "NOVEL_VALID_DEFECT" ||
+      record.label === "DUPLICATE";
     const supported =
       requiresRoot ||
       record.label === "NOVEL_VALID_DEFECT" ||

@@ -133,9 +133,13 @@ export function deriveEvaluationAttemptMetricCountsV1(
       label === "MATCHED_DEFECT" && matchedRootId !== null ? [matchedRootId] : [],
     ),
   );
-  const supported = finalDefects.filter(
-    ({ label }) => label === "MATCHED_DEFECT" || label === "NOVEL_VALID_DEFECT",
-  ).length;
+  const supportedRoots = new Set(
+    finalDefects.flatMap(({ label, matchedRootId }) =>
+      (label === "MATCHED_DEFECT" || label === "NOVEL_VALID_DEFECT") && matchedRootId !== null
+        ? [matchedRootId]
+        : [],
+    ),
+  );
   const invalid = finalDefects.filter(({ label }) => label === "INVALID_DEFECT").length;
   const unresolved = finalDefects.filter(({ label }) => label === "UNRESOLVED").length;
   const duplicates = finalDefects.filter(({ label }) => label === "DUPLICATE").length;
@@ -162,10 +166,12 @@ export function deriveEvaluationAttemptMetricCountsV1(
   });
   const preliminaryRoots = new Set(
     preliminaryDefects.flatMap(({ label, matchedRootId }) =>
-      label === "MATCHED_DEFECT" && matchedRootId !== null ? [matchedRootId] : [],
+      (label === "MATCHED_DEFECT" || label === "NOVEL_VALID_DEFECT") && matchedRootId !== null
+        ? [matchedRootId]
+        : [],
     ),
   );
-  const retainedRoots = [...preliminaryRoots].filter((rootId) => matchedFinalRoots.has(rootId));
+  const retainedRoots = [...preliminaryRoots].filter((rootId) => supportedRoots.has(rootId));
   const preliminaryFalseRoots = new Set(
     preliminaryDefects.flatMap(({ findingReference, label }) => {
       const digest = claimByReference.get(findingReference)?.claimDigest.value;
@@ -182,6 +188,7 @@ export function deriveEvaluationAttemptMetricCountsV1(
     (digest) => !finalDefectDigests.has(digest),
   );
   const expectedRootCount = expectedRoots.size;
+  const supported = supportedRoots.size;
   return [
     {
       metric: "KNOWN_DEFECT_RECALL_COMPLETED",
@@ -231,8 +238,8 @@ export function deriveEvaluationAttemptMetricCountsV1(
     { metric: "DELIVERY_RATE", numerator: completed ? 1 : 0, denominator: 1 },
     {
       metric: "STAGE_RETENTION_RATE",
-      numerator: retainedRoots.length + removedFalseRoots.length,
-      denominator: preliminaryRoots.size + preliminaryFalseRoots.size,
+      numerator: completed ? retainedRoots.length + removedFalseRoots.length : 0,
+      denominator: completed ? preliminaryRoots.size + preliminaryFalseRoots.size : 0,
     },
   ];
 }
@@ -399,12 +406,14 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     );
     if (adjudication.matchedRootId !== null) {
       const caseManifest = caseById.get(adjudication.caseId);
-      if (
-        !caseManifest?.oracleInventory.expectedRoots.some(
-          ({ rootId }) => rootId === adjudication.matchedRootId,
-        )
-      ) {
-        throw new TypeError("adjudication matched root does not belong to case oracle");
+      const isOracleRoot = caseManifest?.oracleInventory.expectedRoots.some(
+        ({ rootId }) => rootId === adjudication.matchedRootId,
+      );
+      if (adjudication.label === "MATCHED_DEFECT" && !isOracleRoot) {
+        throw new TypeError("matched defect must reference a case-oracle semantic root");
+      }
+      if (adjudication.label === "NOVEL_VALID_DEFECT" && isOracleRoot) {
+        throw new TypeError("novel valid defect must reference a non-oracle semantic root");
       }
     }
     if (adjudication.matchedUncertaintyId !== null) {
@@ -474,31 +483,35 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     const claimByReference = new Map(
       attempt.findingClaims.map((claim) => [claim.findingReference, claim]),
     );
-    const creditedFinalRoots = new Set<string>();
-    for (const adjudication of attemptAdjudications) {
-      if (
-        claimByReference.get(adjudication.findingReference)?.emittedAtStage === "FINAL" &&
-        adjudication.label === "MATCHED_DEFECT" &&
-        adjudication.matchedRootId !== null
-      ) {
-        if (creditedFinalRoots.has(adjudication.matchedRootId)) {
+    for (const stage of ["PRELIMINARY", "FINDING_VERIFICATION", "FINAL"] as const) {
+      const stageAdjudications = attemptAdjudications.filter(
+        ({ findingReference }) => claimByReference.get(findingReference)?.emittedAtStage === stage,
+      );
+      const creditedRoots = new Set<string>();
+      for (const adjudication of stageAdjudications) {
+        if (
+          (adjudication.label === "MATCHED_DEFECT" ||
+            adjudication.label === "NOVEL_VALID_DEFECT") &&
+          adjudication.matchedRootId !== null
+        ) {
+          if (creditedRoots.has(adjudication.matchedRootId)) {
+            throw new TypeError(
+              `semantic root cannot receive more than one semantic-root credit in ${stage} per attempt`,
+            );
+          }
+          creditedRoots.add(adjudication.matchedRootId);
+        }
+      }
+      for (const adjudication of stageAdjudications) {
+        if (
+          adjudication.label === "DUPLICATE" &&
+          adjudication.matchedRootId !== null &&
+          !creditedRoots.has(adjudication.matchedRootId)
+        ) {
           throw new TypeError(
-            "known root cannot receive more than one final recall credit per attempt",
+            `duplicate must reference a credited semantic root in ${stage} for same attempt`,
           );
         }
-        creditedFinalRoots.add(adjudication.matchedRootId);
-      }
-    }
-    for (const adjudication of attemptAdjudications) {
-      if (
-        claimByReference.get(adjudication.findingReference)?.emittedAtStage === "FINAL" &&
-        adjudication.label === "DUPLICATE" &&
-        adjudication.matchedRootId !== null &&
-        !creditedFinalRoots.has(adjudication.matchedRootId)
-      ) {
-        throw new TypeError(
-          "final duplicate adjudication must reference a credited final root in same attempt",
-        );
       }
     }
   }

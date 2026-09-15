@@ -91,10 +91,7 @@ describe("evaluation artifact graph", () => {
 
     const wrongRoot = makeEvaluationGraph();
     first(wrongRoot.adjudications).matchedRootId = "root_other";
-    assert.throws(
-      () => validateEvaluationArtifactGraphV1(wrongRoot),
-      /does not belong to case oracle/i,
-    );
+    assert.throws(() => validateEvaluationArtifactGraphV1(wrongRoot), /case-oracle semantic root/i);
   });
 
   it("enforces claim-kind labels and explicit recommendation validity", () => {
@@ -202,7 +199,7 @@ describe("evaluation artifact graph", () => {
     duplicate.label = "MATCHED_DEFECT";
     assert.throws(
       () => validateEvaluationArtifactGraphV1(doubleCredit),
-      /more than one final recall credit/i,
+      /more than one semantic-root credit in FINAL/i,
     );
   });
 

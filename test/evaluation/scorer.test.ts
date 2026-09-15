@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   digestEvaluationArtifactV1,
+  EvaluationAdjudicationRecordV1Schema,
   EvaluationCaseManifestV1Schema,
   EvaluationExperimentManifestV1Schema,
   EvaluationFamilySplitManifestV1Schema,
@@ -493,5 +494,78 @@ describe("evaluation scorer", () => {
         score: canonical,
       }),
     );
+  });
+
+  it("uses stable non-oracle semantic roots for novel defects and their duplicates", () => {
+    const graph = makeEvaluationGraph();
+    const attempt = graph.attempts.find(
+      ({ caseId, variantId }) => caseId === "case_defect" && variantId === "variant_baseline",
+    );
+    assert.ok(attempt);
+    const finalAdjudications = graph.adjudications.filter(({ attemptId, findingReference }) => {
+      const claim = attempt.findingClaims.find(
+        ({ findingReference: reference }) => reference === findingReference,
+      );
+      return attemptId === attempt.attemptId && claim?.emittedAtStage === "FINAL";
+    });
+    const credited = finalAdjudications.find(({ label }) => label === "MATCHED_DEFECT");
+    const duplicate = finalAdjudications.find(({ label }) => label === "DUPLICATE");
+    assert.ok(credited);
+    assert.ok(duplicate);
+    Object.assign(credited, {
+      label: "NOVEL_VALID_DEFECT",
+      matchedRootId: "root_novel_rounding",
+    });
+    duplicate.matchedRootId = "root_novel_rounding";
+
+    assert.doesNotThrow(() => EvaluationAdjudicationRecordV1Schema.parse(credited));
+    const score = scoreGraph(graph);
+
+    assert.equal(metric(score.metrics, "KNOWN_DEFECT_RECALL_COMPLETED").value, 0.5);
+    assert.equal(metric(score.metrics, "ADJUDICATED_DEFECT_PRECISION").value, 0.5);
+    assert.equal(metric(score.metrics, "UNIQUE_ACTION_YIELD").value, 1 / 3);
+    assert.equal(metric(score.metrics, "DUPLICATE_RATE").value, 1 / 3);
+  });
+
+  it("rejects novel credit for an oracle root and repeated credit for one novel root", () => {
+    const oracleRoot = makeEvaluationGraph();
+    const oracleCredit = oracleRoot.adjudications.find(
+      ({ label, findingReference }) =>
+        label === "MATCHED_DEFECT" && findingReference.includes("finding_case_defect_1"),
+    );
+    assert.ok(oracleCredit);
+    oracleCredit.label = "NOVEL_VALID_DEFECT";
+    assert.throws(() => scoreGraph(oracleRoot), /novel.*non-oracle semantic root/i);
+
+    const repeatedNovel = makeEvaluationGraph();
+    const repeatedAttempt = repeatedNovel.attempts.find(
+      ({ caseId, variantId }) => caseId === "case_defect" && variantId === "variant_baseline",
+    );
+    assert.ok(repeatedAttempt);
+    const repeatedFinal = repeatedNovel.adjudications.filter(({ attemptId, findingReference }) => {
+      const claim = repeatedAttempt.findingClaims.find(
+        ({ findingReference: reference }) => reference === findingReference,
+      );
+      return attemptId === repeatedAttempt.attemptId && claim?.emittedAtStage === "FINAL";
+    });
+    for (const adjudication of repeatedFinal) {
+      Object.assign(adjudication, {
+        label: "NOVEL_VALID_DEFECT",
+        matchedRootId: "root_novel_rounding",
+      });
+    }
+    assert.throws(() => scoreGraph(repeatedNovel), /more than one semantic-root credit.*FINAL/i);
+  });
+
+  it("requires duplicates to reference a credited known or novel root in the same stage", () => {
+    const graph = makeEvaluationGraph();
+    const duplicate = graph.adjudications.find(
+      ({ label, findingReference }) =>
+        label === "DUPLICATE" && findingReference.includes("case_defect_1"),
+    );
+    assert.ok(duplicate);
+    duplicate.matchedRootId = "root_novel_orphan";
+
+    assert.throws(() => scoreGraph(graph), /duplicate.*credited semantic root.*FINAL/i);
   });
 });
