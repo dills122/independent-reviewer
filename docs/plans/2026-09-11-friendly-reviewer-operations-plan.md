@@ -64,6 +64,31 @@ independent-reviewer review --no-author
   filesystem or adapter enumeration order.
 - Behavior and fixtures remain language-neutral.
 
+## Implementation lessons from reviewd
+
+The [pinned source study](../research/2026-09-15-reviewd-implementation-study.md)
+supports guided onboarding and compact feedback. Apply these refinements within
+Slices 5/6 and existing #103/#149; they do not add a separate onboarding milestone:
+
+- Detect current repository and show the resolved target, saved selections, and
+  next dry-run command before finishing initialization. Preserve explicit `--repo`
+  behavior, linked worktrees, and non-interactive inputs.
+- Complete the handoff through standards selection and author input as well as
+  model/cost settings. Reuse resolved runtime contracts; no parallel wizard-only
+  defaults or weaker validation.
+- Setup/inspection must not pull or switch the developer checkout, change
+  user-wide trust settings, or fetch remote configuration implicitly. Credential
+  presence is metadata, not proof that a paid call will succeed.
+- Keep provider-free dry-run distinct from eventual publication preview. Preview
+  must not consume a review instance or mark a review delivered. Test this at the
+  composed command boundary, not only inside the renderer.
+- [#170](https://github.com/dills122/independent-reviewer/issues/170) adds an opt-in
+  compact terminal view. The complete report remains authoritative; necessary
+  uncertainty and counts remain visible, and display cannot change verdicts.
+
+These are planned acceptance refinements, not claims that interactive setup or
+the compact view has shipped.
+
 ## Dependency admission policy
 
 Library-backed commodity mechanics are the default, not an optional cleanup.

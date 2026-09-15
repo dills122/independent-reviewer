@@ -444,6 +444,60 @@ and hosting remain outside that track's first implementation batch.
 A few focused known-defect and clean fixtures remain part of Slice 2; they are
 not a separate product milestone.[^openai-evals][^anthropic-evals]
 
+## Reviewd-informed follow-up direction
+
+The [reviewd implementation study](research/2026-09-15-reviewd-implementation-study.md)
+records pinned source, passing upstream tests, and offline failure probes.
+Adopt guided onboarding and restrained presentation within the local product;
+qualify evidence exploration and observed checks through the existing correctness
+track. This evidence does not establish higher review accuracy or justify changing
+the delivery order. Small follow-ups are
+[#169](https://github.com/dills122/independent-reviewer/issues/169) (Git preflight
+deadline) and [#170](https://github.com/dills122/independent-reviewer/issues/170)
+(opt-in compact terminal summary).
+
+Future hosting remains deferred. When requested, start with a one-shot adapter
+and publication preview, then qualify continuous scheduling separately. Freeze
+versioned contracts before implementation with these acceptance requirements:
+
+- Hosting identity includes provider/host and stable repository identity, PR/MR,
+  resolved BASE/HEAD, and engine snapshot/report identity. Branch names are lookup
+  inputs, not evidence identity. Verify fetched bytes and recheck target state
+  before publication; moving HEAD/BASE must produce a visible stale result rather
+  than attaching an old assessment to current code.
+- Review outcome, publication outcome, and scheduling disposition are separate.
+  Skipped, previewed, interrupted, assessed, partially delivered, and delivered
+  states cannot collapse to success. Keep scheduler state separate from the
+  existing durable run-attempt ledger. Do not retry uncertain model submissions
+  merely because publication failed.
+- Publication consumes a complete validated report. Severity filters and comment
+  caps only affect display. Persist intended actions and per-action receipts;
+  retain failed inline details in summary, failed deletions for recovery, and old
+  review evidence until replacement is confirmed. Reconcile ambiguous network
+  writes before retrying; do not promise exactly-once remote effects without a
+  provider-supported mechanism.
+- Provider-free `review --dry-run` retains its current semantics. Preview of
+  publication operates on an existing validated report and cannot mark it
+  delivered. Any later command that spends on review while suppressing posting
+  must say so explicitly and use a distinct option/operation.
+- Scheduling needs atomic claims, explicit ownership/recovery, bounded queues,
+  cross-process repository coordination, and per-review plus aggregate budget
+  admission. A source-commit-only deduplication key misses changed BASE or review
+  policy. Cooldowns and size thresholds are scheduling choices, never evidence
+  of safety or completed review. One-line changes remain eligible under explicit
+  review requests.
+- Auto-approval is a separate future policy decision, not a default consequence
+  of clean findings. Unknown coverage, size, verification, or stale identity cannot
+  satisfy an approval gate. Any approval policy must consume the unfiltered report
+  and an exact target identity.
+
+Local AI CLI backends also remain deferred. A subprocess adapter must qualify
+fresh stage contexts, author withholding, snapshot-only evidence, environment and
+execution isolation, complete I/O deadlines, output caps, process-tree cancellation,
+local schema validation, and honest unknown usage/cost. Tool flags or disposable
+worktrees alone cannot establish these properties. Do not auto-accept trust dialogs,
+modify user-wide trust files, or infer billing behavior from upstream documentation.
+
 ## Initial product scope
 
 First useful release: local CLI, one primary reviewer conversation, selective fresh-context preliminary adverse-claim verification, enforced author withholding, bounded snapshot reads, static inspection, structured findings, local audit artifacts, and AI Central invocation. Preserve module boundaries for a bot while keeping hosting-specific APIs outside the core.
