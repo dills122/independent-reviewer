@@ -3,7 +3,10 @@
 ## Status
 
 Checkpoint A implemented on 2026-09-13. Broader final-only claim verification
-remains deferred and requires a separate decision before adding another call.
+remains deferred. Its claim identity, selective-call, projection, budget, and
+resume boundary is now proposed in
+[ADR-018](../decisions/018-bind-final-claims-and-project-verified-outcomes.md)
+before any consumer implementation.
 
 Broader follow-up is now tracked by
 [#161](https://github.com/dills122/independent-reviewer/issues/161), Stage B of
@@ -239,6 +242,11 @@ so rejected claims cannot leave contradictory report prose.
 **Dependency:** Task 5. **Status:** Deferred; no fourth call is part of this fix.
 
 ### Checkpoint B: Broader invariant enforcement — deferred
+
+Contract direction: [ADR-018](../decisions/018-bind-final-claims-and-project-verified-outcomes.md),
+status Proposed. Implement contracts and provider-free projection gates before
+orchestration consumers; no fourth call or new report semantics are shipped by
+this link update.
 
 - All model-authored verdict channels are verified or provenance-bound.
 - Typical clean path remains two calls.

@@ -1,6 +1,8 @@
 # Correctness and engineering review delivery plan
 
-Status: Stage A started; research-informed implementation sequence, not shipped product behavior.
+Status: Stage A started; Stage B contract proposed in
+[ADR-018](../decisions/018-bind-final-claims-and-project-verified-outcomes.md);
+research-informed implementation sequence, not shipped product behavior.
 Parent: [#159](https://github.com/dills122/independent-reviewer/issues/159).
 Baseline: `6073c2f`. Planning requested 2026-09-14.
 
@@ -95,6 +97,12 @@ Detailed scoring rules live in the companion evaluation protocol.
 ## Stage B — complete adjudication
 
 ### Contract decisions before code
+
+The proposed final-claim identity, selective post-author verification,
+deterministic projection, bounded prose, and resume boundary are specified in
+[ADR-018](../decisions/018-bind-final-claims-and-project-verified-outcomes.md).
+Its status remains Proposed; no Stage B runtime behavior is shipped by this
+plan update.
 
 Inventory all semantic inputs to outcome, including final findings, changed
 premises under reused IDs, standards conflicts/unassessed status, uncertainty,
