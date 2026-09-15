@@ -1,0 +1,199 @@
+import { execFile } from "node:child_process";
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
+import { promisify } from "node:util";
+
+import { jsonDocument } from "../src/contracts/json-document.js";
+import { ReviewRequestV1Schema } from "../src/contracts/review-request.js";
+import { StandardsProfileSchema } from "../src/contracts/standards-review.js";
+import type {
+  EvaluationCaseV1,
+  EvaluationRepositoryFileV1,
+  PreparedEvaluationCaseV1,
+  RequirementsReviewerInputV1,
+} from "./matrix-types.js";
+
+const exec = promisify(execFile);
+
+function assertRepositoryPath(path: string): void {
+  const normalized = normalize(path);
+  if (
+    path.length === 0 ||
+    path.includes("\0") ||
+    isAbsolute(path) ||
+    normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)
+  ) {
+    throw new Error(`Invalid evaluation repository path: ${path}.`);
+  }
+}
+
+async function materializeFile(
+  repositoryPath: string,
+  file: EvaluationRepositoryFileV1,
+  content: string | undefined,
+): Promise<void> {
+  assertRepositoryPath(file.path);
+  const destination = resolve(repositoryPath, file.path);
+  if (relative(repositoryPath, destination).startsWith("..")) {
+    throw new Error(`Evaluation repository path escapes fixture root: ${file.path}.`);
+  }
+  if (content === undefined) {
+    await rm(destination, { force: true });
+    return;
+  }
+  await mkdir(dirname(destination), { recursive: true });
+  await writeFile(destination, content, "utf8");
+}
+
+async function git(repositoryPath: string, ...arguments_: string[]): Promise<void> {
+  await exec("git", ["-C", repositoryPath, ...arguments_]);
+}
+
+function assertOracleSeparated(testCase: EvaluationCaseV1): void {
+  const reviewerData = JSON.stringify({
+    repository: testCase.repository,
+    reviewer: testCase.reviewer,
+  });
+  for (const rootId of testCase.oracle.expectedRootIds) {
+    if (reviewerData.includes(rootId)) {
+      throw new Error(`Evaluator oracle identifier leaked into reviewer data for ${testCase.id}.`);
+    }
+  }
+}
+
+function requirementsRequest(
+  testCase: EvaluationCaseV1,
+  reviewer: RequirementsReviewerInputV1,
+  repositoryPath: string,
+  configId: string,
+) {
+  return ReviewRequestV1Schema.parse({
+    schemaVersion: 1,
+    flowId: `flow_evaluation_${testCase.id}`,
+    reviewInstance: { number: 1, maximum: 3 },
+    repository: {
+      path: repositoryPath,
+      base: "main",
+      workingTree: { mode: "CUMULATIVE", includeUntracked: true },
+    },
+    canonicalInputs: {
+      requirements: [
+        {
+          id: `input_${testCase.id}_requirements`,
+          kind: "REQUIREMENTS",
+          title: "Evaluation requirements",
+          content: reviewer.requirements,
+          provenance: { type: "INLINE", label: "Synthetic evaluation specification" },
+        },
+      ],
+      implementationPlan: {
+        id: `input_${testCase.id}_plan`,
+        kind: "IMPLEMENTATION_PLAN",
+        title: "Evaluation implementation plan",
+        content: reviewer.implementationPlan,
+        provenance: { type: "INLINE", label: "Synthetic evaluation specification" },
+      },
+      projectGuidance: [],
+    },
+    authorPacket: {
+      schemaVersion: 1,
+      intent: reviewer.authorIntent,
+      successCriteria: [reviewer.requirements],
+      planTraceability: [
+        { planItem: reviewer.implementationPlan, implementation: reviewer.authorApproach },
+      ],
+      technicalApproach: reviewer.authorApproach,
+      componentWalkthrough: reviewer.componentPaths.map((component) => ({
+        component,
+        changes: "Updated implementation for the declared plan.",
+      })),
+      decisions: [],
+      invariants: ["Preserve all declared behavior unless the requirements say otherwise."],
+      claimedVerification: [
+        {
+          command: "fixture verification not supplied",
+          outcome: "NOT_RUN",
+          summary: "No runner-observed verification accompanies this synthetic case.",
+        },
+      ],
+      risks: [],
+      knownGaps: [],
+      challengePoints: [...reviewer.challengePoints],
+    },
+    reviewConfigRef: configId,
+  });
+}
+
+export async function prepareEvaluationCaseV1(
+  testCase: EvaluationCaseV1,
+  caseRoot: string,
+  configId = "config_evaluation_placeholder",
+): Promise<PreparedEvaluationCaseV1> {
+  assertOracleSeparated(testCase);
+  try {
+    await mkdir(caseRoot, { recursive: false });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error(`Evaluation case directory already exists: ${caseRoot}.`);
+    }
+    throw error;
+  }
+
+  const repositoryPath = join(caseRoot, "repo");
+  const outputPath = join(caseRoot, "packet");
+  await mkdir(repositoryPath);
+
+  const paths = testCase.repository.files.map(({ path }) => path);
+  if (new Set(paths).size !== paths.length) {
+    throw new Error(`Evaluation case ${testCase.id} contains duplicate repository paths.`);
+  }
+  if (!testCase.repository.files.some(({ base }) => base !== undefined)) {
+    throw new Error(`Evaluation case ${testCase.id} must contain baseline content.`);
+  }
+
+  await git(repositoryPath, "init", "--initial-branch=main");
+  await git(repositoryPath, "config", "user.name", "Evaluation Fixture");
+  await git(repositoryPath, "config", "user.email", "fixture@example.invalid");
+  await git(repositoryPath, "config", "commit.gpgsign", "false");
+  for (const file of testCase.repository.files) {
+    await materializeFile(repositoryPath, file, file.base);
+  }
+  await git(repositoryPath, "add", ".");
+  await git(repositoryPath, "commit", "-m", "Fixture baseline");
+  for (const file of testCase.repository.files) {
+    await materializeFile(repositoryPath, file, file.head);
+  }
+
+  let controlPath: string;
+  let cliArguments: readonly string[];
+  if (testCase.reviewer.kind === "requirements") {
+    controlPath = join(caseRoot, "control.json");
+    const request = requirementsRequest(testCase, testCase.reviewer, repositoryPath, configId);
+    await writeFile(controlPath, jsonDocument(request), { flag: "wx", mode: 0o600 });
+    cliArguments = ["--request", controlPath];
+  } else {
+    controlPath = join(caseRoot, "control.json");
+    const authorPath = join(caseRoot, "author.md");
+    const profile = StandardsProfileSchema.parse(testCase.reviewer.profile);
+    await writeFile(controlPath, jsonDocument(profile), { flag: "wx", mode: 0o600 });
+    await writeFile(authorPath, `${testCase.reviewer.authorOverview.trim()}\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    cliArguments = [
+      "--repo",
+      repositoryPath,
+      "--base",
+      "main",
+      "--standards",
+      controlPath,
+      "--author",
+      authorPath,
+      "--new-flow",
+    ];
+  }
+
+  return { repositoryPath, controlPath, outputPath, cliArguments };
+}

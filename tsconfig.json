@@ -17,5 +17,5 @@
     "target": "ES2024",
     "types": ["node", "emscripten"]
   },
-  "include": ["scripts/**/*.ts", "src/**/*.ts", "test/**/*.ts"]
+  "include": ["evaluation/**/*.ts", "scripts/**/*.ts", "src/**/*.ts", "test/**/*.ts"]
 }

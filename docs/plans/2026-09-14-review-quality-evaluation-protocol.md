@@ -1,7 +1,10 @@
 # Review-quality evaluation protocol
 
-Status: proposed protocol for [#160](https://github.com/dills122/independent-reviewer/issues/160).
-Implementation and paid sampling have not begun.
+Status: implementation started for [#160](https://github.com/dills122/independent-reviewer/issues/160).
+Initial 20-case corpus, deterministic fixture builder, tiered selection, paid admission, and run
+accounting are implemented. The first paid Stage A sample is recorded in
+[tiered review matrix paid validation](../validation/2026-09-14-tiered-review-matrix.md). Split
+manifests, finding-level scorer, adjudication records, and repeated sampling remain pending.
 
 ## Purpose
 
@@ -213,3 +216,15 @@ and do not tune semantic policy in response to 429/transport errors.
 5. Baseline run recipe and case-level report template.
 6. Explicit paid experiment request containing exact case count, repetition,
    provider policy, maximum reservation, and stop rules.
+
+### First implementation slice
+
+The package-private [evaluation harness](../../evaluation/README.md) reconstructs 20 synthetic
+cases from clean Git baselines. Fixed `smoke` (4), `standard` (8), and `full` (20) suites plus group
+and exact-case selectors keep routine runs bounded. Live execution requires an explicit selector,
+confirmation, and aggregate cost ceiling before fixture creation or provider access. Opaque case
+IDs and construction-time leak guards keep evaluator root labels outside reviewer inputs.
+
+This slice records versioned experiment manifests, per-case terminal results, validated verdicts,
+provider-reported usage, unknown-cost attempts, and conservative retry charges. It does not yet
+satisfy finding-level scoring, split/holdout qualification, or the approximately 30-case target.

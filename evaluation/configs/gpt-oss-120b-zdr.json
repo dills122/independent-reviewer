@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 3,
+  "configId": "config_evaluation_gpt_oss_120b",
+  "model": "openai/gpt-oss-120b",
+  "fallbackModels": [],
+  "providerRouting": {
+    "order": ["coreweave/fp4", "deepinfra/bf16"],
+    "pinToOrder": true,
+    "zeroDataRetention": true,
+    "denyDataCollection": true,
+    "maxPrice": {
+      "prompt": 0.037,
+      "completion": 0.17,
+      "request": 0
+    }
+  },
+  "budgets": {
+    "maxInitialEvidenceBytes": 350000,
+    "maxConversationBytes": 600000,
+    "maxOutputTokensPerCall": 8192,
+    "maxTotalTokens": 240000,
+    "maxTotalCostUsd": 0.02,
+    "timeoutMs": 120000,
+    "maxAttemptsPerCall": 2,
+    "minimumCallIntervalMs": 1500
+  }
+}
