@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import {
   prepareEvaluationCaseV1,
   prepareEvaluationCorpusCaseV1,
+  runEvaluationFixtureGitV1,
 } from "../../evaluation/fixture-builder.js";
 import { EVALUATION_CASES_V1 } from "../../evaluation/matrix-selection.js";
 import type { EvaluationCaseV1 } from "../../evaluation/matrix-types.js";
@@ -18,6 +19,21 @@ import { ReviewRequestV1Schema } from "../../src/contracts/review-request.js";
 const exec = promisify(execFile);
 
 describe("evaluation fixture reconstruction", () => {
+  it("disables system Git attributes in the exact reconstruction environment", async () => {
+    const root = await mkdtemp(join(tmpdir(), "review-evaluation-"));
+    try {
+      await assert.rejects(
+        () => runEvaluationFixtureGitV1(root, "var", "GIT_ATTR_SYSTEM"),
+        (error: unknown) => {
+          const gitError = error as { code?: number; stdout?: string };
+          return gitError.code === 1 && gitError.stdout === "";
+        },
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rebuilds an opaque multilingual case from a clean checkout", async () => {
     const root = await mkdtemp(join(tmpdir(), "review-evaluation-"));
     try {
