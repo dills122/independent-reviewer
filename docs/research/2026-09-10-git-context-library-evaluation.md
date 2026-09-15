@@ -1,6 +1,8 @@
 # Git and context library evaluation
 
-Status: revised after adversarial validation and first implementation slice.
+Status: revised after adversarial validation and first implementation slice;
+the unimplemented Execa recommendation is superseded by
+[ADR-019](../decisions/019-use-gvisor-backed-linux-check-workers.md).
 Decision owner: project maintainer.
 
 ## Executive conclusion
@@ -11,8 +13,9 @@ remains path/status authority. This removes commodity algorithm code and fixes
 two reproduced failures: a CRLF-only edit disappeared, and 264 sparse edits in a
 20,000-line file degraded into 455,389 bytes of whole-file evidence.
 
-Adopt `execa` next for process lifecycle and `picomatch` for one explicit path
-dialect. Make `@ast-grep/napi` the next review-quality slice, parsing packet
+Retain the current Node process wrapper unless ADR-019's objective revisit
+triggers occur, and adopt `picomatch` for one explicit path dialect. Make
+`@ast-grep/napi` the next review-quality slice, parsing packet
 bytes with line-based fallback. Use `gpt-tokenizer` for supported-model packing
 and measurement while retaining conservative fallback for unknown OpenRouter
 tokenizers. Treat `@ataraxy-labs/sem` and `diff-core` as architecture references.
@@ -115,8 +118,8 @@ Owner: project maintainer.
 
 1. Keep adopted native Git plus `parse-diff` renderer. Its edge corpus and full
    suite must remain green.
-2. Replace subprocess lifecycle with exact-pinned `execa`, preserving the
-   current Git adapter contract and environment isolation.
+2. Retain the Node subprocess wrapper behind bounded product adapters. Revisit
+   exact-pinned `execa` only under ADR-019's measured lifecycle triggers.
 3. Define path glob semantics and consolidate matching through `picomatch`.
 4. Implement `@ast-grep/napi` against a fixed corpus:
    changed declarations, overloads, JSX, parse errors, 10k-line files, Linux

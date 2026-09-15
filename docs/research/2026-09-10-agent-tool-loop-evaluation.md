@@ -34,7 +34,9 @@ Tool conclusions support the pasted proposal with narrower timing:
   packet-only virtual filesystem is designed;
 - keep Node's current process runner instead of adding `execa`; both can provide
   no-shell arguments, timeouts, cancellation, and output limits, while current
-  code also enforces the product-specific environment allowlist;
+  code also enforces the product-specific environment allowlist; this choice is
+  now governed by
+  [ADR-019](../decisions/019-use-gvisor-backed-linux-check-workers.md);
 - defer MCP until another real client needs the repository tools, Dagger until
   the isolated verification-worker design, and Mastra/LangGraph until workflow
   complexity exceeds the existing explicit state machine.

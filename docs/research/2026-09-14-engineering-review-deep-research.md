@@ -285,10 +285,13 @@ user-space kernel boundary. Its own security model warns that sandboxing does
 not replace secure architecture; compatibility remains a qualification
 consideration.[^18][^19]
 
-**Recommendation:** define the backend contract and threat boundary before
-selecting a runtime. Qualify one opt-in platform first. A temporary directory,
-non-shell command array, or container label cannot by itself justify executing
-untrusted repository tooling in a developer environment.
+**Follow-up decision:** the
+[isolated-check backend research](2026-09-15-isolated-checks-backend-decision.md)
+proposes exact V1 contracts and selects rootless Docker plus gVisor on Linux as
+the first qualification candidate. No backend is supported until its full
+negative-probe matrix passes. A temporary directory, non-shell command array, or
+container label cannot by itself justify executing untrusted repository tooling
+in a developer environment.
 
 ### Minimum execution contract
 
@@ -381,7 +384,7 @@ resolution needs C2 qualification or an explicit limitation.
 | Evaluation platform | Reuse product runner; evaluator-only artifacts | High for initial slice | Experiment management becomes substantial repeated work |
 | Context strategy | Declarations and targeted frozen access before broad payload expansion | Medium | Paired corpus shows no gain or distractor regression |
 | Semantic foundation | Language-neutral adapter; SCIP optional | Medium | Qualified alternative offers better frozen provenance and cost |
-| Execution | Opt-in qualified isolation backend; no default host execution | High on boundary, open on backend | Platform/resource requirements and backend probes settle choice |
+| Execution | Qualify rootless Docker plus gVisor on Linux first; no default host execution | High on boundary, medium on candidate | Required probes fail, compatibility is inadequate, or macOS candidate qualifies better |
 | Extra model passes | Selective and measured after adjudication | Medium | Repeated local evidence establishes consistent net benefit |
 | Broader review | Explicit dimensions with separate recommendation/uncertainty classes | High | User-facing outcome design reveals incompatible expectations |
 

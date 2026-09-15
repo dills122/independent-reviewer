@@ -571,6 +571,11 @@ is exposed to the reviewer.
 
 ## Local verification executor
 
+Proposed V1 check, policy, environment, result, and oracle contracts plus the
+first Linux backend qualification target are specified in
+[ADR-019](decisions/019-use-gvisor-backed-linux-check-workers.md). No backend is
+currently implemented or supported.
+
 Review configuration declares a catalog of named checks. A reviewer chooses an
 ID, never a shell string. Each entry defines:
 
