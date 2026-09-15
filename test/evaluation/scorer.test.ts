@@ -180,6 +180,25 @@ describe("evaluation scorer", () => {
     assert.equal(metric(score.metrics, "KNOWN_DEFECT_RECALL_COMPLETED").value, 1);
     assert.equal(metric(score.metrics, "KNOWN_DEFECT_RECALL_ALL_STARTS").value, 0.5);
     assert.equal(metric(score.metrics, "FALSE_ABSTENTION_RATE").numerator, 0);
+    assert.deepEqual(
+      {
+        numerator: metric(score.metrics, "STAGE_RETENTION_RATE").numerator,
+        denominator: metric(score.metrics, "STAGE_RETENTION_RATE").denominator,
+      },
+      { numerator: 2, denominator: 2 },
+    );
+    const failedEvidence = score.attemptEvidence.find(
+      ({ attemptId }) => attemptId === failed.attemptId,
+    );
+    assert.ok(failedEvidence);
+    assert.deepEqual(
+      failedEvidence.metrics.find(({ metric: name }) => name === "STAGE_RETENTION_RATE"),
+      {
+        metric: "STAGE_RETENTION_RATE",
+        numerator: 0,
+        denominator: 0,
+      },
+    );
   });
 
   it("counts semantic abstention as delivered but false when required evidence is complete", () => {
