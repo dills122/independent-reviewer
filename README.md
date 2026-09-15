@@ -138,6 +138,8 @@ review needs it:
 | --- | --- |
 | `--standards` | Select rules and path applicability. The bundled JavaScript/TypeScript profile is an example, not a language restriction. |
 | `--author` | Supply intent, approach, known gaps, and challenge points. It stays hidden until final reconciliation. |
+| `--no-author` | Explicitly decline author context. Live review warns before spending; final report records a non-limiting declined note. |
+| `--no-reviewer-rules` | Disable BASE-owned repository reviewer guidance for one review. |
 | `.independent-reviewer/rules.md` | Add optional reviewer-specific guidance from the frozen base revision. |
 | `--config` | Control advanced routing, privacy, retry, token, and cost policy with versioned JSON. |
 
@@ -155,8 +157,8 @@ requirements workflow.
 - Local, source-built CLI; hosted pull-request and merge-request adapters are
   deferred.
 - Static review of captured evidence; no test execution or arbitrary file access.
-- Explicit standards and author files remain required for the shortest review
-  flow.
+- Explicit standards and either an author file or warned `--no-author` decision
+  remain required for the shortest review flow.
 - Review artifacts may contain private source and must remain ignored under
   `.review-runs/`.
 

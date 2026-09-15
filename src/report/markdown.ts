@@ -97,17 +97,27 @@ export function renderReviewMarkdown(
     );
 
   return [
-    report.schemaVersion === 2 ? "# Standards review" : "# Independent review",
+    "ruleAssessments" in report ? "# Standards review" : "# Independent review",
     "",
     `Verdict: ${reviewVerdictLabel(report)}`,
     "",
     escapeMarkdown(report.summary),
     "",
+    ...(report.schemaVersion === 3
+      ? [
+          "## Author context",
+          "",
+          report.authorContext.status === "DECLINED"
+            ? "Author explanation was explicitly declined. No author claims were evaluated."
+            : "Author explanation was provided separately and released only after blind review.",
+          "",
+        ]
+      : []),
     "## Findings",
     "",
     findings,
     "",
-    ...(report.schemaVersion === 2
+    ...("ruleAssessments" in report
       ? [
           "## Rule assessments",
           "",
@@ -181,7 +191,7 @@ export const STANDARDS_VERDICT_LABELS = {
   UNABLE_TO_VERIFY: "Standards review: unable to assess",
 };
 export function reviewVerdictLabel(report: ReviewReport): string {
-  return (report.schemaVersion === 2 ? STANDARDS_VERDICT_LABELS : VERDICT_LABELS_V1)[
+  return ("ruleAssessments" in report ? STANDARDS_VERDICT_LABELS : VERDICT_LABELS_V1)[
     report.verdict
   ];
 }

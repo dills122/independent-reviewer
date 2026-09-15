@@ -10,6 +10,7 @@ import {
   validatePreliminaryStructure,
   validateReportStructure,
 } from "./review-results.js";
+import { DigestV1Schema } from "./snapshot-manifest.js";
 import { contractJsonSchema } from "./standards-review.js";
 
 export const StandardsRuleAssessmentV2Schema = z.strictObject({
@@ -47,31 +48,70 @@ export const StandardsPreliminaryV2Schema = z
   })
   .superRefine(validatePreliminaryStructure);
 /** Verdict codes retain CLI exit compatibility; mode-specific labels describe only standards. */
-export const StandardsReportV2Schema = z
+const StandardsReportBaseV2Schema = z.strictObject({
+  ...FinalReviewReportV1Schema.shape,
+  schemaVersion: z.literal(2),
+  ruleAssessments,
+  mode: z.literal("STANDARDS"),
+  findings: z.array(FinalStandardsFindingSchema),
+});
+
+function validateStandardsReport(
+  report: Pick<z.infer<typeof StandardsReportBaseV2Schema>, "verdict" | "findings" | "nextActions">,
+  context: z.RefinementCtx,
+) {
+  if (
+    report.verdict === "READY" &&
+    (report.findings.length || report.nextActions.fastFollows.length)
+  )
+    context.addIssue({
+      code: "custom",
+      message: "Standards satisfied cannot retain findings or recommendations.",
+    });
+  if (
+    report.verdict === "NOT_READY" &&
+    !report.findings.some((finding) => finding.severity === "REQUIRED")
+  )
+    context.addIssue({
+      code: "custom",
+      message: "Changes requested requires a mandatory standards finding.",
+    });
+}
+
+export const StandardsReportV2Schema =
+  StandardsReportBaseV2Schema.superRefine(validateReportStructure).superRefine(
+    validateStandardsReport,
+  );
+
+export const ReportAuthorContextV1Schema = z.discriminatedUnion("status", [
+  z.strictObject({
+    status: z.literal("PROVIDED"),
+    digest: DigestV1Schema,
+    noteCode: z.null(),
+  }),
+  z.strictObject({
+    status: z.literal("DECLINED"),
+    digest: DigestV1Schema,
+    noteCode: z.literal("AUTHOR_CONTEXT_DECLINED"),
+  }),
+]);
+
+export const StandardsReportV3Schema = z
   .strictObject({
-    ...FinalReviewReportV1Schema.shape,
-    schemaVersion: z.literal(2),
-    ruleAssessments,
-    mode: z.literal("STANDARDS"),
-    findings: z.array(FinalStandardsFindingSchema),
+    ...StandardsReportBaseV2Schema.shape,
+    schemaVersion: z.literal(3),
+    authorContext: ReportAuthorContextV1Schema,
   })
   .superRefine(validateReportStructure)
+  .superRefine(validateStandardsReport)
   .superRefine((report, context) => {
     if (
-      report.verdict === "READY" &&
-      (report.findings.length || report.nextActions.fastFollows.length)
+      report.authorContext.status === "DECLINED" &&
+      (report.authorClaims.length > 0 || report.authorVerificationClaims.length > 0)
     )
       context.addIssue({
         code: "custom",
-        message: "Standards satisfied cannot retain findings or recommendations.",
-      });
-    if (
-      report.verdict === "NOT_READY" &&
-      !report.findings.some((finding) => finding.severity === "REQUIRED")
-    )
-      context.addIssue({
-        code: "custom",
-        message: "Changes requested requires a mandatory standards finding.",
+        message: "Declined author context requires empty author-claim ledgers.",
       });
   });
 export const StandardsCandidateV2Schema = z.strictObject({
@@ -105,7 +145,8 @@ export type ReviewPreliminary =
   | z.infer<typeof StandardsPreliminaryV2Schema>;
 export type ReviewReport =
   | z.infer<typeof FinalReviewReportV1Schema>
-  | z.infer<typeof StandardsReportV2Schema>;
+  | z.infer<typeof StandardsReportV2Schema>
+  | z.infer<typeof StandardsReportV3Schema>;
 export const STANDARDS_PRELIMINARY_V2_JSON_SCHEMA = contractJsonSchema(
   StandardsPreliminaryV2Schema,
   "standards-preliminary:v2",
@@ -113,6 +154,10 @@ export const STANDARDS_PRELIMINARY_V2_JSON_SCHEMA = contractJsonSchema(
 export const STANDARDS_REPORT_V2_JSON_SCHEMA = contractJsonSchema(
   StandardsReportV2Schema,
   "standards-report:v2",
+);
+export const STANDARDS_REPORT_V3_JSON_SCHEMA = contractJsonSchema(
+  StandardsReportV3Schema,
+  "standards-report:v3",
 );
 export const STANDARDS_CANDIDATE_V2_JSON_SCHEMA = contractJsonSchema(
   StandardsCandidateV2Schema,

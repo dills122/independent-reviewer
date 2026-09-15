@@ -4,10 +4,19 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { saveLocalSimpleReviewSettingsV2 } from "../src/cli/simple-settings.js";
 import { runCliV1 } from "../src/cli.js";
+import { RunRecordEventV1Schema } from "../src/contracts/run-record.js";
+import {
+  preflightReview,
+  resumeFinalReview,
+  runTwoStageReview,
+} from "../src/orchestrator/two-stage-review.js";
 import { ProviderCallError, type ReviewProviderV1 } from "../src/provider/review-provider.js";
-import { inspectSnapshotPacket } from "../src/snapshot/snapshot-packet.js";
+import { captureGitSnapshotV1 } from "../src/snapshot/git-capture.js";
+import { inspectSnapshotPacket, writeSnapshotPacketV1 } from "../src/snapshot/snapshot-packet.js";
 
 const exec = promisify(execFile);
 const digest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
@@ -373,7 +382,10 @@ for (const scenario of [
         const author = JSON.parse(await readFile(authorPath, "utf8"));
         author.overview = "Tampered";
         await writeFile(authorPath, JSON.stringify(author));
-        await assert.rejects(inspectSnapshotPacket(f.packet), /Author overview digest/);
+        await assert.rejects(
+          inspectSnapshotPacket(f.packet),
+          /author(?: overview|-context) digest/i,
+        );
       }
     } finally {
       await rm(f.repo, { recursive: true, force: true });
@@ -454,11 +466,11 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
     const simpleSettingsPath = join(await localReviewDirectory(f.repo), "simple-settings.json");
     const localSettings = JSON.parse(await readFile(simpleSettingsPath, "utf8"));
     assert.deepEqual(localSettings, {
-      schemaVersion: 1,
+      schemaVersion: 2,
       model: "openai/gpt-oss-120b",
       maxCostUsd: 0.05,
       requireAuthorExplanation: true,
-      discoverRepositorySteering: true,
+      useReviewerRules: true,
     });
     assert.equal(
       await runCliV1(
@@ -475,6 +487,27 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
     assert.match(output.join("\n"), /"model": "openai\/gpt-oss-120b"/);
     assert.match(output.join("\n"), /"model": "LOCAL"/);
     assert.doesNotMatch(output.join("\n"), /OPENROUTER_API_KEY/);
+
+    output.length = 0;
+    assert.equal(
+      await runCliV1(
+        ["config", "show", "--repo", f.repo, "--no-author", "--no-reviewer-rules"],
+        io,
+      ),
+      0,
+    );
+    assert.match(output.join("\n"), /"requireAuthorExplanation": false/);
+    assert.match(output.join("\n"), /"useReviewerRules": false/);
+    assert.match(output.join("\n"), /"requireAuthorExplanation": "CLI"/);
+    assert.match(output.join("\n"), /"useReviewerRules": "CLI"/);
+    assert.equal(
+      await runCliV1(
+        ["config", "show", "--repo", f.repo, "--reviewer-rules", "--no-reviewer-rules"],
+        io,
+      ),
+      1,
+    );
+    assert.match(errors.at(-1) ?? "", /either --reviewer-rules or --no-reviewer-rules/);
 
     output.length = 0;
     assert.equal(await runCliV1(["config", "show", "--repo", f.repo, "--resolved"], io), 0);
@@ -515,7 +548,11 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
 
     await writeFile(
       simpleSettingsPath,
-      JSON.stringify({ ...localSettings, discoverRepositorySteering: false }),
+      JSON.stringify({
+        ...localSettings,
+        requireAuthorExplanation: false,
+        useReviewerRules: false,
+      }),
     );
     output.length = 0;
     assert.equal(
@@ -538,6 +575,193 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
       errors.join("\n"),
     );
     assert.doesNotMatch(output.join("\n"), /Reviewer guidance:/);
+
+    output.length = 0;
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          profilePath,
+          "--reviewer-rules",
+          "--no-author",
+          "--dry-run",
+        ],
+        io,
+      ),
+      0,
+      errors.join("\n"),
+    );
+    assert.match(output.join("\n"), /Reviewer guidance: \d+ content bytes \(ACCEPTED\)/);
+    assert.match(output.join("\n"), /Author explanation: explicitly declined/);
+
+    errors.length = 0;
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          profilePath,
+          "--author-required",
+          "--dry-run",
+        ],
+        io,
+      ),
+      1,
+    );
+    assert.match(errors.at(-1) ?? "", /Author explanation is required/);
+  } finally {
+    await rm(f.repo, { recursive: true, force: true });
+  }
+});
+
+test("request dry-run resolves reviewer rules from the target repository, never caller cwd", async () => {
+  const f = await fixture();
+  const caller = await mkdtemp(join(tmpdir(), "standards-flow-caller-"));
+  const callerGit = (...args: string[]) => exec("git", ["-C", caller, ...args]);
+  const cliPath = fileURLToPath(new URL("../src/cli.js", import.meta.url));
+  const settings = (useReviewerRules: boolean) => ({
+    schemaVersion: 2 as const,
+    model: "openai/gpt-oss-120b" as const,
+    maxCostUsd: 0.05,
+    requireAuthorExplanation: true,
+    useReviewerRules,
+  });
+  try {
+    await callerGit("init", "--initial-branch=main");
+    await callerGit("config", "user.name", "Caller");
+    await callerGit("config", "user.email", "caller@example.invalid");
+    await callerGit("config", "commit.gpgsign", "false");
+    await writeFile(join(caller, "caller.txt"), "caller\n");
+    await callerGit("add", ".");
+    await callerGit("commit", "-m", "caller base");
+
+    const callerSettingsPath = await saveLocalSimpleReviewSettingsV2(caller, settings(true));
+    const targetSettingsPath = await saveLocalSimpleReviewSettingsV2(f.repo, settings(false));
+    const run = (extra: string[] = []) =>
+      exec(
+        process.execPath,
+        [
+          cliPath,
+          "review",
+          "--request",
+          f.requestPath,
+          "--config",
+          f.configPath,
+          "--dry-run",
+          ...extra,
+        ],
+        { cwd: caller },
+      );
+
+    const targetOff = await run();
+    assert.match(targetOff.stdout, /No provider calls/);
+    assert.doesNotMatch(targetOff.stdout, /Reviewer guidance:/);
+
+    await writeFile(callerSettingsPath, JSON.stringify(settings(false)));
+    await writeFile(targetSettingsPath, JSON.stringify(settings(true)));
+    const targetOn = await run();
+    assert.match(targetOn.stdout, /Reviewer guidance: \d+ content bytes \(ACCEPTED\)/);
+
+    const explicitOff = await run(["--no-reviewer-rules"]);
+    assert.doesNotMatch(explicitOff.stdout, /Reviewer guidance:/);
+  } finally {
+    await rm(caller, { recursive: true, force: true });
+    await rm(f.repo, { recursive: true, force: true });
+  }
+});
+
+test("author explanation is required by default and explicit opt-out creates a bound declined request", async () => {
+  const f = await fixture();
+  const output: string[] = [];
+  const errors: string[] = [];
+  const io = {
+    stdout: (message: string) => output.push(message),
+    stderr: (message: string) => errors.push(message),
+  };
+  try {
+    const { assembleStandardsRequest } = await import("../src/cli/standards-input.js");
+    const request = JSON.parse(await readFile(f.requestPath, "utf8"));
+    const profilePath = join(f.repo, "standards.json");
+    await writeFile(profilePath, request.canonicalInputs.standards[0].content);
+
+    await assert.rejects(
+      assembleStandardsRequest({
+        repo: f.repo,
+        config: f.configPath,
+        standards: profilePath,
+      }),
+      /Author explanation is required/,
+    );
+
+    const declined = await assembleStandardsRequest({
+      repo: f.repo,
+      config: f.configPath,
+      standards: profilePath,
+      noAuthor: true,
+    });
+    assert.equal(declined.request.schemaVersion, 3);
+    assert.equal(declined.request.authorContext.status, "DECLINED");
+    assert.equal("authorPacket" in declined.request, false);
+
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          profilePath,
+          "--config",
+          f.configPath,
+          "--no-author",
+          "--dry-run",
+        ],
+        io,
+        {
+          readOpenRouterApiKey: () => {
+            throw new Error("declined dry-run read credential");
+          },
+          createProvider: () => {
+            throw new Error("declined dry-run created provider");
+          },
+        },
+      ),
+      0,
+      errors.join("\n"),
+    );
+    assert.match(output.join("\n"), /Author explanation: explicitly declined/);
+
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          profilePath,
+          "--author",
+          request.authorPacket.overview,
+          "--no-author",
+          "--dry-run",
+        ],
+        io,
+      ),
+      1,
+    );
+    assert.match(errors.at(-1) ?? "", /either --author or --no-author/);
   } finally {
     await rm(f.repo, { recursive: true, force: true });
   }
@@ -699,6 +923,62 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
     assert.deepEqual(metadata.guidanceGraphDigest, inspected.guidanceGraphDigest);
     assert.equal(metadata.promptVersion, "standards-review-v18");
     assert.match(output.join("\n"), /Standards satisfied/);
+
+    const firstRunCallCount = requests.length;
+    const declinedPacket = join(f.repo, ".review-runs", "declined");
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          profilePath,
+          "--no-author",
+          "--new-flow",
+          "--output",
+          declinedPacket,
+        ],
+        io,
+        {
+          readOpenRouterApiKey: () => "test-key",
+          createProvider: () => provider,
+        },
+      ),
+      0,
+      errors.join("\n"),
+    );
+    const declinedRequests = requests.slice(firstRunCallCount);
+    assert.doesNotMatch(JSON.stringify(declinedRequests[0]?.messages), /DECLINED|AUTHOR_CONTEXT/);
+    assert.match(JSON.stringify(declinedRequests.at(-1)?.messages), /AUTHOR_CONTEXT_RELEASED/);
+    assert.match(JSON.stringify(declinedRequests.at(-1)?.messages), /DECLINED/);
+    const declinedReport = JSON.parse(
+      await readFile(join(declinedPacket, "review", "final.json"), "utf8"),
+    );
+    assert.equal(declinedReport.schemaVersion, 3);
+    assert.deepEqual(declinedReport.authorContext, {
+      status: "DECLINED",
+      digest: declinedReport.authorContext.digest,
+      noteCode: "AUTHOR_CONTEXT_DECLINED",
+    });
+    assert.deepEqual(declinedReport.authorClaims, []);
+    assert.deepEqual(declinedReport.authorVerificationClaims, []);
+    assert.deepEqual(declinedReport.limitations, []);
+    assert.equal(declinedReport.verdict, "READY");
+    assert.match(errors.join("\n"), /Warning: author explanation explicitly declined/);
+    assert.match(
+      await readFile(join(declinedPacket, "review", "report.md"), "utf8"),
+      /No author claims were evaluated/,
+    );
+    assert.match(
+      await readFile(join(declinedPacket, "review", "run-record.jsonl"), "utf8"),
+      /AUTHOR_CONTEXT_RELEASED/,
+    );
+    const declinedInspected = await inspectSnapshotPacket(declinedPacket);
+    assert.equal(declinedInspected.authorContext?.status, "DECLINED");
+    assert.equal(declinedInspected.authorPacket, undefined);
   } finally {
     await rm(f.repo, { recursive: true, force: true });
   }
@@ -823,13 +1103,15 @@ test("saved settings never overwrite silently and direct inputs enforce three ex
   }
 });
 
-test("a rate-limited final stage offers the resume that revalidates it", async () => {
+test("a rate-limited declined-author final stage offers resume and rejects a silent author flip", async () => {
   // Regression for #121. The offer was gated on an exact eight-element event-type sequence that
   // omitted FINDING_VERIFICATION_PERSISTED, which every run emits, so the comparison could never
   // hold. A user whose final call was rate limited -- with a paid preliminary already saved --
   // was told the opposite: that no final-only resume remained.
   const f = await fixture();
   const errors: string[] = [];
+  let providerCalls = 0;
+  let providerConstructions = 0;
   const provider: ReviewProviderV1 = {
     auditRequest: () => ({
       providerPolicyVersion: "test-provider-v1",
@@ -838,6 +1120,7 @@ test("a rate-limited final stage offers the resume that revalidates it", async (
       credentialFreeWireRequestDigest: digest,
     }),
     complete: async (request) => {
+      providerCalls += 1;
       if (request.stage !== "PRELIMINARY") {
         throw new ProviderCallError("PROVIDER_ERROR", "Rate limited.", {
           diagnostic: {
@@ -895,10 +1178,32 @@ test("a rate-limited final stage offers the resume that revalidates it", async (
   };
 
   try {
+    const request = JSON.parse(await readFile(f.requestPath, "utf8"));
+    const profilePath = join(f.repo, "standards.json");
+    await writeFile(profilePath, request.canonicalInputs.standards[0].content);
     const exit = await runCliV1(
-      ["review", "--request", f.requestPath, "--config", f.configPath, "--output", f.packet],
+      [
+        "review",
+        "--repo",
+        f.repo,
+        "--base",
+        "main",
+        "--standards",
+        profilePath,
+        "--no-author",
+        "--config",
+        f.configPath,
+        "--output",
+        f.packet,
+      ],
       { stdout: () => undefined, stderr: (message) => errors.push(message) },
-      { readOpenRouterApiKey: () => "test", createProvider: () => provider },
+      {
+        readOpenRouterApiKey: () => "test",
+        createProvider: () => {
+          providerConstructions += 1;
+          return provider;
+        },
+      },
     );
     const stderr = errors.join("\n");
 
@@ -907,6 +1212,358 @@ test("a rate-limited final stage offers the resume that revalidates it", async (
     assert.match(stderr, /resume-final --packet/, stderr);
     assert.doesNotMatch(stderr, /has no remaining final-only resume/);
     assert.match(stderr, /Initial assessment is saved/, stderr);
+
+    const runRecordPath = join(f.packet, "review", "run-record.jsonl");
+    const events = (await readFile(runRecordPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const callsBeforeResume = providerCalls;
+    const corruptions = [
+      (draft: typeof events) => {
+        const released = draft.find((event) => event.type === "AUTHOR_CONTEXT_RELEASED");
+        assert.ok(released);
+        released.authorContext.status = "PROVIDED";
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "AUTHOR_CONTEXT_RELEASED");
+        draft.splice(index, 0, structuredClone(draft[index]));
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "AUTHOR_CONTEXT_RELEASED");
+        draft.splice(index, 0, {
+          schemaVersion: 1,
+          at: draft[index].at,
+          type: "AUTHOR_DELIVERED",
+          authorPacketDigest: digest,
+        });
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "AUTHOR_CONTEXT_RELEASED");
+        draft[index] = {
+          schemaVersion: 1,
+          at: draft[index].at,
+          type: "AUTHOR_DELIVERED",
+          authorPacketDigest: digest,
+        };
+      },
+      (draft: typeof events) => {
+        draft.splice(
+          draft.findIndex((event) => event.type === "AUTHOR_CONTEXT_RELEASED"),
+          1,
+        );
+      },
+      (draft: typeof events) => {
+        const [released] = draft.splice(
+          draft.findIndex((event) => event.type === "AUTHOR_CONTEXT_RELEASED"),
+          1,
+        );
+        assert.ok(released);
+        const finalStarted = draft.findIndex(
+          (event) => event.type === "CALL_STARTED" && event.stage === "FINAL",
+        );
+        draft.splice(finalStarted + 1, 0, released);
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "RUN_STARTED");
+        draft.splice(index + 1, 0, structuredClone(draft[index]));
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "PRELIMINARY_PERSISTED");
+        const duplicate = structuredClone(draft[index]);
+        duplicate.preliminaryDigest = { algorithm: "SHA256", value: "b".repeat(64) };
+        draft.splice(index + 1, 0, duplicate);
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "FINDING_VERIFICATION_PERSISTED");
+        const duplicate = structuredClone(draft[index]);
+        duplicate.verificationDigest = { algorithm: "SHA256", value: "c".repeat(64) };
+        draft.splice(index + 1, 0, duplicate);
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex(
+          (event) => event.type === "CALL_FAILED" && event.stage === "FINAL",
+        );
+        draft.splice(index, 0, structuredClone(draft[index]));
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "RUN_FAILED");
+        draft.splice(index, 0, structuredClone(draft[index]));
+      },
+      (draft: typeof events) => {
+        const [persisted] = draft.splice(
+          draft.findIndex((event) => event.type === "PRELIMINARY_PERSISTED"),
+          1,
+        );
+        const started = draft.findIndex(
+          (event) => event.type === "CALL_STARTED" && event.stage === "PRELIMINARY",
+        );
+        draft.splice(started + 1, 0, persisted);
+      },
+      (draft: typeof events) => {
+        const [persisted] = draft.splice(
+          draft.findIndex((event) => event.type === "FINDING_VERIFICATION_PERSISTED"),
+          1,
+        );
+        const preliminary = draft.findIndex((event) => event.type === "PRELIMINARY_PERSISTED");
+        draft.splice(preliminary, 0, persisted);
+      },
+      (draft: typeof events) => {
+        const [failed] = draft.splice(
+          draft.findIndex((event) => event.type === "CALL_FAILED" && event.stage === "FINAL"),
+          1,
+        );
+        const finalStarted = draft.findIndex(
+          (event) => event.type === "CALL_STARTED" && event.stage === "FINAL",
+        );
+        draft.splice(finalStarted, 0, failed);
+      },
+      // Duplicate global call identity.
+      (draft: typeof events) => {
+        const index = draft.findIndex(
+          (event) => event.type === "CALL_STARTED" && event.stage === "FINAL",
+        );
+        draft.splice(index + 1, 0, structuredClone(draft[index]));
+      },
+      // Outcome bound to an existing attempt but wrong stage.
+      (draft: typeof events) => {
+        const index = draft.findIndex(
+          (event) => event.type === "CALL_SUCCEEDED" && event.stage === "PRELIMINARY",
+        );
+        const wrongStage = structuredClone(draft[index]);
+        wrongStage.stage = "FINAL";
+        draft.splice(index + 1, 0, wrongStage);
+      },
+      // Orphan retry intent after terminal failure.
+      (draft: typeof events) => {
+        const index = draft.findIndex(
+          (event) => event.type === "CALL_FAILED" && event.stage === "FINAL",
+        );
+        draft.splice(index + 1, 0, {
+          schemaVersion: 1,
+          at: draft[index].at,
+          type: "PROVIDER_RETRY_REQUESTED",
+          stage: "FINAL",
+          failedAttemptNumber: draft[index].attemptNumber,
+          retryAttemptNumber: draft[index].attemptNumber + 1,
+          retriesUsed: 1,
+          maxRetries: 1,
+          delayMs: 1,
+          chargedFailedTokens: 0,
+          chargedFailedCostUsd: 0,
+        });
+      },
+      // Only FINAL reservation bookkeeping is allowed after terminal FINAL failure.
+      (draft: typeof events) => {
+        const index = draft.findIndex(
+          (event) => event.type === "CALL_FAILED" && event.stage === "FINAL",
+        );
+        draft.splice(index + 1, 0, {
+          schemaVersion: 1,
+          at: draft[index].at,
+          type: "BUDGET_EXHAUSTED",
+          budget: "COST",
+          stage: "PRELIMINARY",
+          phase: "RESERVATION",
+          spentUsd: 0.1,
+          additionalUsd: 0.1,
+        });
+      },
+    ];
+    const grammarCorruptionStart = corruptions.length - 4;
+    const grammarRefusalCodes = [
+      "CALL_START_SEQUENCE_INVALID",
+      "CALL_OUTCOME_SEQUENCE_INVALID",
+      "PROVIDER_RETRY_SEQUENCE_INVALID",
+      "POST_TERMINAL_EVENT_INVALID",
+    ];
+    for (const [corruptionIndex, corrupt] of corruptions.entries()) {
+      const corrupted = structuredClone(events);
+      corrupt(corrupted);
+      corrupted.forEach((event) => {
+        RunRecordEventV1Schema.parse(event);
+      });
+      await writeFile(
+        runRecordPath,
+        `${corrupted.map((event) => JSON.stringify(event)).join("\n")}\n`,
+      );
+      errors.length = 0;
+      const constructionsBeforeResume = providerConstructions;
+      assert.equal(
+        await runCliV1(
+          ["resume-final", "--packet", f.packet, "--repo", f.repo, "--config", f.configPath],
+          { stdout: () => undefined, stderr: (message) => errors.push(message) },
+          {
+            readOpenRouterApiKey: () => "test",
+            createProvider: () => {
+              providerConstructions += 1;
+              return provider;
+            },
+          },
+        ),
+        1,
+      );
+      assert.match(
+        errors.join("\n"),
+        /not eligible|persisted preliminary or author-stage identity is invalid/i,
+      );
+      assert.equal(providerCalls, callsBeforeResume);
+      if (corruptionIndex >= grammarCorruptionStart) {
+        assert.equal(providerConstructions, constructionsBeforeResume);
+        assert.match(
+          errors.join("\n"),
+          new RegExp(grammarRefusalCodes[corruptionIndex - grammarCorruptionStart] as string),
+        );
+      }
+    }
+  } finally {
+    await rm(f.repo, { recursive: true, force: true });
+  }
+});
+
+test("historical metadata schema 2 remains readable through inspect, preflight, run and resume", async () => {
+  const f = await fixture();
+  let finalCalls = 0;
+  const provider: ReviewProviderV1 = {
+    auditRequest: () => ({
+      providerPolicyVersion: "historical-fixture-v1",
+      wireBodyDigest: digest,
+      wireBodyBytes: 10,
+      credentialFreeWireRequestDigest: digest,
+    }),
+    complete: async (providerRequest) => {
+      const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+      const common = {
+        snapshotDigest: brief.snapshotManifest.snapshotDigest,
+        briefDigest: brief.briefDigest,
+        summary: "Historical packet review.",
+        ruleAssessments: [
+          {
+            ruleId: "rule_names",
+            status: "ASSESSED",
+            conflictingRuleIds: [],
+            explanation: "Applied selected naming rule.",
+          },
+        ],
+      };
+      if (providerRequest.stage === "FINAL") {
+        finalCalls += 1;
+        if (finalCalls === 1) {
+          throw new ProviderCallError("PROVIDER_ERROR", "Rate limited.", {
+            diagnostic: {
+              httpStatus: 429,
+              providerErrorCode: "429",
+              providerMessage: "Rate limited",
+              errorType: "rate_limit_exceeded",
+              providerCode: null,
+              providerName: "test",
+              model: providerRequest.models[0] ?? null,
+              responseId: null,
+              retryAfter: "45",
+            },
+          });
+        }
+      }
+      const value =
+        providerRequest.stage === "PRELIMINARY"
+          ? {
+              ...common,
+              schemaVersion: 2,
+              stage: "PRELIMINARY",
+              inspectedPaths: ["code.ts"],
+              canonicalInputCoverage: [
+                {
+                  canonicalInputId: "input_standard",
+                  status: "ASSESSED",
+                  explanation: "Applied naming rule.",
+                },
+              ],
+              findings: [],
+              evidenceGaps: [],
+              limitations: [],
+              nextAction: "REQUEST_AUTHOR_PACKET",
+            }
+          : {
+              ...common,
+              schemaVersion: 3,
+              stage: "FINAL",
+              mode: "STANDARDS",
+              findings: [],
+              withdrawnPreliminaryFindings: [],
+              preliminaryConcernDispositions: [],
+              authorClaims: [],
+              authorVerificationClaims: [],
+              limitations: [],
+              verdict: "READY",
+              nextActions: { blockers: [], fastFollows: [] },
+            };
+      return {
+        value,
+        rawContent: JSON.stringify(value),
+        responseId: "historical-fixture",
+        model: providerRequest.models[0] as string,
+        provider: "test/fp4",
+        usage: { promptTokens: 100, completionTokens: 100, totalTokens: 200, cost: 0.00001 },
+      };
+    },
+  };
+
+  try {
+    const request = JSON.parse(await readFile(f.requestPath, "utf8"));
+    const config = JSON.parse(await readFile(f.configPath, "utf8"));
+    const captured = await captureGitSnapshotV1(request, {
+      excludedFileSystemPaths: [f.requestPath, f.configPath, f.packet],
+    });
+    await writeSnapshotPacketV1(f.packet, captured, request);
+    const metadataPath = join(f.packet, "packet-metadata.json");
+    const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
+    await writeFile(
+      metadataPath,
+      `${JSON.stringify({
+        schemaVersion: 2,
+        reviewConfigRef: metadata.reviewConfigRef,
+        authorDigest: metadata.authorDigest,
+      })}\n`,
+    );
+
+    assert.equal((await inspectSnapshotPacket(f.packet)).authorPacket?.schemaVersion, 2);
+    await preflightReview(f.packet, config, f.repo);
+    await assert.rejects(
+      () => runTwoStageReview(f.packet, config, provider, f.repo),
+      /Rate limited/,
+    );
+    const runRecordPath = join(f.packet, "review", "run-record.jsonl");
+    const originalRecord = await readFile(runRecordPath, "utf8");
+    const wrongLifecycle = originalRecord
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const authorIndex = wrongLifecycle.findIndex((event) => event.type === "AUTHOR_DELIVERED");
+    const authorEvent = wrongLifecycle[authorIndex];
+    assert.ok(authorEvent);
+    wrongLifecycle[authorIndex] = RunRecordEventV1Schema.parse({
+      schemaVersion: 1,
+      at: authorEvent.at,
+      type: "AUTHOR_CONTEXT_RELEASED",
+      authorContext: {
+        schemaVersion: 1,
+        status: "PROVIDED",
+        digest: metadata.authorDigest,
+      },
+    });
+    await writeFile(
+      runRecordPath,
+      `${wrongLifecycle.map((event) => JSON.stringify(event)).join("\n")}\n`,
+    );
+    await assert.rejects(
+      () => resumeFinalReview(f.packet, config, provider, f.repo),
+      /author-stage identity is invalid/i,
+    );
+    assert.equal(finalCalls, 1);
+    await writeFile(runRecordPath, originalRecord);
+    const resumed = await resumeFinalReview(f.packet, config, provider, f.repo);
+    assert.equal(resumed.report.verdict, "READY");
+    assert.equal(finalCalls, 2);
   } finally {
     await rm(f.repo, { recursive: true, force: true });
   }

@@ -4,6 +4,8 @@ import { prefixedIdentifier } from "./primitives.js";
 import { PersistedCanonicalInputsV1Schema } from "./review-request.js";
 import { DigestV1Schema, SnapshotManifestV1Schema } from "./snapshot-manifest.js";
 import {
+  type AuthorContextBindingV1,
+  AuthorContextBindingV1Schema,
   type ReviewCanonicalInputs,
   StandardsCanonicalInputsV2Schema,
 } from "./standards-review.js";
@@ -45,6 +47,7 @@ export interface InspectionReportInputV1 {
   manifest: z.infer<typeof SnapshotManifestV1Schema>;
   canonicalInputs: z.infer<typeof PersistedCanonicalInputsV1Schema>;
   authorPacket?: unknown;
+  authorContext?: AuthorContextBindingV1;
   reviewConfigRef: string;
   blobCount: number;
   guidanceGraph?: { nodes: readonly unknown[] };
@@ -84,9 +87,14 @@ export const StandardsInspectionReportV2Schema = InspectionReportV1Schema.extend
   schemaVersion: z.literal(2),
   canonicalInputs: StandardsCanonicalInputsV2Schema,
 });
+export const StandardsInspectionReportV3Schema = StandardsInspectionReportV2Schema.extend({
+  schemaVersion: z.literal(3),
+  authorContext: AuthorContextBindingV1Schema,
+});
 export type InspectionReport =
   | InspectionReportV1
-  | z.infer<typeof StandardsInspectionReportV2Schema>;
+  | z.infer<typeof StandardsInspectionReportV2Schema>
+  | z.infer<typeof StandardsInspectionReportV3Schema>;
 export function buildInspectionReport(
   input: Omit<InspectionReportInputV1, "canonicalInputs"> & {
     canonicalInputs: ReviewCanonicalInputs;
@@ -94,6 +102,17 @@ export function buildInspectionReport(
 ): InspectionReport {
   if (!("standards" in input.canonicalInputs))
     return buildInspectionReportV1({ ...input, canonicalInputs: input.canonicalInputs });
+  if (input.authorContext)
+    return StandardsInspectionReportV3Schema.parse({
+      schemaVersion: 3,
+      reviewConfigRef: input.reviewConfigRef,
+      snapshotManifest: input.manifest,
+      canonicalInputs: input.canonicalInputs,
+      authorPacketPresent: input.authorPacket !== undefined,
+      authorContext: input.authorContext,
+      blobCount: input.blobCount,
+      reviewerGuidance: inspectedReviewerGuidance(input),
+    });
   return StandardsInspectionReportV2Schema.parse({
     schemaVersion: 2,
     reviewConfigRef: input.reviewConfigRef,

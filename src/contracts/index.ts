@@ -108,9 +108,11 @@ export {
   INSPECTION_REPORT_V1_JSON_SCHEMA,
   InspectionReportV1Schema,
   StandardsInspectionReportV2Schema,
+  StandardsInspectionReportV3Schema,
 } from "./inspection-report.js";
 export {
   jsonDocument,
+  jsonDocumentDigestV1,
   sha256BytesDigestV1,
   sha256BytesHex,
 } from "./json-document.js";
@@ -214,18 +216,30 @@ export type {
 export { RUN_RECORD_EVENT_V1_JSON_SCHEMA, RunRecordEventV1Schema } from "./run-record.js";
 export type {
   ResolvedSimpleReviewSettingsV1,
+  ResolvedSimpleReviewSettingsV2,
   ResolveSimpleReviewSettingsInputV1,
+  ResolveSimpleReviewSettingsInputV2,
   SimpleReviewSettingsV1,
+  SimpleReviewSettingsV2,
 } from "./simple-review-settings.js";
 export {
   RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+  RESOLVED_SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA,
   ResolvedSimpleReviewSettingsV1Schema,
+  ResolvedSimpleReviewSettingsV2Schema,
   resolveSimpleReviewSettingsV1,
+  resolveSimpleReviewSettingsV2,
   SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+  SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA,
   SimpleReviewSettingsOverridesV1Schema,
+  SimpleReviewSettingsOverridesV2Schema,
+  SimpleReviewSettingsProvenanceV1Schema,
+  SimpleReviewSettingsProvenanceV2Schema,
   SimpleReviewSettingsV1Schema,
+  SimpleReviewSettingsV2Schema,
   SupportedReviewModelV1Schema,
   supportedReviewModelsV1,
+  translateSimpleReviewSettingsV1ToV2,
 } from "./simple-review-settings.js";
 export type {
   DigestV1,

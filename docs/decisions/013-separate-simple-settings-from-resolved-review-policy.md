@@ -31,12 +31,26 @@ settings contain:
 - selected supported model profile;
 - maximum cost per review;
 - whether author explanation is required, defaulting to `true`; and
-- whether repository steering discovery is enabled, defaulting to `true`.
+- whether BASE-owned reviewer rules are used, defaulting to `true`.
 
 `init` stores these selections in Git-local state outside the reviewed tree.
 Explicit CLI values override local selections, which override versioned engine
 defaults. Credentials remain environment-only. Repository content cannot alter
 paid-call policy.
+
+Simple settings and their resolved form use version 2 for the truthful
+`useReviewerRules` name and matching provenance. The reader retains a strict,
+read-only version-1 decoder and explicitly translates
+`discoverRepositorySteering` to `useReviewerRules` in memory. `init` writes only
+version 2; reading historical settings never silently rewrites local state. The
+deprecated public v1 override schema, resolver input, and resolver remain strict
+compatibility adapters: they accept and return old field name while translating
+through v2 policy resolution internally.
+
+Request-file review resolves target repository from validated request before
+reading local settings. Target repository's `useReviewerRules` value controls
+guidance capture regardless of caller working directory; only explicit
+`--reviewer-rules` or `--no-reviewer-rules` overrides it.
 
 The engine owns safe defaults for routing, privacy posture, token allocation,
 evidence limits, output limits, pacing, timeouts, retries, and repairs. Each
@@ -73,10 +87,20 @@ formal `limitation`: author absence alone neither blocks `READY` nor forces
 `UNABLE_TO_VERIFY`. Findings, coverage, unresolved preliminary concerns, and
 formal limitations continue to determine the verdict.
 
-Resume requires matching request, packet, prompt, result, and run-record
-versions plus the same author status and digest. Existing request versions keep
-their current behavior. Old and new lifecycle artifacts cannot be mixed or
-silently upgraded. Detailed evidence and lifecycle rationale are retained in
+Friendly requests use version 3 and packet metadata versions 5/6. Resume
+requires matching request, packet, prompt, result, and run-record versions plus
+same author status and digest. Resumable ledger must contain exactly one run
+start, preliminary persistence, finding-verification persistence, and author
+transition in lifecycle order, plus one terminal failure for last final attempt.
+Call attempt identities are global and contiguous; every start has exactly one
+later matching outcome before another start. A failed attempt can lead to its
+exact next start only through one matching retry record. After terminal final
+failure, only final reservation bookkeeping and one optional trailing run
+failure are valid. Missing run failure remains eligible as explicit
+crash-recovery policy because durable call failure is already recorded. Existing
+request versions keep their current behavior. Old and new lifecycle artifacts
+cannot be mixed or silently upgraded.
+Detailed evidence and lifecycle rationale are retained in
 the [steering and author-absence research](../research/2026-09-11-steering-and-author-absence-contract.md).
 
 ## Alternatives considered

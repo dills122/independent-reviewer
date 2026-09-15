@@ -11,8 +11,8 @@ import {
   terminalText,
 } from "./cli/review-output.js";
 import {
-  readLocalSimpleReviewSettingsV1,
-  saveLocalSimpleReviewSettingsV1,
+  readLocalSimpleReviewSettingsV2,
+  saveLocalSimpleReviewSettingsV2,
 } from "./cli/simple-settings.js";
 import {
   assembleStandardsRequest,
@@ -23,10 +23,10 @@ import {
 } from "./cli/standards-input.js";
 import {
   type FinalReviewReportV1,
-  type ResolvedSimpleReviewSettingsV1,
+  type ResolvedSimpleReviewSettingsV2,
   type ReviewRunConfigV3,
   ReviewRunConfigV3Schema,
-  resolveSimpleReviewSettingsV1,
+  resolveSimpleReviewSettingsV2,
 } from "./contracts/index.js";
 import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
 import { jsonDocument } from "./contracts/json-document.js";
@@ -40,7 +40,10 @@ import {
 import { readStrictJsonFileV1 } from "./contracts/strict-json.js";
 import { captureRepositoryGuidanceV1 } from "./guidance/repository-guidance.js";
 import { withReviewProgress } from "./orchestrator/progress.js";
-import { evaluateResumeShapeV1 } from "./orchestrator/resume-eligibility.js";
+import {
+  describeResumeRefusalsV1,
+  evaluateResumeShapeV1,
+} from "./orchestrator/resume-eligibility.js";
 import { readRunRecordEventsV1 as readDurableRunRecordEventsV1 } from "./orchestrator/run-record.js";
 import {
   preflightReview,
@@ -108,11 +111,18 @@ interface PreparedPacketV1 {
   repositoryRoot: string;
   /** Reviewer-rules sources frozen into the packet; undefined when capture did not run. */
   guidanceSourceCount?: number;
+  authorContextStatus?: "PROVIDED" | "DECLINED";
 }
 
 interface PacketPreparationPolicyV1 {
   expectedConfigId?: string;
   suppliedConfig?: ReviewRunConfigV3;
+  requireAuthorExplanation?: boolean;
+  useReviewerRules?: boolean;
+  loadedRequest?: {
+    path: string;
+    request: ReviewRequest;
+  };
 }
 
 interface CommandOptionSpecV1 {
@@ -136,6 +146,25 @@ function defineCommandSpecsV1<const T extends Record<string, CommandSpecV1>>(spe
   return specs;
 }
 
+const FRIENDLY_BEHAVIOR_OPTIONS_V1 = {
+  "author-required": {
+    type: "boolean",
+    description: "Require an author explanation (default).",
+  },
+  "no-author": {
+    type: "boolean",
+    description: "Explicitly decline an author explanation.",
+  },
+  "reviewer-rules": {
+    type: "boolean",
+    description: "Use BASE-owned repository reviewer guidance (default).",
+  },
+  "no-reviewer-rules": {
+    type: "boolean",
+    description: "Do not use BASE-owned repository reviewer guidance.",
+  },
+} as const;
+
 const COMMAND_SPECS_V1 = defineCommandSpecsV1({
   init: {
     summary: "Save local review settings without calling a provider.",
@@ -149,6 +178,7 @@ const COMMAND_SPECS_V1 = defineCommandSpecsV1({
         description: "Selected standards profile JSON.",
       },
       author: { type: "string", description: "Author overview or packet file." },
+      ...FRIENDLY_BEHAVIOR_OPTIONS_V1,
     },
   },
   prepare: {
@@ -174,6 +204,7 @@ const COMMAND_SPECS_V1 = defineCommandSpecsV1({
       repo: { type: "string", description: "Repository (default current directory)." },
       standards: { type: "string", description: "Selected standards profile JSON." },
       author: { type: "string", description: "Author overview Markdown or author packet JSON." },
+      ...FRIENDLY_BEHAVIOR_OPTIONS_V1,
       "dry-run": {
         type: "boolean",
         description: "Validate scope and budgets without provider calls.",
@@ -205,6 +236,7 @@ const COMMAND_SPECS_V1 = defineCommandSpecsV1({
       repo: { type: "string", description: "Repository (default current directory)." },
       model: { type: "string", description: "Override supported review model profile." },
       "max-cost": { type: "string", description: "Override maximum review cost." },
+      ...FRIENDLY_BEHAVIOR_OPTIONS_V1,
       resolved: { type: "boolean", description: "Include complete resolved runtime policy." },
     },
   },
@@ -244,6 +276,10 @@ interface SimpleSettingsCommandOptionsV1 {
   repo?: string;
   model?: string;
   maxCost?: string;
+  authorRequired?: boolean;
+  noAuthor?: boolean;
+  reviewerRules?: boolean;
+  noReviewerRules?: boolean;
 }
 
 interface ReviewConfigurationOptionsV1 extends SimpleSettingsCommandOptionsV1 {
@@ -274,6 +310,19 @@ function createCliProgramV1(
   let stdout = "";
   let stderr = "";
   const commands = Object.keys(COMMAND_SPECS_V1) as CommandNameV1[];
+  const hasRawOption = (name: string): boolean =>
+    args.some((value) => value === name || value.startsWith(`${name}=`));
+  const withNegatedFlags = <T extends object>(options: T): T => {
+    if (hasRawOption("--author") && hasRawOption("--no-author"))
+      throw new Error("Use either --author or --no-author, not both.");
+    if (hasRawOption("--reviewer-rules") && hasRawOption("--no-reviewer-rules"))
+      throw new Error("Use either --reviewer-rules or --no-reviewer-rules, not both.");
+    return {
+      ...options,
+      ...(args.includes("--no-author") ? { noAuthor: true } : {}),
+      ...(args.includes("--no-reviewer-rules") ? { noReviewerRules: true } : {}),
+    } as T;
+  };
   const output = {
     writeOut: (message: string) => {
       stdout += message;
@@ -346,7 +395,7 @@ function createCliProgramV1(
   const initCommand = addOptions(program.command("init"), COMMAND_SPECS_V1.init);
   initCommand.action(async () => {
     io.stdout(
-      `Saved review settings: ${await initializeReviewSettingsV1(initCommand.opts<InitCommandOptionsV1>())}`,
+      `Saved review settings: ${await initializeReviewSettingsV1(withNegatedFlags(initCommand.opts<InitCommandOptionsV1>()))}`,
     );
   });
 
@@ -362,7 +411,11 @@ function createCliProgramV1(
 
   const reviewCommand = addOptions(program.command("review"), COMMAND_SPECS_V1.review);
   reviewCommand.action(async () => {
-    result = await review(reviewCommand.opts<ReviewCommandOptionsV1>(), io, dependencies);
+    result = await review(
+      withNegatedFlags(reviewCommand.opts<ReviewCommandOptionsV1>()),
+      io,
+      dependencies,
+    );
   });
 
   const resumeCommand = addOptions(
@@ -384,7 +437,10 @@ function createCliProgramV1(
     .configureOutput(output);
   const configShowCommand = addOptions(configCommand.command("show"), COMMAND_SPECS_V1.config);
   configShowCommand.action(async () => {
-    await showSimpleReviewConfigV1(configShowCommand.opts<ConfigShowCommandOptionsV1>(), io);
+    await showSimpleReviewConfigV1(
+      withNegatedFlags(configShowCommand.opts<ConfigShowCommandOptionsV1>()),
+      io,
+    );
   });
 
   return {
@@ -436,24 +492,48 @@ function maxCostOptionV1(value: string | undefined): number | undefined {
   return parsed;
 }
 
+function friendlySettingsOverridesV1(options: SimpleSettingsCommandOptionsV1) {
+  if (options.authorRequired && options.noAuthor)
+    throw new Error("Use either --author-required or --no-author, not both.");
+  if (options.reviewerRules && options.noReviewerRules)
+    throw new Error("Use either --reviewer-rules or --no-reviewer-rules, not both.");
+  return {
+    ...(options.authorRequired ? { requireAuthorExplanation: true } : {}),
+    ...(options.noAuthor ? { requireAuthorExplanation: false } : {}),
+    ...(options.reviewerRules ? { useReviewerRules: true } : {}),
+    ...(options.noReviewerRules ? { useReviewerRules: false } : {}),
+  };
+}
+
 async function resolveSimpleSettingsForOptionsV1(
   options: SimpleSettingsCommandOptionsV1,
-): Promise<ResolvedSimpleReviewSettingsV1> {
-  const repository = await resolveRepositoryRootV1(options.repo ?? process.cwd());
+  resolvedRepository?: string,
+): Promise<ResolvedSimpleReviewSettingsV2> {
+  const repository =
+    resolvedRepository ?? (await resolveRepositoryRootV1(options.repo ?? process.cwd()));
   const maxCostUsd = maxCostOptionV1(options.maxCost);
-  return resolveSimpleReviewSettingsV1({
-    local: await readLocalSimpleReviewSettingsV1(repository),
+  return resolveSimpleReviewSettingsV2({
+    local: await readLocalSimpleReviewSettingsV2(repository),
     cli: {
       ...(options.model ? { model: options.model } : {}),
       ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+      ...friendlySettingsOverridesV1(options),
     },
   });
 }
 
 async function initializeReviewSettingsV1(options: InitCommandOptionsV1): Promise<string> {
-  const usesSimpleSettings = options.model !== undefined || options.maxCost !== undefined;
+  const usesSimpleSettings =
+    options.model !== undefined ||
+    options.maxCost !== undefined ||
+    options.authorRequired === true ||
+    options.noAuthor === true ||
+    options.reviewerRules === true ||
+    options.noReviewerRules === true;
   const usesAdvancedSettings =
-    options.config !== undefined || options.standards !== undefined || options.author !== undefined;
+    options.config !== undefined ||
+    options.standards !== undefined ||
+    typeof options.author === "string";
   if (usesSimpleSettings && usesAdvancedSettings) {
     throw new Error(
       "Use either advanced config/standards/author settings or simple model/cost settings, not both.",
@@ -463,13 +543,14 @@ async function initializeReviewSettingsV1(options: InitCommandOptionsV1): Promis
 
   const repository = await resolveRepositoryRootV1(options.repo ?? process.cwd());
   const maxCostUsd = maxCostOptionV1(options.maxCost);
-  const resolved = resolveSimpleReviewSettingsV1({
+  const resolved = resolveSimpleReviewSettingsV2({
     cli: {
       ...(options.model ? { model: options.model } : {}),
       ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
+      ...friendlySettingsOverridesV1(options),
     },
   });
-  return saveLocalSimpleReviewSettingsV1(repository, resolved.settings);
+  return saveLocalSimpleReviewSettingsV2(repository, resolved.settings);
 }
 
 async function showSimpleReviewConfigV1(
@@ -492,6 +573,7 @@ async function showSimpleReviewConfigV1(
 /** The run configuration for this invocation, from `--config` or from simple settings. */
 async function resolveReviewConfigV1(
   options: ReviewConfigurationOptionsV1,
+  resolvedRepository?: string,
 ): Promise<ReviewRunConfigV3> {
   const configPath = options.config;
   const usesSimpleFlags = options.model !== undefined || options.maxCost !== undefined;
@@ -506,7 +588,7 @@ async function resolveReviewConfigV1(
       }),
     );
   }
-  return (await resolveSimpleSettingsForOptionsV1(options)).reviewRunConfig;
+  return (await resolveSimpleSettingsForOptionsV1(options, resolvedRepository)).reviewRunConfig;
 }
 
 /** The human-readable view of the same validated report the JSON view emits. */
@@ -535,7 +617,11 @@ function formatInspection(report: InspectionReport): string {
   lines.push(`Omissions: ${report.snapshotManifest.omissions.length}`);
   lines.push(`Canonical inputs: ${canonicalInputList(report.canonicalInputs).length}`);
   lines.push(`Captured blobs: ${report.blobCount}`);
-  lines.push(`Author packet: ${report.authorPacketPresent ? "stored separately" : "not provided"}`);
+  lines.push(
+    "authorContext" in report
+      ? `Author context: ${report.authorContext.status === "DECLINED" ? "explicitly declined" : "provided; packet stored separately"}`
+      : `Author packet: ${report.authorPacketPresent ? "stored separately" : "not provided"}`,
+  );
   lines.push(`Reviewer guidance: ${reviewerGuidanceSummary(report.reviewerGuidance)}`);
   return lines.join("\n");
 }
@@ -553,9 +639,47 @@ async function resolveLiveReviewContextV1(
 }
 
 /** The repository's own preference for letting its committed rules steer a review. */
-async function repositoryDiscoversSteeringV1(repositoryPath: string): Promise<boolean> {
-  const local = await readLocalSimpleReviewSettingsV1(repositoryPath);
-  return local?.discoverRepositorySteering ?? true;
+async function repositoryUsesReviewerRulesV1(repositoryPath: string): Promise<boolean> {
+  const local = await readLocalSimpleReviewSettingsV2(repositoryPath);
+  return local?.useReviewerRules ?? true;
+}
+
+async function friendlyReviewBehaviorV1(options: SimpleSettingsCommandOptionsV1) {
+  const repository = await resolveRepositoryRootV1(options.repo ?? process.cwd());
+  const local = await readLocalSimpleReviewSettingsV2(repository);
+  const cli = friendlySettingsOverridesV1(options);
+  return {
+    requireAuthorExplanation:
+      cli.requireAuthorExplanation ?? local?.requireAuthorExplanation ?? true,
+    useReviewerRules: cli.useReviewerRules ?? local?.useReviewerRules ?? true,
+  };
+}
+
+/** Request files own author state; only an explicit reviewer-rules flag may override target state. */
+function requestReviewerRulesOverrideV1(
+  options: SimpleSettingsCommandOptionsV1,
+): Pick<PacketPreparationPolicyV1, "useReviewerRules"> {
+  const override = friendlySettingsOverridesV1(options).useReviewerRules;
+  return override === undefined ? {} : { useReviewerRules: override };
+}
+
+async function loadReviewRequestV1(path: string): Promise<{
+  path: string;
+  request: ReviewRequest;
+  repositoryRoot: string;
+}> {
+  const requestPath = resolve(path);
+  const request = ReviewRequestSchema.parse(
+    await readStrictJsonFileV1(requestPath, {
+      maxBytes: MAX_EXTERNAL_JSON_BYTES_V1,
+      source: "review request",
+    }),
+  );
+  return {
+    path: requestPath,
+    request,
+    repositoryRoot: await resolveRepositoryRootV1(request.repository.path),
+  };
 }
 
 async function preparePacket(
@@ -563,14 +687,31 @@ async function preparePacket(
   policy: PacketPreparationPolicyV1 = {},
 ): Promise<PreparedPacketV1> {
   const requestOption = options.request;
-  if (requestOption && (options.standards || options.author || options.newFlow))
+  if (
+    requestOption &&
+    (options.standards ||
+      options.author ||
+      options.newFlow ||
+      options.noAuthor ||
+      options.requireAuthorExplanation !== undefined)
+  )
     throw new Error("Use either --request or standards/author inputs, not both.");
   const assembled = requestOption
     ? undefined
-    : await assembleStandardsRequest(options, policy.suppliedConfig);
-  const requestPath = requestOption ? resolve(requestOption) : undefined;
+    : await assembleStandardsRequest(
+        {
+          ...options,
+          ...(policy.requireAuthorExplanation !== undefined
+            ? { requireAuthorExplanation: policy.requireAuthorExplanation }
+            : {}),
+        },
+        policy.suppliedConfig,
+      );
+  const requestPath =
+    policy.loadedRequest?.path ?? (requestOption ? resolve(requestOption) : undefined);
   let request: ReviewRequest;
   if (assembled) request = assembled.request;
+  else if (policy.loadedRequest) request = policy.loadedRequest.request;
   else {
     if (!requestPath) throw new Error("Review request path is required.");
     request = ReviewRequestSchema.parse(
@@ -621,13 +762,14 @@ async function preparePacket(
     requestedOutput !== undefined
       ? packetRoot
       : join(defaultPacketRoot, captured.manifest.snapshotId);
-  // Reviewer rules are a property of the repository, not of how this run was configured, so every
-  // packet-producing path resolves the same preference here rather than each caller deciding. An
-  // earlier parameter defaulted to off, which silently dropped guidance from `prepare` and from
-  // `review --config` (#105). Guidance is standards-only downstream, so a requirements-mode request
-  // never captures it: a graph in a v1 packet would fail brief construction instead.
+  // Every packet-producing path resolves the CLI or repository preference here rather than each
+  // caller deciding. An earlier parameter defaulted to off, which silently dropped guidance from
+  // `prepare` and `review --config` (#105). Guidance is standards-only downstream, so a
+  // requirements-mode request never captures it: a graph in a v1 packet would fail brief
+  // construction instead.
   const guidance =
-    request.schemaVersion === 2 && (await repositoryDiscoversSteeringV1(repositoryRoot))
+    request.schemaVersion !== 1 &&
+    (policy.useReviewerRules ?? (await repositoryUsesReviewerRulesV1(repositoryRoot)))
       ? await captureRepositoryGuidanceV1(repositoryRoot, captured.manifest)
       : undefined;
   await writeSnapshotPacketV1(packetPath, captured, request, guidance ? { guidance } : {});
@@ -636,7 +778,12 @@ async function preparePacket(
     packetPath,
     captured,
     repositoryRoot,
-    standards: request.schemaVersion === 2,
+    standards: request.schemaVersion !== 1,
+    ...(request.schemaVersion === 3
+      ? { authorContextStatus: request.authorContext.status }
+      : request.authorPacket
+        ? { authorContextStatus: "PROVIDED" as const }
+        : {}),
     ...(assembled ? { claim: assembled.claim } : {}),
   };
 }
@@ -759,21 +906,33 @@ async function review(
   const explicitAdvancedConfig = options.config !== undefined;
   const explicitSimpleSettings = options.model !== undefined || options.maxCost !== undefined;
   let effectiveOptions = options;
+  const loadedRequest = options.request ? await loadReviewRequestV1(options.request) : undefined;
   if (!options.request) {
     effectiveOptions = { ...options, ...(await loadLocalSettings(options)) };
+    if (options.noAuthor) {
+      const { author: _savedAuthor, ...withoutSavedAuthor } = effectiveOptions;
+      effectiveOptions = withoutSavedAuthor;
+    }
     if (explicitSimpleSettings && !explicitAdvancedConfig) {
       const { config: _localConfig, ...withoutLocalConfig } = effectiveOptions;
       effectiveOptions = withoutLocalConfig;
     }
   }
+  const behavior = loadedRequest
+    ? requestReviewerRulesOverrideV1(effectiveOptions)
+    : await friendlyReviewBehaviorV1(effectiveOptions);
   if (effectiveOptions.dryRun) {
-    const config = await resolveReviewConfigV1(effectiveOptions);
+    const config = await resolveReviewConfigV1(effectiveOptions, loadedRequest?.repositoryRoot);
     const temporary = await mkdtemp(join(tmpdir(), "independent-reviewer-preflight-"));
     try {
       const dryOptions = { ...effectiveOptions, output: join(temporary, "packet") };
       const prepared = await preparePacket(dryOptions, {
         expectedConfigId: config.configId,
         suppliedConfig: config,
+        ...(loadedRequest
+          ? { loadedRequest: { path: loadedRequest.path, request: loadedRequest.request } }
+          : {}),
+        ...behavior,
       });
       const admission = await preflightReview(prepared.packetPath, config, prepared.repositoryRoot);
       io.stdout(
@@ -799,12 +958,14 @@ async function review(
           `Reviewer guidance: ${admission.guidanceAdmission.contentBytes} content bytes (${admission.guidanceAdmission.status}).`,
         );
       }
+      if (prepared.authorContextStatus === "DECLINED")
+        io.stdout("Author explanation: explicitly declined; no provider calls were made.");
       return 0;
     } finally {
       await rm(temporary, { recursive: true, force: true });
     }
   }
-  const config = await resolveReviewConfigV1(effectiveOptions);
+  const config = await resolveReviewConfigV1(effectiveOptions, loadedRequest?.repositoryRoot);
   const apiKey = dependencies.readOpenRouterApiKey();
   if (!apiKey || apiKey.trim().length === 0) {
     throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
@@ -812,6 +973,10 @@ async function review(
   const prepared = await preparePacket(effectiveOptions, {
     expectedConfigId: config.configId,
     suppliedConfig: config,
+    ...(loadedRequest
+      ? { loadedRequest: { path: loadedRequest.path, request: loadedRequest.request } }
+      : {}),
+    ...behavior,
   });
   // Construct provider only after every caller-controlled JSON document has passed strict parsing.
   const provider = dependencies.createProvider(apiKey, config);
@@ -821,6 +986,10 @@ async function review(
     await preflightReview(prepared.packetPath, config, prepared.repositoryRoot);
     await prepared.claim();
   }
+  if (prepared.authorContextStatus === "DECLINED")
+    io.stderr(
+      "Warning: author explanation explicitly declined. Review will spend without author claims or verification context.",
+    );
   const progress = createProgressOutput(
     io.stderr,
     !prepared.standards || effectiveOptions.quiet === true,
@@ -891,10 +1060,15 @@ async function resumeFinal(
   io: CliIoV1,
   dependencies: CliDependenciesV1,
 ): Promise<number> {
+  const packetPath = resolve(options.packet);
+  const eligibility = evaluateResumeShapeV1(
+    await readRunRecordEventsV1(join(packetPath, "review", "run-record.jsonl")),
+  );
+  if (!eligibility.eligible) throw new Error(describeResumeRefusalsV1(eligibility.refusals));
   const config = await resolveReviewConfigV1(options);
   const { provider } = await resolveLiveReviewContextV1(config, dependencies);
   const repositoryPath = resolve(options.repo ?? process.cwd());
-  const result = await resumeFinalReview(resolve(options.packet), config, provider, repositoryPath);
+  const result = await resumeFinalReview(packetPath, config, provider, repositoryPath);
   io.stdout(`Verdict: ${reviewVerdictLabel(result.report)}`);
   io.stdout(`Report: ${result.markdownPath}`);
   return reviewOutcomeExitCodeV1(result.report.verdict);

@@ -26,7 +26,9 @@ export interface ResumeShapeV1 {
   preliminaryPersisted: RunRecordEventOfTypeV1<"PRELIMINARY_PERSISTED">;
   findingVerificationPersisted: RunRecordEventOfTypeV1<"FINDING_VERIFICATION_PERSISTED">;
   findingVerificationSucceededCalls: RunRecordEventOfTypeV1<"CALL_SUCCEEDED">[];
-  authorDelivered: RunRecordEventOfTypeV1<"AUTHOR_DELIVERED">;
+  authorDelivered:
+    | RunRecordEventOfTypeV1<"AUTHOR_DELIVERED">
+    | RunRecordEventOfTypeV1<"AUTHOR_CONTEXT_RELEASED">;
   finalStarted: RunRecordEventOfTypeV1<"CALL_STARTED">;
   finalFailed: RunRecordEventOfTypeV1<"CALL_FAILED">;
   acceptedAttemptNumber: number;
@@ -43,6 +45,7 @@ export type ResumeRefusalV1 =
   | "ALREADY_COMPLETED"
   | "ALREADY_RESUMED"
   | "NO_RUN_STARTED"
+  | "MULTIPLE_RUN_STARTED"
   | "NOT_TERMINALLY_FAILED"
   | "UNEXPECTED_SUCCEEDED_CALL_STAGE"
   | "NO_PRELIMINARY_CALL_SUCCEEDED"
@@ -52,10 +55,22 @@ export type ResumeRefusalV1 =
   | "PRELIMINARY_ARTIFACT_UNRECOGNIZED"
   | "NO_PRELIMINARY_CALL_STARTED"
   | "NO_PRELIMINARY_PERSISTED"
+  | "MULTIPLE_PRELIMINARY_PERSISTED"
   | "NO_FINDING_VERIFICATION_PERSISTED"
+  | "MULTIPLE_FINDING_VERIFICATION_PERSISTED"
+  | "PERSISTED_LIFECYCLE_OUT_OF_ORDER"
   | "NO_AUTHOR_DELIVERED"
+  | "MULTIPLE_AUTHOR_LIFECYCLE_TRANSITIONS"
+  | "AUTHOR_LIFECYCLE_OUT_OF_ORDER"
   | "NO_FINAL_CALL_STARTED"
   | "NO_FINAL_CALL_FAILED"
+  | "MULTIPLE_TERMINAL_FINAL_FAILURES"
+  | "MULTIPLE_RUN_FAILED"
+  | "RUN_FAILED_OUT_OF_ORDER"
+  | "CALL_START_SEQUENCE_INVALID"
+  | "CALL_OUTCOME_SEQUENCE_INVALID"
+  | "PROVIDER_RETRY_SEQUENCE_INVALID"
+  | "POST_TERMINAL_EVENT_INVALID"
   | "CALL_ATTEMPTED_AFTER_FINAL_FAILURE"
   | "PRELIMINARY_DID_NOT_START_FIRST"
   | "ATTEMPT_NUMBERS_NOT_MONOTONIC"
@@ -80,6 +95,152 @@ function eventsOfType<T extends RunRecordEventV1["type"]>(
   return events.filter((event): event is RunRecordEventOfTypeV1<T> => event.type === type);
 }
 
+const STAGE_ORDER_V1 = {
+  PRELIMINARY: 0,
+  FINDING_VERIFICATION: 1,
+  FINAL: 2,
+} as const;
+
+interface CallAttemptGrammarV1 {
+  callStartSequenceInvalid: boolean;
+  callOutcomeSequenceInvalid: boolean;
+  providerRetrySequenceInvalid: boolean;
+  postTerminalEventInvalid: boolean;
+}
+
+/**
+ * Validates complete runner-owned call history before resume-specific artifact selection.
+ *
+ * Attempts are global, contiguous identities. Each start owns one later outcome before next start.
+ * A failed attempt may lead to another start only through one exact retry transition. Final
+ * terminal failure permits cost-reservation bookkeeping and one optional trailing RUN_FAILED.
+ */
+function evaluateCallAttemptGrammarV1(events: readonly RunRecordEventV1[]): CallAttemptGrammarV1 {
+  const indexedStarts = events.flatMap((event, index) =>
+    event.type === "CALL_STARTED" ? [{ event, index }] : [],
+  );
+  const indexedOutcomes = events.flatMap((event, index) =>
+    event.type === "CALL_SUCCEEDED" || event.type === "CALL_FAILED" ? [{ event, index }] : [],
+  );
+  const indexedRetries = events.flatMap((event, index) =>
+    event.type === "PROVIDER_RETRY_REQUESTED" ? [{ event, index }] : [],
+  );
+
+  let callStartSequenceInvalid = false;
+  const startByAttempt = new Map<number, (typeof indexedStarts)[number]>();
+  let previousStage = -1;
+  for (const [position, started] of indexedStarts.entries()) {
+    const attempt = started.event.attemptNumber;
+    const stage = STAGE_ORDER_V1[started.event.stage];
+    if (
+      !Number.isSafeInteger(attempt) ||
+      attempt < 1 ||
+      attempt !== position + 1 ||
+      stage < previousStage ||
+      startByAttempt.has(attempt)
+    ) {
+      callStartSequenceInvalid = true;
+    }
+    previousStage = stage;
+    if (!startByAttempt.has(attempt)) startByAttempt.set(attempt, started);
+  }
+
+  let callOutcomeSequenceInvalid = false;
+  const outcomesByAttempt = new Map<number, (typeof indexedOutcomes)[number][]>();
+  for (const outcome of indexedOutcomes) {
+    const attempt = outcome.event.attemptNumber;
+    const outcomes = outcomesByAttempt.get(attempt) ?? [];
+    outcomes.push(outcome);
+    outcomesByAttempt.set(attempt, outcomes);
+    const started = startByAttempt.get(attempt);
+    if (
+      started === undefined ||
+      outcome.event.stage !== started.event.stage ||
+      outcome.index <= started.index
+    ) {
+      callOutcomeSequenceInvalid = true;
+    }
+  }
+  for (const [position, started] of indexedStarts.entries()) {
+    const outcomes = outcomesByAttempt.get(started.event.attemptNumber) ?? [];
+    const outcome = outcomes[0];
+    const nextStarted = indexedStarts[position + 1];
+    if (
+      outcomes.length !== 1 ||
+      outcome === undefined ||
+      (nextStarted !== undefined && outcome.index >= nextStarted.index)
+    ) {
+      callOutcomeSequenceInvalid = true;
+    }
+  }
+
+  let providerRetrySequenceInvalid = false;
+  const matchedRetryIndexes = new Set<number>();
+  for (const outcome of indexedOutcomes) {
+    if (outcome.event.type !== "CALL_FAILED") continue;
+    const nextStarted = indexedStarts.find((started) => started.index > outcome.index);
+    const retries = indexedRetries.filter(
+      (retry) => retry.event.failedAttemptNumber === outcome.event.attemptNumber,
+    );
+    if (nextStarted === undefined) {
+      if (retries.length !== 0) providerRetrySequenceInvalid = true;
+      continue;
+    }
+    if (retries.length !== 1) {
+      providerRetrySequenceInvalid = true;
+      continue;
+    }
+    const retry = retries[0];
+    if (
+      retry === undefined ||
+      retry.index <= outcome.index ||
+      retry.index >= nextStarted.index ||
+      retry.event.stage !== outcome.event.stage ||
+      nextStarted.event.stage !== outcome.event.stage ||
+      retry.event.retryAttemptNumber !== nextStarted.event.attemptNumber
+    ) {
+      providerRetrySequenceInvalid = true;
+      continue;
+    }
+    matchedRetryIndexes.add(retry.index);
+  }
+  if (matchedRetryIndexes.size !== indexedRetries.length) providerRetrySequenceInvalid = true;
+
+  let postTerminalEventInvalid = false;
+  const terminalFinalFailure = indexedOutcomes.findLast(
+    (outcome) => outcome.event.type === "CALL_FAILED" && outcome.event.stage === "FINAL",
+  );
+  if (terminalFinalFailure !== undefined) {
+    const tail = events.slice(terminalFinalFailure.index + 1);
+    let sawBudgetExhausted = false;
+    let sawRunFailed = false;
+    for (const [position, event] of tail.entries()) {
+      if (
+        event.type === "BUDGET_EXHAUSTED" &&
+        event.stage === "FINAL" &&
+        event.phase === "RESERVATION" &&
+        !sawBudgetExhausted &&
+        !sawRunFailed
+      ) {
+        sawBudgetExhausted = true;
+        continue;
+      }
+      if (event.type === "RUN_FAILED" && !sawRunFailed && position === tail.length - 1) {
+        sawRunFailed = true;
+        continue;
+      }
+      postTerminalEventInvalid = true;
+    }
+  }
+
+  return {
+    callStartSequenceInvalid,
+    callOutcomeSequenceInvalid,
+    providerRetrySequenceInvalid,
+    postTerminalEventInvalid,
+  };
+}
+
 /**
  * Evaluates every predicate rather than short-circuiting, so a refusal reports all of its causes.
  *
@@ -92,6 +253,7 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
   const refuse = (reason: ResumeRefusalV1, failed: boolean): void => {
     if (failed) refusals.push(reason);
   };
+  const callGrammar = evaluateCallAttemptGrammarV1(events);
 
   const startedCalls = eventsOfType(events, "CALL_STARTED");
   const succeededCalls = eventsOfType(events, "CALL_SUCCEEDED");
@@ -99,18 +261,37 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
   const findingVerificationSucceededCalls = succeededCalls.filter(
     (event) => event.stage === "FINDING_VERIFICATION",
   );
+  const findingVerificationSucceeded = findingVerificationSucceededCalls[0];
   const first = events[0];
   const last = events.at(-1);
+  const runStartedEvents = eventsOfType(events, "RUN_STARTED");
   const started = first?.type === "RUN_STARTED" ? first : undefined;
-  const runFailed = last?.type === "RUN_FAILED" ? last : undefined;
+  const runFailedEvents = eventsOfType(events, "RUN_FAILED");
+  const runFailed = runFailedEvents.length === 1 ? runFailedEvents[0] : undefined;
   const preliminaryStarted = startedCalls.find((event) => event.stage === "PRELIMINARY");
   const preliminarySucceeded = preliminarySucceededCalls.at(-1);
-  const preliminaryPersisted = eventsOfType(events, "PRELIMINARY_PERSISTED")[0];
-  const findingVerificationPersisted = eventsOfType(events, "FINDING_VERIFICATION_PERSISTED")[0];
-  const authorDelivered = eventsOfType(events, "AUTHOR_DELIVERED")[0];
+  const preliminaryPersistedEvents = eventsOfType(events, "PRELIMINARY_PERSISTED");
+  const preliminaryPersisted = preliminaryPersistedEvents[0];
+  const findingVerificationPersistedEvents = eventsOfType(events, "FINDING_VERIFICATION_PERSISTED");
+  const findingVerificationPersisted = findingVerificationPersistedEvents[0];
+  const authorLifecycleEvents = events.filter(
+    (
+      event,
+    ): event is
+      | RunRecordEventOfTypeV1<"AUTHOR_DELIVERED">
+      | RunRecordEventOfTypeV1<"AUTHOR_CONTEXT_RELEASED"> =>
+      event.type === "AUTHOR_DELIVERED" || event.type === "AUTHOR_CONTEXT_RELEASED",
+  );
+  const authorDelivered = authorLifecycleEvents[0];
+  const firstFinalStarted = startedCalls.find((event) => event.stage === "FINAL");
   const finalStarted = startedCalls.findLast((event) => event.stage === "FINAL");
   const failedCalls = eventsOfType(events, "CALL_FAILED");
-  const finalFailed = failedCalls.at(-1)?.stage === "FINAL" ? failedCalls.at(-1) : undefined;
+  const finalFailedCalls = failedCalls.filter((event) => event.stage === "FINAL");
+  const finalFailed = finalFailedCalls.at(-1);
+  const terminalFinalFailures =
+    finalFailed === undefined
+      ? []
+      : finalFailedCalls.filter((event) => event.attemptNumber === finalFailed.attemptNumber);
 
   refuse(
     "ALREADY_COMPLETED",
@@ -121,11 +302,15 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
     events.some((event) => event.type === "RUN_RESUMED"),
   );
   refuse("NO_RUN_STARTED", started === undefined);
+  refuse("MULTIPLE_RUN_STARTED", runStartedEvents.length > 1);
+  refuse("CALL_START_SEQUENCE_INVALID", callGrammar.callStartSequenceInvalid);
+  refuse("CALL_OUTCOME_SEQUENCE_INVALID", callGrammar.callOutcomeSequenceInvalid);
+  refuse("PROVIDER_RETRY_SEQUENCE_INVALID", callGrammar.providerRetrySequenceInvalid);
+  refuse("POST_TERMINAL_EVENT_INVALID", callGrammar.postTerminalEventInvalid);
   refuse(
     "NOT_TERMINALLY_FAILED",
-    runFailed === undefined &&
-      (events.some((event) => event.type === "RUN_COMPLETED") ||
-        finalFailed?.error.diagnostic?.httpStatus !== 429),
+    events.some((event) => event.type === "RUN_COMPLETED") ||
+      (runFailed === undefined && finalFailed?.error.diagnostic?.httpStatus !== 429),
   );
   refuse(
     "UNEXPECTED_SUCCEEDED_CALL_STAGE",
@@ -138,10 +323,33 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
   refuse("TOO_MANY_FINDING_VERIFICATION_CALLS", findingVerificationSucceededCalls.length > 1);
   refuse("NO_PRELIMINARY_CALL_STARTED", preliminaryStarted === undefined);
   refuse("NO_PRELIMINARY_PERSISTED", preliminaryPersisted === undefined);
+  refuse("MULTIPLE_PRELIMINARY_PERSISTED", preliminaryPersistedEvents.length > 1);
   refuse("NO_FINDING_VERIFICATION_PERSISTED", findingVerificationPersisted === undefined);
+  refuse("MULTIPLE_FINDING_VERIFICATION_PERSISTED", findingVerificationPersistedEvents.length > 1);
   refuse("NO_AUTHOR_DELIVERED", authorDelivered === undefined);
+  refuse("MULTIPLE_AUTHOR_LIFECYCLE_TRANSITIONS", authorLifecycleEvents.length > 1);
+  refuse(
+    "AUTHOR_LIFECYCLE_OUT_OF_ORDER",
+    authorDelivered !== undefined &&
+      findingVerificationPersisted !== undefined &&
+      firstFinalStarted !== undefined &&
+      !(
+        events.indexOf(findingVerificationPersisted) < events.indexOf(authorDelivered) &&
+        events.indexOf(authorDelivered) < events.indexOf(firstFinalStarted)
+      ),
+  );
   refuse("NO_FINAL_CALL_STARTED", finalStarted === undefined);
   refuse("NO_FINAL_CALL_FAILED", finalFailed === undefined);
+  refuse("MULTIPLE_TERMINAL_FINAL_FAILURES", terminalFinalFailures.length > 1);
+  refuse("MULTIPLE_RUN_FAILED", runFailedEvents.length > 1);
+  refuse(
+    "RUN_FAILED_OUT_OF_ORDER",
+    runFailed !== undefined &&
+      !events.some((event) => event.type === "RUN_COMPLETED") &&
+      (runFailed !== last ||
+        finalFailed === undefined ||
+        events.indexOf(runFailed) < events.indexOf(finalFailed)),
+  );
   refuse(
     "PRELIMINARY_ATTEMPT_MISMATCH",
     preliminarySucceeded?.attemptNumber !== preliminaryPersisted?.acceptedAttemptNumber,
@@ -150,6 +358,19 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
     "PRELIMINARY_ARTIFACT_UNRECOGNIZED",
     preliminaryPersisted !== undefined &&
       !ACCEPTED_PRELIMINARY_ARTIFACTS_V1.includes(preliminaryPersisted.responseArtifact),
+  );
+  refuse(
+    "PERSISTED_LIFECYCLE_OUT_OF_ORDER",
+    preliminarySucceeded !== undefined &&
+      preliminaryPersisted !== undefined &&
+      findingVerificationPersisted !== undefined &&
+      (events.indexOf(preliminarySucceeded) >= events.indexOf(preliminaryPersisted) ||
+        events.indexOf(preliminaryPersisted) >= events.indexOf(findingVerificationPersisted) ||
+        (findingVerificationPersisted.providerCall &&
+          (findingVerificationSucceededCalls.length !== 1 ||
+            findingVerificationSucceeded === undefined ||
+            events.indexOf(findingVerificationSucceeded) >=
+              events.indexOf(findingVerificationPersisted)))),
   );
 
   if (finalFailed !== undefined) {

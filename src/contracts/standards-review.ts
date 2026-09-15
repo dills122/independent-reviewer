@@ -1,4 +1,5 @@
 import * as z from "zod";
+import { jsonDocumentDigestV1 } from "./json-document.js";
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 import { NonEmptyTextSchema, prefixedIdentifier } from "./primitives.js";
 import {
@@ -8,7 +9,7 @@ import {
   ProjectGuidanceInputV1Schema,
   ReviewRequestV1Schema,
 } from "./review-request.js";
-import { SnapshotPathV1Schema } from "./snapshot-manifest.js";
+import { DigestV1Schema, SnapshotPathV1Schema } from "./snapshot-manifest.js";
 import { parseStrictJsonV1, StrictJsonErrorV1 } from "./strict-json.js";
 
 export const MAX_EXTERNAL_JSON_BYTES_V1 = 8 * 1024 * 1024;
@@ -205,6 +206,40 @@ export const AuthorOverviewV2Schema = z.strictObject({
 });
 export const ReviewAuthorSchema = z.union([AuthorPacketV1Schema, AuthorOverviewV2Schema]);
 export type ReviewAuthor = z.infer<typeof ReviewAuthorSchema>;
+
+export const DECLINED_AUTHOR_CONTEXT_MARKER_V1 = {
+  schemaVersion: 1,
+  status: "DECLINED",
+} as const;
+
+export const AuthorContextBindingV1Schema = z.discriminatedUnion("status", [
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    status: z.literal("PROVIDED"),
+    digest: DigestV1Schema,
+  }),
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    status: z.literal("DECLINED"),
+    digest: DigestV1Schema,
+  }),
+]);
+export type AuthorContextBindingV1 = z.infer<typeof AuthorContextBindingV1Schema>;
+
+export function providedAuthorContextV1(authorPacket: ReviewAuthor): AuthorContextBindingV1 {
+  return AuthorContextBindingV1Schema.parse({
+    schemaVersion: 1,
+    status: "PROVIDED",
+    digest: jsonDocumentDigestV1(ReviewAuthorSchema.parse(authorPacket)),
+  });
+}
+
+export function declinedAuthorContextV1(): AuthorContextBindingV1 {
+  return AuthorContextBindingV1Schema.parse({
+    ...DECLINED_AUTHOR_CONTEXT_MARKER_V1,
+    digest: jsonDocumentDigestV1(DECLINED_AUTHOR_CONTEXT_MARKER_V1),
+  });
+}
 export const StandardsReviewRequestV2Schema = z.strictObject({
   ...ReviewRequestV1Schema.shape,
   schemaVersion: z.literal(2),
@@ -212,7 +247,54 @@ export const StandardsReviewRequestV2Schema = z.strictObject({
   canonicalInputs: StandardsCanonicalInputsV2Schema,
   authorPacket: ReviewAuthorSchema,
 });
-export const ReviewRequestSchema = z.union([ReviewRequestV1Schema, StandardsReviewRequestV2Schema]);
+export const StandardsReviewRequestV3Schema = z
+  .strictObject({
+    ...ReviewRequestV1Schema.shape,
+    schemaVersion: z.literal(3),
+    mode: z.literal("STANDARDS"),
+    canonicalInputs: StandardsCanonicalInputsV2Schema,
+    authorContext: AuthorContextBindingV1Schema,
+    authorPacket: ReviewAuthorSchema.optional(),
+  })
+  .superRefine((request, context) => {
+    if (request.authorContext.status === "PROVIDED") {
+      if (request.authorPacket === undefined) {
+        context.addIssue({
+          code: "custom",
+          path: ["authorPacket"],
+          message: "Provided author context requires a separate author packet.",
+        });
+      } else if (
+        request.authorContext.digest.value !== jsonDocumentDigestV1(request.authorPacket).value
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["authorContext", "digest"],
+          message: "Author-context digest does not match the separate author packet.",
+        });
+      }
+    } else {
+      if (request.authorPacket !== undefined) {
+        context.addIssue({
+          code: "custom",
+          path: ["authorPacket"],
+          message: "Declined author context forbids an author packet.",
+        });
+      }
+      if (request.authorContext.digest.value !== declinedAuthorContextV1().digest.value) {
+        context.addIssue({
+          code: "custom",
+          path: ["authorContext", "digest"],
+          message: "Declined author-context digest does not match the canonical marker.",
+        });
+      }
+    }
+  });
+export const ReviewRequestSchema = z.union([
+  ReviewRequestV1Schema,
+  StandardsReviewRequestV2Schema,
+  StandardsReviewRequestV3Schema,
+]);
 export type ReviewRequest = z.infer<typeof ReviewRequestSchema>;
 export const ReviewCanonicalInputsSchema = z.union([
   PersistedCanonicalInputsV1Schema,
@@ -278,4 +360,8 @@ export const STANDARDS_PROFILE_V2_JSON_SCHEMA = contractJsonSchema(
 export const STANDARDS_REVIEW_REQUEST_V2_JSON_SCHEMA = contractJsonSchema(
   StandardsReviewRequestV2Schema,
   "standards-review-request:v2",
+);
+export const STANDARDS_REVIEW_REQUEST_V3_JSON_SCHEMA = contractJsonSchema(
+  StandardsReviewRequestV3Schema,
+  "standards-review-request:v3",
 );

@@ -17,6 +17,7 @@ import {
   GuidanceGraphV1Schema,
   guidanceGraphDigestV1,
   jsonDocument,
+  jsonDocumentDigestV1,
   PersistedCanonicalInputsV1Schema,
   type ReviewContextMapV1,
   ReviewContextMapV1Schema,
@@ -28,7 +29,10 @@ import {
   verifySnapshotManifestIdentityV1,
 } from "../contracts/index.js";
 import {
+  type AuthorContextBindingV1,
+  AuthorContextBindingV1Schema,
   canonicalInputList,
+  declinedAuthorContextV1,
   type ReviewAuthor,
   ReviewAuthorSchema,
   type ReviewCanonicalInputs,
@@ -91,6 +95,7 @@ export interface InspectedSnapshotPacket
   extends Omit<InspectedSnapshotPacketV1, "canonicalInputs" | "authorPacket"> {
   canonicalInputs: ReviewCanonicalInputs;
   authorPacket?: ReviewAuthor;
+  authorContext?: AuthorContextBindingV1;
 }
 
 export interface SnapshotPacketInspectionOptionsV1 {
@@ -126,6 +131,21 @@ const PacketMetadataSchema = z.union([
     contextMapDigest: DigestV1Schema,
     guidanceGraphDigest: DigestV1Schema,
     authorDigest: DigestV1Schema.optional(),
+  }),
+  z.strictObject({
+    schemaVersion: z.literal(5),
+    requestSchemaVersion: z.literal(3),
+    reviewConfigRef: PacketMetadataV1Schema.shape.reviewConfigRef,
+    contextMapDigest: DigestV1Schema,
+    authorContext: AuthorContextBindingV1Schema,
+  }),
+  z.strictObject({
+    schemaVersion: z.literal(6),
+    requestSchemaVersion: z.literal(3),
+    reviewConfigRef: PacketMetadataV1Schema.shape.reviewConfigRef,
+    contextMapDigest: DigestV1Schema,
+    guidanceGraphDigest: DigestV1Schema,
+    authorContext: AuthorContextBindingV1Schema,
   }),
 ]);
 
@@ -483,7 +503,8 @@ export async function writeSnapshotPacketV1(
     await writeFile(
       join(stagingPath, PACKET_METADATA_FILE),
       jsonDocument({
-        schemaVersion: options.guidance ? 4 : 3,
+        schemaVersion:
+          request.schemaVersion === 3 ? (options.guidance ? 6 : 5) : options.guidance ? 4 : 3,
         requestSchemaVersion: request.schemaVersion,
         reviewConfigRef: request.reviewConfigRef,
         contextMapDigest: contextMap.contextMapDigest,
@@ -493,6 +514,7 @@ export async function writeSnapshotPacketV1(
         ...(request.schemaVersion === 2
           ? { authorDigest: sha256Utf8(jsonDocument(request.authorPacket)) }
           : {}),
+        ...(request.schemaVersion === 3 ? { authorContext: request.authorContext } : {}),
       }),
       { flag: "wx", mode: 0o600 },
     );
@@ -559,24 +581,30 @@ export async function inspectSnapshotPacket(
     throw new Error("Packet metadata author binding does not match request mode.");
   }
   const contextMap =
-    packetMetadata.schemaVersion === 3 || packetMetadata.schemaVersion === 4
+    packetMetadata.schemaVersion === 3 ||
+    packetMetadata.schemaVersion === 4 ||
+    packetMetadata.schemaVersion === 5 ||
+    packetMetadata.schemaVersion === 6
       ? ReviewContextMapV1Schema.parse(await readPacketJsonV1(packetPath, CONTEXT_MAP_FILE))
       : buildFallbackReviewContextMapV1(manifest);
   if (!verifyReviewContextMapIdentityV1(contextMap)) {
     throw new Error("Review context map digest verification failed.");
   }
   if (
-    (packetMetadata.schemaVersion === 3 || packetMetadata.schemaVersion === 4) &&
+    (packetMetadata.schemaVersion === 3 ||
+      packetMetadata.schemaVersion === 4 ||
+      packetMetadata.schemaVersion === 5 ||
+      packetMetadata.schemaVersion === 6) &&
     packetMetadata.contextMapDigest.value !== contextMap.contextMapDigest.value
   ) {
     throw new Error("Packet metadata context map digest verification failed.");
   }
   assertContextMapMatchesManifest(contextMap, manifest);
   const guidanceGraph =
-    packetMetadata.schemaVersion === 4
+    packetMetadata.schemaVersion === 4 || packetMetadata.schemaVersion === 6
       ? GuidanceGraphV1Schema.parse(await readPacketJsonV1(packetPath, GUIDANCE_GRAPH_FILE))
       : undefined;
-  if (packetMetadata.schemaVersion === 4 && guidanceGraph) {
+  if ((packetMetadata.schemaVersion === 4 || packetMetadata.schemaVersion === 6) && guidanceGraph) {
     assertGuidanceGraphMatchesSnapshotV1(guidanceGraph, manifest);
     if (guidanceGraphDigestV1(guidanceGraph).value !== packetMetadata.guidanceGraphDigest.value) {
       throw new Error("Packet metadata guidance graph digest verification failed.");
@@ -631,24 +659,49 @@ export async function inspectSnapshotPacket(
   });
   const authorPacket = await readOptionalAuthorPacket(packetPath);
   const requestSchemaVersion =
-    packetMetadata.schemaVersion === 3 || packetMetadata.schemaVersion === 4
+    packetMetadata.schemaVersion === 3 ||
+    packetMetadata.schemaVersion === 4 ||
+    packetMetadata.schemaVersion === 5 ||
+    packetMetadata.schemaVersion === 6
       ? packetMetadata.requestSchemaVersion
       : packetMetadata.schemaVersion;
-  if ((requestSchemaVersion === 2) !== "standards" in canonicalInputs)
+  if ((requestSchemaVersion !== 1) !== "standards" in canonicalInputs)
     throw new Error("Packet mode mismatch.");
   if (
     requestSchemaVersion === 2 &&
     (!authorPacket ||
       packetMetadata.schemaVersion === 1 ||
+      (packetMetadata.schemaVersion !== 2 &&
+        packetMetadata.schemaVersion !== 3 &&
+        packetMetadata.schemaVersion !== 4) ||
       !packetMetadata.authorDigest ||
       sha256Utf8(jsonDocument(authorPacket)).value !== packetMetadata.authorDigest.value)
   )
     throw new Error("Author overview digest verification failed.");
+  const authorContext =
+    packetMetadata.schemaVersion === 5 || packetMetadata.schemaVersion === 6
+      ? packetMetadata.authorContext
+      : undefined;
+  if (requestSchemaVersion === 3) {
+    if (!authorContext) throw new Error("Friendly packet is missing author-context binding.");
+    if (
+      authorContext.status === "PROVIDED" &&
+      (!authorPacket || jsonDocumentDigestV1(authorPacket).value !== authorContext.digest.value)
+    )
+      throw new Error("Provided author-context digest verification failed.");
+    if (
+      authorContext.status === "DECLINED" &&
+      (authorPacket !== undefined ||
+        authorContext.digest.value !== declinedAuthorContextV1().digest.value)
+    )
+      throw new Error("Declined author-context binding verification failed.");
+  }
   return {
     manifest,
     contextMap,
     canonicalInputs,
     ...(authorPacket ? { authorPacket } : {}),
+    ...(authorContext ? { authorContext } : {}),
     reviewConfigRef: packetMetadata.reviewConfigRef,
     blobCount: new Set([
       ...records.map(({ digest }) => digest),

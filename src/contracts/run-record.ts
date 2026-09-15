@@ -2,6 +2,7 @@ import * as z from "zod";
 
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
 import { DigestV1Schema } from "./snapshot-manifest.js";
+import { AuthorContextBindingV1Schema } from "./standards-review.js";
 
 /**
  * The append-only ledger one review run writes to `review/run-record.jsonl`.
@@ -197,6 +198,11 @@ export const RunRecordEventV1Schema = z.discriminatedUnion("type", [
     ...eventBase,
     type: z.literal("AUTHOR_DELIVERED"),
     authorPacketDigest: DigestV1Schema,
+  }),
+  z.strictObject({
+    ...eventBase,
+    type: z.literal("AUTHOR_CONTEXT_RELEASED"),
+    authorContext: AuthorContextBindingV1Schema,
   }),
   z.strictObject({
     ...eventBase,

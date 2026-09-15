@@ -71,6 +71,19 @@ const callFailed429 = (attemptNumber: number) =>
     },
   });
 
+const retryRequested = (stage: string, failedAttemptNumber: number, retryAttemptNumber: number) =>
+  event({
+    type: "PROVIDER_RETRY_REQUESTED",
+    stage,
+    failedAttemptNumber,
+    retryAttemptNumber,
+    retriesUsed: 1,
+    maxRetries: 1,
+    delayMs: 1,
+    chargedFailedTokens: 0,
+    chargedFailedCostUsd: 0,
+  });
+
 /**
  * The sequence a real run produces when the final call is rate limited.
  *
@@ -141,6 +154,20 @@ describe("evaluateResumeShapeV1", () => {
     assert.equal(result.shape.findingVerificationSucceededCalls.length, 1);
   });
 
+  it("admits explicit declined author-context release without treating it as missing", () => {
+    const events = eligibleEvents();
+    const index = events.findIndex((candidate) => candidate.type === "AUTHOR_DELIVERED");
+    events[index] = event({
+      type: "AUTHOR_CONTEXT_RELEASED",
+      authorContext: { schemaVersion: 1, status: "DECLINED", digest },
+    });
+
+    const result = evaluateResumeShapeV1(events);
+    assert.equal(result.eligible, true);
+    assert.ok(result.eligible);
+    assert.equal(result.shape.authorDelivered.type, "AUTHOR_CONTEXT_RELEASED");
+  });
+
   it("admits a run whose preliminary needed one output repair", () => {
     const events = eligibleEvents();
     events.splice(3, 0, callStarted("PRELIMINARY", 2), callSucceeded("PRELIMINARY", 2));
@@ -151,6 +178,18 @@ describe("evaluateResumeShapeV1", () => {
       acceptedAttemptNumber: 2,
       responseArtifact: "preliminary-repair-provider-response.json",
     });
+    for (const candidate of events) {
+      if (
+        (candidate.type === "CALL_STARTED" || candidate.type === "CALL_SUCCEEDED") &&
+        candidate.stage === "FINDING_VERIFICATION"
+      )
+        candidate.attemptNumber = 3;
+      if (
+        (candidate.type === "CALL_STARTED" || candidate.type === "CALL_FAILED") &&
+        candidate.stage === "FINAL"
+      )
+        candidate.attemptNumber = 4;
+    }
 
     assert.deepEqual(refusalsOf(events), []);
   });
@@ -170,6 +209,13 @@ describe("evaluateResumeShapeV1", () => {
       providerCall: false,
       responseArtifact: null,
     });
+    for (const candidate of events) {
+      if (
+        (candidate.type === "CALL_STARTED" || candidate.type === "CALL_FAILED") &&
+        candidate.stage === "FINAL"
+      )
+        candidate.attemptNumber = 2;
+    }
 
     assert.deepEqual(refusalsOf(events), []);
   });
@@ -210,7 +256,11 @@ describe("evaluateResumeShapeV1", () => {
     const events = eligibleEvents();
     events.push(event({ type: "RUN_COMPLETED", terminalState: "READY" }));
 
-    assert.deepEqual(refusalsOf(events), ["ALREADY_COMPLETED", "NOT_TERMINALLY_FAILED"]);
+    assert.deepEqual(refusalsOf(events), [
+      "ALREADY_COMPLETED",
+      "POST_TERMINAL_EVENT_INVALID",
+      "NOT_TERMINALLY_FAILED",
+    ]);
   });
 
   it("refuses a second resume", () => {
@@ -226,7 +276,7 @@ describe("evaluateResumeShapeV1", () => {
       }),
     );
 
-    assert.deepEqual(refusalsOf(events), ["ALREADY_RESUMED"]);
+    assert.deepEqual(refusalsOf(events), ["ALREADY_RESUMED", "POST_TERMINAL_EVENT_INVALID"]);
   });
 
   it("refuses a transport-uncertain failure", () => {
@@ -286,6 +336,9 @@ describe("evaluateResumeShapeV1", () => {
     // started is no longer the one that failed. Both are reported, which is the point of naming
     // them -- a single sentence would have hidden that the run is wrong in two ways.
     assert.deepEqual(refusalsOf(events), [
+      "CALL_OUTCOME_SEQUENCE_INVALID",
+      "PROVIDER_RETRY_SEQUENCE_INVALID",
+      "POST_TERMINAL_EVENT_INVALID",
       "CALL_ATTEMPTED_AFTER_FINAL_FAILURE",
       "FINAL_ATTEMPT_MISMATCH",
     ]);
@@ -303,6 +356,296 @@ describe("evaluateResumeShapeV1", () => {
     const events = eligibleEvents().filter((candidate) => candidate.type !== "AUTHOR_DELIVERED");
 
     assert.deepEqual(refusalsOf(events), ["NO_AUTHOR_DELIVERED"]);
+  });
+
+  it("refuses mixed or duplicate author lifecycle transitions", () => {
+    const mixed = eligibleEvents();
+    const authorIndex = mixed.findIndex((candidate) => candidate.type === "AUTHOR_DELIVERED");
+    mixed.splice(
+      authorIndex,
+      0,
+      event({
+        type: "AUTHOR_CONTEXT_RELEASED",
+        authorContext: { schemaVersion: 1, status: "DECLINED", digest },
+      }),
+    );
+    assert.deepEqual(refusalsOf(mixed), ["MULTIPLE_AUTHOR_LIFECYCLE_TRANSITIONS"]);
+
+    const duplicate = eligibleEvents();
+    duplicate.splice(
+      duplicate.findIndex((candidate) => candidate.type === "AUTHOR_DELIVERED"),
+      0,
+      event({ type: "AUTHOR_DELIVERED", authorPacketDigest: digest }),
+    );
+    assert.deepEqual(refusalsOf(duplicate), ["MULTIPLE_AUTHOR_LIFECYCLE_TRANSITIONS"]);
+  });
+
+  it("requires the sole author lifecycle transition after verification and before first final call", () => {
+    const tooEarly = eligibleEvents();
+    const [earlyAuthor] = tooEarly.splice(
+      tooEarly.findIndex((candidate) => candidate.type === "AUTHOR_DELIVERED"),
+      1,
+    );
+    assert.ok(earlyAuthor);
+    tooEarly.splice(3, 0, earlyAuthor);
+    assert.deepEqual(refusalsOf(tooEarly), ["AUTHOR_LIFECYCLE_OUT_OF_ORDER"]);
+
+    const tooLate = eligibleEvents();
+    const [lateAuthor] = tooLate.splice(
+      tooLate.findIndex((candidate) => candidate.type === "AUTHOR_DELIVERED"),
+      1,
+    );
+    assert.ok(lateAuthor);
+    tooLate.splice(
+      tooLate.findIndex(
+        (candidate) => candidate.type === "CALL_STARTED" && candidate.stage === "FINAL",
+      ) + 1,
+      0,
+      lateAuthor,
+    );
+    assert.deepEqual(refusalsOf(tooLate), ["AUTHOR_LIFECYCLE_OUT_OF_ORDER"]);
+  });
+
+  it("requires one run and one persisted artifact transition", () => {
+    const duplicateRun = eligibleEvents();
+    const runStarted = duplicateRun[0];
+    assert.ok(runStarted);
+    duplicateRun.splice(1, 0, structuredClone(runStarted));
+    assert.ok(refusalsOf(duplicateRun).includes("MULTIPLE_RUN_STARTED"));
+
+    const duplicatePreliminary = eligibleEvents();
+    const preliminaryIndex = duplicatePreliminary.findIndex(
+      (candidate) => candidate.type === "PRELIMINARY_PERSISTED",
+    );
+    const preliminaryPersisted = duplicatePreliminary[preliminaryIndex];
+    assert.ok(preliminaryPersisted);
+    duplicatePreliminary.splice(preliminaryIndex + 1, 0, structuredClone(preliminaryPersisted));
+    assert.ok(refusalsOf(duplicatePreliminary).includes("MULTIPLE_PRELIMINARY_PERSISTED"));
+
+    const duplicateVerification = eligibleEvents();
+    const verificationIndex = duplicateVerification.findIndex(
+      (candidate) => candidate.type === "FINDING_VERIFICATION_PERSISTED",
+    );
+    const verificationPersisted = duplicateVerification[verificationIndex];
+    assert.ok(verificationPersisted);
+    duplicateVerification.splice(verificationIndex + 1, 0, structuredClone(verificationPersisted));
+    assert.ok(
+      refusalsOf(duplicateVerification).includes("MULTIPLE_FINDING_VERIFICATION_PERSISTED"),
+    );
+  });
+
+  it("requires persisted transitions in lifecycle order", () => {
+    const preliminaryTooEarly = eligibleEvents();
+    const [preliminary] = preliminaryTooEarly.splice(
+      preliminaryTooEarly.findIndex((candidate) => candidate.type === "PRELIMINARY_PERSISTED"),
+      1,
+    );
+    assert.ok(preliminary);
+    preliminaryTooEarly.splice(1, 0, preliminary);
+    assert.ok(refusalsOf(preliminaryTooEarly).includes("PERSISTED_LIFECYCLE_OUT_OF_ORDER"));
+
+    const verificationTooEarly = eligibleEvents();
+    const [verification] = verificationTooEarly.splice(
+      verificationTooEarly.findIndex(
+        (candidate) => candidate.type === "FINDING_VERIFICATION_PERSISTED",
+      ),
+      1,
+    );
+    assert.ok(verification);
+    verificationTooEarly.splice(2, 0, verification);
+    assert.ok(refusalsOf(verificationTooEarly).includes("PERSISTED_LIFECYCLE_OUT_OF_ORDER"));
+  });
+
+  it("requires one terminal failure for the last final attempt while retaining earlier retries", () => {
+    const duplicateTerminal = eligibleEvents();
+    const failureIndex = duplicateTerminal.findIndex(
+      (candidate) => candidate.type === "CALL_FAILED" && candidate.stage === "FINAL",
+    );
+    const terminalFailure = duplicateTerminal[failureIndex];
+    assert.ok(terminalFailure);
+    duplicateTerminal.splice(failureIndex, 0, structuredClone(terminalFailure));
+    assert.ok(refusalsOf(duplicateTerminal).includes("MULTIPLE_TERMINAL_FINAL_FAILURES"));
+
+    const retried = eligibleEvents();
+    const finalIndex = retried.findIndex(
+      (candidate) => candidate.type === "CALL_STARTED" && candidate.stage === "FINAL",
+    );
+    retried.splice(
+      finalIndex,
+      0,
+      callStarted("FINAL", 3),
+      callFailed429(3),
+      event({
+        type: "PROVIDER_RETRY_REQUESTED",
+        stage: "FINAL",
+        failedAttemptNumber: 3,
+        retryAttemptNumber: 4,
+        retriesUsed: 1,
+        maxRetries: 1,
+        delayMs: 1,
+        chargedFailedTokens: 0,
+        chargedFailedCostUsd: 0,
+      }),
+    );
+    const lastStarted = retried.findLast(
+      (candidate) => candidate.type === "CALL_STARTED" && candidate.stage === "FINAL",
+    );
+    const lastFailed = retried.findLast(
+      (candidate) => candidate.type === "CALL_FAILED" && candidate.stage === "FINAL",
+    );
+    assert.ok(lastStarted?.type === "CALL_STARTED" && lastFailed?.type === "CALL_FAILED");
+    lastStarted.attemptNumber = 4;
+    lastFailed.attemptNumber = 4;
+    assert.deepEqual(refusalsOf(retried), []);
+  });
+
+  it("rejects duplicate call starts and outcomes for one global attempt", () => {
+    const duplicateStart = eligibleEvents();
+    const startIndex = duplicateStart.findIndex(
+      (candidate) => candidate.type === "CALL_STARTED" && candidate.stage === "FINAL",
+    );
+    const duplicatedStart = duplicateStart[startIndex];
+    assert.ok(duplicatedStart);
+    duplicateStart.splice(startIndex + 1, 0, structuredClone(duplicatedStart));
+    assert.ok(refusalsOf(duplicateStart).includes("CALL_START_SEQUENCE_INVALID"));
+
+    const duplicateOutcome = eligibleEvents();
+    const outcomeIndex = duplicateOutcome.findIndex(
+      (candidate) => candidate.type === "CALL_SUCCEEDED" && candidate.stage === "PRELIMINARY",
+    );
+    const duplicatedOutcome = duplicateOutcome[outcomeIndex];
+    assert.ok(duplicatedOutcome);
+    duplicateOutcome.splice(outcomeIndex + 1, 0, structuredClone(duplicatedOutcome));
+    assert.ok(refusalsOf(duplicateOutcome).includes("CALL_OUTCOME_SEQUENCE_INVALID"));
+  });
+
+  it("rejects outcomes before their start and outcomes bound to the wrong stage", () => {
+    const outcomeBeforeStart = eligibleEvents();
+    const [outcome] = outcomeBeforeStart.splice(
+      outcomeBeforeStart.findIndex(
+        (candidate) => candidate.type === "CALL_SUCCEEDED" && candidate.stage === "PRELIMINARY",
+      ),
+      1,
+    );
+    assert.ok(outcome);
+    outcomeBeforeStart.splice(1, 0, outcome);
+    assert.ok(refusalsOf(outcomeBeforeStart).includes("CALL_OUTCOME_SEQUENCE_INVALID"));
+
+    const wrongStage = eligibleEvents();
+    const preliminaryStart = wrongStage.findIndex(
+      (candidate) => candidate.type === "CALL_STARTED" && candidate.stage === "PRELIMINARY",
+    );
+    wrongStage.splice(preliminaryStart + 1, 0, callFailed429(1));
+    assert.ok(refusalsOf(wrongStage).includes("CALL_OUTCOME_SEQUENCE_INVALID"));
+  });
+
+  it("accepts genuine preliminary and final retries but rejects orphan, duplicate, and mismatched retry records", () => {
+    const preliminaryRetry = eligibleEvents();
+    const preliminaryOutcome = preliminaryRetry.findIndex(
+      (candidate) => candidate.type === "CALL_SUCCEEDED" && candidate.stage === "PRELIMINARY",
+    );
+    preliminaryRetry.splice(
+      preliminaryOutcome,
+      1,
+      event({
+        type: "CALL_FAILED",
+        attemptNumber: 1,
+        stage: "PRELIMINARY",
+        durationMs: 5,
+        error: { name: "ProviderCallError", code: "PROVIDER_ERROR", message: "retry" },
+      }),
+      retryRequested("PRELIMINARY", 1, 2),
+      callStarted("PRELIMINARY", 2),
+      callSucceeded("PRELIMINARY", 2),
+    );
+    const preliminaryPersisted = preliminaryRetry.find(
+      (candidate) => candidate.type === "PRELIMINARY_PERSISTED",
+    );
+    assert.ok(preliminaryPersisted?.type === "PRELIMINARY_PERSISTED");
+    preliminaryPersisted.acceptedAttemptNumber = 2;
+    const verificationStart = preliminaryRetry.findIndex(
+      (candidate) =>
+        candidate.type === "CALL_STARTED" && candidate.stage === "FINDING_VERIFICATION",
+    );
+    preliminaryRetry.splice(verificationStart, 2);
+    const verificationPersisted = preliminaryRetry.find(
+      (candidate) => candidate.type === "FINDING_VERIFICATION_PERSISTED",
+    );
+    assert.ok(verificationPersisted?.type === "FINDING_VERIFICATION_PERSISTED");
+    verificationPersisted.providerCall = false;
+    delete verificationPersisted.acceptedAttemptNumber;
+    verificationPersisted.responseArtifact = null;
+    assert.deepEqual(refusalsOf(preliminaryRetry), []);
+
+    const finalRetry = eligibleEvents();
+    const terminalFailure = finalRetry.findIndex(
+      (candidate) => candidate.type === "CALL_FAILED" && candidate.stage === "FINAL",
+    );
+    finalRetry.splice(
+      terminalFailure + 1,
+      0,
+      retryRequested("FINAL", 3, 4),
+      callStarted("FINAL", 4),
+      callFailed429(4),
+    );
+    assert.deepEqual(refusalsOf(finalRetry), []);
+
+    const orphan = eligibleEvents();
+    orphan.splice(orphan.length - 1, 0, retryRequested("FINAL", 3, 4));
+    assert.ok(refusalsOf(orphan).includes("PROVIDER_RETRY_SEQUENCE_INVALID"));
+
+    const duplicate = structuredClone(finalRetry);
+    const retryIndex = duplicate.findIndex(
+      (candidate) => candidate.type === "PROVIDER_RETRY_REQUESTED",
+    );
+    const duplicatedRetry = duplicate[retryIndex];
+    assert.ok(duplicatedRetry);
+    duplicate.splice(retryIndex, 0, structuredClone(duplicatedRetry));
+    assert.ok(refusalsOf(duplicate).includes("PROVIDER_RETRY_SEQUENCE_INVALID"));
+
+    const mismatched = structuredClone(finalRetry);
+    const retry = mismatched.find((candidate) => candidate.type === "PROVIDER_RETRY_REQUESTED");
+    assert.ok(retry?.type === "PROVIDER_RETRY_REQUESTED");
+    retry.retryAttemptNumber = 99;
+    assert.ok(refusalsOf(mismatched).includes("PROVIDER_RETRY_SEQUENCE_INVALID"));
+  });
+
+  it("permits only final bookkeeping and an optional trailing run failure after terminal failure", () => {
+    const wrongStageBookkeeping = eligibleEvents();
+    wrongStageBookkeeping.splice(
+      wrongStageBookkeeping.length - 1,
+      0,
+      event({
+        type: "BUDGET_EXHAUSTED",
+        budget: "COST",
+        stage: "PRELIMINARY",
+        phase: "RESERVATION",
+        spentUsd: 0.2,
+        additionalUsd: 0.1,
+      }),
+    );
+    assert.ok(refusalsOf(wrongStageBookkeeping).includes("POST_TERMINAL_EVENT_INVALID"));
+
+    const duplicateBookkeeping = eligibleEvents();
+    const budgetEvent = event({
+      type: "BUDGET_EXHAUSTED",
+      budget: "COST",
+      stage: "FINAL",
+      phase: "RESERVATION",
+      spentUsd: 0.2,
+      additionalUsd: 0.1,
+    });
+    duplicateBookkeeping.splice(
+      duplicateBookkeeping.length - 1,
+      0,
+      budgetEvent,
+      structuredClone(budgetEvent),
+    );
+    assert.ok(refusalsOf(duplicateBookkeeping).includes("POST_TERMINAL_EVENT_INVALID"));
+
+    const noRunFailed = eligibleEvents();
+    noRunFailed.pop();
+    assert.deepEqual(refusalsOf(noRunFailed), []);
   });
 
   it("reports every failing predicate rather than the first", () => {
