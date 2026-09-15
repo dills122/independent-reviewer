@@ -134,8 +134,10 @@ any claim in the separately digest-bound carried catalog.
 
 ### Treat source IDs as provenance, not continuity
 
-Final candidate V4 references every preliminary claim exactly once and declares
-one of these transitions:
+Final candidate V4 references every preliminary claim exactly once and proposes
+one of these transitions. Before accepting that proposal, runner derives the
+terminal `REJECTED_CARRIED` state for any prior `NO_VIOLATION` judgment; provider
+cannot select or override that state.
 
 - `CONTINUED`: candidate repeats the exact claim ID. Existing fresh blind
   judgment carries forward.
@@ -150,20 +152,23 @@ fourth call. There is no model-authored `EQUIVALENT` escape hatch and no runner
 string-similarity heuristic. If semantic fields change, fresh verification is
 required. If they do not, identity proves continuity.
 
-A prior `NO_VIOLATION` cannot be resurrected under its old claim ID. A prior
-`INCONCLUSIVE` violation cannot remain a demonstrated finding; runner projects
-it as uncertainty unless a new or changed claim receives a fresh demonstrated
-judgment. Author explanation can challenge a carried claim, but cannot make it
-vanish: a proposed withdrawal or replacement submits the prior claim itself for
-fresh judgment. `DEMONSTRATED` retains its prior effect, `INCONCLUSIVE` retains
-its prior uncertainty effect, and only `REJECTED` permits withdrawal.
+A prior `NO_VIOLATION` becomes `REJECTED_CARRIED`: it remains in the audit
+transition ledger, is excluded from post-author verification targets and every
+user-visible projection, and cannot be resurrected under its old claim ID. A
+prior `INCONCLUSIVE` violation cannot remain a demonstrated finding; runner
+projects it as uncertainty unless a new or changed claim receives a fresh
+demonstrated judgment. Author explanation can challenge a carried claim, but
+cannot make it vanish: a proposed withdrawal or replacement submits a prior
+`DEMONSTRATED` or `INCONCLUSIVE` claim itself for fresh judgment.
+`DEMONSTRATED` retains its prior effect, `INCONCLUSIVE` retains its prior
+uncertainty effect, and only `REJECTED` permits withdrawal.
 
 ### Verify only new or materially changed final claims
 
 Persist the structurally and evidentially validated final candidate and claim
 set before any post-author verification. When `NEW_OR_CHANGED` adverse claims
-or `WITHDRAWAL_PROPOSED` transitions exist, make one fresh post-author
-verification call over:
+or `WITHDRAWAL_PROPOSED` transitions for prior `DEMONSTRATED` or `INCONCLUSIVE`
+claims exist, make one fresh post-author verification call over:
 
 - canonical obligations and frozen evidence used by those claims;
 - exact claim cores, ordered without provider-facing IDs;
@@ -182,17 +187,19 @@ an optional duplicate relation and bounded rationales.
 
 Carried catalog entries are comparison-only: verifier emits no new existence,
 effect, or correction judgment for them unless candidate separately proposes
-their withdrawal. A new or changed target may declare a catalog claim as its
-duplicate; runner can then merge it without letting the post-author call reopen
-the carried claim. Output scope and exact target count exclude catalog-only
-entries.
+withdrawal of a prior `DEMONSTRATED` or `INCONCLUSIVE` claim. A new or changed
+target may declare a catalog claim as its duplicate; runner can then merge it
+without letting the post-author call reopen the carried claim. Output scope and
+exact target count exclude catalog-only and `REJECTED_CARRIED` entries.
 
 Skip this call when all surviving claims are exact `CONTINUED` claims with
-carry-forward existence, effect, and correction judgments and no unverified
-duplicate grouping or standards-state transition. A withdrawal always triggers
-the call. An adverse-claim-free clean review therefore remains two provider
-calls. With preliminary adverse claims but no final semantic or action change,
-current three-call behavior remains sufficient.
+carry-forward existence, effect, and correction judgments or terminal
+`REJECTED_CARRIED` claims, and no unverified duplicate grouping or
+standards-state transition exists. Withdrawal of a prior `DEMONSTRATED` or
+`INCONCLUSIVE` claim always triggers the call; acknowledging an already rejected
+claim does not. An adverse-claim-free clean review therefore remains two
+provider calls. With preliminary adverse claims but no final semantic or action
+change, current three-call behavior remains sufficient.
 
 The verifier policy must explicitly test declared input domains and claimed
 runtime behavior. The exact #171 positive-page fixture is a mandatory canary,
@@ -210,7 +217,8 @@ remain demonstrated and prior `INCONCLUSIVE` claims remain uncertainty unless
 fresh post-author verification returns `REJECTED`. A changed claim that names a
 prior source must pair its new claim with `WITHDRAWAL_PROPOSED`; otherwise old
 effect remains alongside new result, subject only to verified duplicate
-grouping.
+grouping. Runner omits `REJECTED_CARRIED` claims without another call because
+their fresh blind rejection is already persisted and authoritative.
 
 | Claim kind and judgment | User-visible projection | Outcome effect |
 | --- | --- | --- |
@@ -401,10 +409,11 @@ semantic promotion.
    transition, and verification contracts with generated schemas and
    compatibility readers.
 3. Add a pure projection module and provider-free tests for every table row,
-   proposed withdrawals, correction judgments, carried-catalog duplicate
-   grouping, runner summary, author-command provenance, and both modes. Standards
-   tests must prove `UNASSESSED` blocks for selected `REQUIRED` and
-   `RECOMMENDED` rules, preserving current behavior.
+   proposed withdrawals, terminal carry-forward of prior rejections without an
+   extra call, correction judgments, carried-catalog duplicate grouping, runner
+   summary, author-command provenance, and both modes. Standards tests must prove
+   `UNASSESSED` blocks for selected `REQUIRED` and `RECOMMENDED` rules,
+   preserving current behavior.
 4. Add selective post-author orchestration, worst-case admission, V2 durable
    events, failure paths, retry charging, and separate final-call,
    final-claim-verification, and local-projection resume predicates.
