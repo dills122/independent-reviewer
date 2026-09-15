@@ -507,6 +507,20 @@ describe("evaluation scorer", () => {
     permuted.adjudications.reverse();
 
     const rescored = scoreGraph(permuted);
+    const permutedScore = structuredClone(canonical);
+    permutedScore.metrics.reverse();
+    permutedScore.caseBreakdowns.reverse();
+    for (const breakdown of permutedScore.caseBreakdowns) breakdown.metrics.reverse();
+    permutedScore.familyBreakdowns.reverse();
+    for (const breakdown of permutedScore.familyBreakdowns) breakdown.metrics.reverse();
+    permutedScore.attemptEvidence.reverse();
+    for (const evidence of permutedScore.attemptEvidence) {
+      evidence.adjudicationIds.reverse();
+      evidence.metrics.reverse();
+    }
+    permutedScore.enforcementConfusion.cells.reverse();
+    permutedScore.pairedDeltas.reverse();
+    permutedScore.rawArtifactReferences.reverse();
 
     assert.deepEqual(rescored, canonical);
     assert.doesNotThrow(() =>
@@ -516,7 +530,7 @@ describe("evaluation scorer", () => {
         cases: permuted.cases,
         attempts: permuted.attempts,
         adjudications: permuted.adjudications,
-        score: canonical,
+        score: permutedScore,
       }),
     );
   });
