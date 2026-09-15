@@ -535,7 +535,23 @@ node dist/src/cli.js inspect --packet /absolute/path/to/new-packet
 ```
 
 `prepare` does not make a later `review` consume that packet; it is a deliberate
-capture/inspection command. Live `review` captures a new packet from the request:
+capture/inspection command. Apply the same request and config to provider-free
+admission before a live run:
+
+```sh
+node dist/src/cli.js review \
+  --request /absolute/path/to/request.json \
+  --config /absolute/path/to/review-config.json \
+  --dry-run
+```
+
+Request-file mode resolves local settings and reviewer rules from
+`request.repository.path`, before packet preparation. Invocation directory and
+`--repo` do not change that frozen target. Target repository's
+`useReviewerRules` setting applies unless command explicitly supplies
+`--reviewer-rules` or `--no-reviewer-rules`.
+
+Live `review` captures a new packet from request:
 
 ```sh
 node --env-file=.env dist/src/cli.js review \

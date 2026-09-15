@@ -4,7 +4,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { saveLocalSimpleReviewSettingsV2 } from "../src/cli/simple-settings.js";
 import { runCliV1 } from "../src/cli.js";
 import { RunRecordEventV1Schema } from "../src/contracts/run-record.js";
 import {
@@ -621,6 +623,62 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
   }
 });
 
+test("request dry-run resolves reviewer rules from the target repository, never caller cwd", async () => {
+  const f = await fixture();
+  const caller = await mkdtemp(join(tmpdir(), "standards-flow-caller-"));
+  const callerGit = (...args: string[]) => exec("git", ["-C", caller, ...args]);
+  const cliPath = fileURLToPath(new URL("../src/cli.js", import.meta.url));
+  const settings = (useReviewerRules: boolean) => ({
+    schemaVersion: 2 as const,
+    model: "openai/gpt-oss-120b" as const,
+    maxCostUsd: 0.05,
+    requireAuthorExplanation: true,
+    useReviewerRules,
+  });
+  try {
+    await callerGit("init", "--initial-branch=main");
+    await callerGit("config", "user.name", "Caller");
+    await callerGit("config", "user.email", "caller@example.invalid");
+    await callerGit("config", "commit.gpgsign", "false");
+    await writeFile(join(caller, "caller.txt"), "caller\n");
+    await callerGit("add", ".");
+    await callerGit("commit", "-m", "caller base");
+
+    const callerSettingsPath = await saveLocalSimpleReviewSettingsV2(caller, settings(true));
+    const targetSettingsPath = await saveLocalSimpleReviewSettingsV2(f.repo, settings(false));
+    const run = (extra: string[] = []) =>
+      exec(
+        process.execPath,
+        [
+          cliPath,
+          "review",
+          "--request",
+          f.requestPath,
+          "--config",
+          f.configPath,
+          "--dry-run",
+          ...extra,
+        ],
+        { cwd: caller },
+      );
+
+    const targetOff = await run();
+    assert.match(targetOff.stdout, /No provider calls/);
+    assert.doesNotMatch(targetOff.stdout, /Reviewer guidance:/);
+
+    await writeFile(callerSettingsPath, JSON.stringify(settings(false)));
+    await writeFile(targetSettingsPath, JSON.stringify(settings(true)));
+    const targetOn = await run();
+    assert.match(targetOn.stdout, /Reviewer guidance: \d+ content bytes \(ACCEPTED\)/);
+
+    const explicitOff = await run(["--no-reviewer-rules"]);
+    assert.doesNotMatch(explicitOff.stdout, /Reviewer guidance:/);
+  } finally {
+    await rm(caller, { recursive: true, force: true });
+    await rm(f.repo, { recursive: true, force: true });
+  }
+});
+
 test("author explanation is required by default and explicit opt-out creates a bound declined request", async () => {
   const f = await fixture();
   const output: string[] = [];
@@ -1198,6 +1256,60 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
           (event) => event.type === "CALL_STARTED" && event.stage === "FINAL",
         );
         draft.splice(finalStarted + 1, 0, released);
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "RUN_STARTED");
+        draft.splice(index + 1, 0, structuredClone(draft[index]));
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "PRELIMINARY_PERSISTED");
+        const duplicate = structuredClone(draft[index]);
+        duplicate.preliminaryDigest = { algorithm: "SHA256", value: "b".repeat(64) };
+        draft.splice(index + 1, 0, duplicate);
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "FINDING_VERIFICATION_PERSISTED");
+        const duplicate = structuredClone(draft[index]);
+        duplicate.verificationDigest = { algorithm: "SHA256", value: "c".repeat(64) };
+        draft.splice(index + 1, 0, duplicate);
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex(
+          (event) => event.type === "CALL_FAILED" && event.stage === "FINAL",
+        );
+        draft.splice(index, 0, structuredClone(draft[index]));
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "RUN_FAILED");
+        draft.splice(index, 0, structuredClone(draft[index]));
+      },
+      (draft: typeof events) => {
+        const [persisted] = draft.splice(
+          draft.findIndex((event) => event.type === "PRELIMINARY_PERSISTED"),
+          1,
+        );
+        const started = draft.findIndex(
+          (event) => event.type === "CALL_STARTED" && event.stage === "PRELIMINARY",
+        );
+        draft.splice(started + 1, 0, persisted);
+      },
+      (draft: typeof events) => {
+        const [persisted] = draft.splice(
+          draft.findIndex((event) => event.type === "FINDING_VERIFICATION_PERSISTED"),
+          1,
+        );
+        const preliminary = draft.findIndex((event) => event.type === "PRELIMINARY_PERSISTED");
+        draft.splice(preliminary, 0, persisted);
+      },
+      (draft: typeof events) => {
+        const [failed] = draft.splice(
+          draft.findIndex((event) => event.type === "CALL_FAILED" && event.stage === "FINAL"),
+          1,
+        );
+        const finalStarted = draft.findIndex(
+          (event) => event.type === "CALL_STARTED" && event.stage === "FINAL",
+        );
+        draft.splice(finalStarted, 0, failed);
       },
     ];
     for (const corrupt of corruptions) {

@@ -45,6 +45,7 @@ export type ResumeRefusalV1 =
   | "ALREADY_COMPLETED"
   | "ALREADY_RESUMED"
   | "NO_RUN_STARTED"
+  | "MULTIPLE_RUN_STARTED"
   | "NOT_TERMINALLY_FAILED"
   | "UNEXPECTED_SUCCEEDED_CALL_STAGE"
   | "NO_PRELIMINARY_CALL_SUCCEEDED"
@@ -54,12 +55,18 @@ export type ResumeRefusalV1 =
   | "PRELIMINARY_ARTIFACT_UNRECOGNIZED"
   | "NO_PRELIMINARY_CALL_STARTED"
   | "NO_PRELIMINARY_PERSISTED"
+  | "MULTIPLE_PRELIMINARY_PERSISTED"
   | "NO_FINDING_VERIFICATION_PERSISTED"
+  | "MULTIPLE_FINDING_VERIFICATION_PERSISTED"
+  | "PERSISTED_LIFECYCLE_OUT_OF_ORDER"
   | "NO_AUTHOR_DELIVERED"
   | "MULTIPLE_AUTHOR_LIFECYCLE_TRANSITIONS"
   | "AUTHOR_LIFECYCLE_OUT_OF_ORDER"
   | "NO_FINAL_CALL_STARTED"
   | "NO_FINAL_CALL_FAILED"
+  | "MULTIPLE_TERMINAL_FINAL_FAILURES"
+  | "MULTIPLE_RUN_FAILED"
+  | "RUN_FAILED_OUT_OF_ORDER"
   | "CALL_ATTEMPTED_AFTER_FINAL_FAILURE"
   | "PRELIMINARY_DID_NOT_START_FIRST"
   | "ATTEMPT_NUMBERS_NOT_MONOTONIC"
@@ -103,14 +110,19 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
   const findingVerificationSucceededCalls = succeededCalls.filter(
     (event) => event.stage === "FINDING_VERIFICATION",
   );
+  const findingVerificationSucceeded = findingVerificationSucceededCalls[0];
   const first = events[0];
   const last = events.at(-1);
+  const runStartedEvents = eventsOfType(events, "RUN_STARTED");
   const started = first?.type === "RUN_STARTED" ? first : undefined;
-  const runFailed = last?.type === "RUN_FAILED" ? last : undefined;
+  const runFailedEvents = eventsOfType(events, "RUN_FAILED");
+  const runFailed = runFailedEvents.length === 1 ? runFailedEvents[0] : undefined;
   const preliminaryStarted = startedCalls.find((event) => event.stage === "PRELIMINARY");
   const preliminarySucceeded = preliminarySucceededCalls.at(-1);
-  const preliminaryPersisted = eventsOfType(events, "PRELIMINARY_PERSISTED")[0];
-  const findingVerificationPersisted = eventsOfType(events, "FINDING_VERIFICATION_PERSISTED")[0];
+  const preliminaryPersistedEvents = eventsOfType(events, "PRELIMINARY_PERSISTED");
+  const preliminaryPersisted = preliminaryPersistedEvents[0];
+  const findingVerificationPersistedEvents = eventsOfType(events, "FINDING_VERIFICATION_PERSISTED");
+  const findingVerificationPersisted = findingVerificationPersistedEvents[0];
   const authorLifecycleEvents = events.filter(
     (
       event,
@@ -123,7 +135,12 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
   const firstFinalStarted = startedCalls.find((event) => event.stage === "FINAL");
   const finalStarted = startedCalls.findLast((event) => event.stage === "FINAL");
   const failedCalls = eventsOfType(events, "CALL_FAILED");
-  const finalFailed = failedCalls.at(-1)?.stage === "FINAL" ? failedCalls.at(-1) : undefined;
+  const finalFailedCalls = failedCalls.filter((event) => event.stage === "FINAL");
+  const finalFailed = finalFailedCalls.at(-1);
+  const terminalFinalFailures =
+    finalFailed === undefined
+      ? []
+      : finalFailedCalls.filter((event) => event.attemptNumber === finalFailed.attemptNumber);
 
   refuse(
     "ALREADY_COMPLETED",
@@ -134,11 +151,11 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
     events.some((event) => event.type === "RUN_RESUMED"),
   );
   refuse("NO_RUN_STARTED", started === undefined);
+  refuse("MULTIPLE_RUN_STARTED", runStartedEvents.length > 1);
   refuse(
     "NOT_TERMINALLY_FAILED",
-    runFailed === undefined &&
-      (events.some((event) => event.type === "RUN_COMPLETED") ||
-        finalFailed?.error.diagnostic?.httpStatus !== 429),
+    events.some((event) => event.type === "RUN_COMPLETED") ||
+      (runFailed === undefined && finalFailed?.error.diagnostic?.httpStatus !== 429),
   );
   refuse(
     "UNEXPECTED_SUCCEEDED_CALL_STAGE",
@@ -151,7 +168,9 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
   refuse("TOO_MANY_FINDING_VERIFICATION_CALLS", findingVerificationSucceededCalls.length > 1);
   refuse("NO_PRELIMINARY_CALL_STARTED", preliminaryStarted === undefined);
   refuse("NO_PRELIMINARY_PERSISTED", preliminaryPersisted === undefined);
+  refuse("MULTIPLE_PRELIMINARY_PERSISTED", preliminaryPersistedEvents.length > 1);
   refuse("NO_FINDING_VERIFICATION_PERSISTED", findingVerificationPersisted === undefined);
+  refuse("MULTIPLE_FINDING_VERIFICATION_PERSISTED", findingVerificationPersistedEvents.length > 1);
   refuse("NO_AUTHOR_DELIVERED", authorDelivered === undefined);
   refuse("MULTIPLE_AUTHOR_LIFECYCLE_TRANSITIONS", authorLifecycleEvents.length > 1);
   refuse(
@@ -166,6 +185,16 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
   );
   refuse("NO_FINAL_CALL_STARTED", finalStarted === undefined);
   refuse("NO_FINAL_CALL_FAILED", finalFailed === undefined);
+  refuse("MULTIPLE_TERMINAL_FINAL_FAILURES", terminalFinalFailures.length > 1);
+  refuse("MULTIPLE_RUN_FAILED", runFailedEvents.length > 1);
+  refuse(
+    "RUN_FAILED_OUT_OF_ORDER",
+    runFailed !== undefined &&
+      !events.some((event) => event.type === "RUN_COMPLETED") &&
+      (runFailed !== last ||
+        finalFailed === undefined ||
+        events.indexOf(runFailed) < events.indexOf(finalFailed)),
+  );
   refuse(
     "PRELIMINARY_ATTEMPT_MISMATCH",
     preliminarySucceeded?.attemptNumber !== preliminaryPersisted?.acceptedAttemptNumber,
@@ -174,6 +203,19 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
     "PRELIMINARY_ARTIFACT_UNRECOGNIZED",
     preliminaryPersisted !== undefined &&
       !ACCEPTED_PRELIMINARY_ARTIFACTS_V1.includes(preliminaryPersisted.responseArtifact),
+  );
+  refuse(
+    "PERSISTED_LIFECYCLE_OUT_OF_ORDER",
+    preliminarySucceeded !== undefined &&
+      preliminaryPersisted !== undefined &&
+      findingVerificationPersisted !== undefined &&
+      (events.indexOf(preliminarySucceeded) >= events.indexOf(preliminaryPersisted) ||
+        events.indexOf(preliminaryPersisted) >= events.indexOf(findingVerificationPersisted) ||
+        (findingVerificationPersisted.providerCall &&
+          (findingVerificationSucceededCalls.length !== 1 ||
+            findingVerificationSucceeded === undefined ||
+            events.indexOf(findingVerificationSucceeded) >=
+              events.indexOf(findingVerificationPersisted)))),
   );
 
   if (finalFailed !== undefined) {

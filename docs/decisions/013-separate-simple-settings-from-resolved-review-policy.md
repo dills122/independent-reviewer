@@ -42,7 +42,15 @@ Simple settings and their resolved form use version 2 for the truthful
 `useReviewerRules` name and matching provenance. The reader retains a strict,
 read-only version-1 decoder and explicitly translates
 `discoverRepositorySteering` to `useReviewerRules` in memory. `init` writes only
-version 2; reading historical settings never silently rewrites local state.
+version 2; reading historical settings never silently rewrites local state. The
+deprecated public v1 override schema, resolver input, and resolver remain strict
+compatibility adapters: they accept and return old field name while translating
+through v2 policy resolution internally.
+
+Request-file review resolves target repository from validated request before
+reading local settings. Target repository's `useReviewerRules` value controls
+guidance capture regardless of caller working directory; only explicit
+`--reviewer-rules` or `--no-reviewer-rules` overrides it.
 
 The engine owns safe defaults for routing, privacy posture, token allocation,
 evidence limits, output limits, pacing, timeouts, retries, and repairs. Each
@@ -81,8 +89,12 @@ formal limitations continue to determine the verdict.
 
 Friendly requests use version 3 and packet metadata versions 5/6. Resume
 requires matching request, packet, prompt, result, and run-record versions plus
-the same author status and digest. Existing request versions keep their current
-behavior. Old and new lifecycle artifacts cannot be mixed or silently upgraded.
+same author status and digest. Resumable ledger must contain exactly one run
+start, preliminary persistence, finding-verification persistence, and author
+transition in lifecycle order, plus one terminal failure for last final attempt.
+Earlier provider retry records remain valid. Existing request versions keep
+their current behavior. Old and new lifecycle artifacts cannot be mixed or
+silently upgraded.
 Detailed evidence and lifecycle rationale are retained in
 the [steering and author-absence research](../research/2026-09-11-steering-and-author-absence-contract.md).
 

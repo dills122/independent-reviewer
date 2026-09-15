@@ -367,6 +367,99 @@ describe("evaluateResumeShapeV1", () => {
     assert.deepEqual(refusalsOf(tooLate), ["AUTHOR_LIFECYCLE_OUT_OF_ORDER"]);
   });
 
+  it("requires one run and one persisted artifact transition", () => {
+    const duplicateRun = eligibleEvents();
+    const runStarted = duplicateRun[0];
+    assert.ok(runStarted);
+    duplicateRun.splice(1, 0, structuredClone(runStarted));
+    assert.ok(refusalsOf(duplicateRun).includes("MULTIPLE_RUN_STARTED"));
+
+    const duplicatePreliminary = eligibleEvents();
+    const preliminaryIndex = duplicatePreliminary.findIndex(
+      (candidate) => candidate.type === "PRELIMINARY_PERSISTED",
+    );
+    const preliminaryPersisted = duplicatePreliminary[preliminaryIndex];
+    assert.ok(preliminaryPersisted);
+    duplicatePreliminary.splice(preliminaryIndex + 1, 0, structuredClone(preliminaryPersisted));
+    assert.ok(refusalsOf(duplicatePreliminary).includes("MULTIPLE_PRELIMINARY_PERSISTED"));
+
+    const duplicateVerification = eligibleEvents();
+    const verificationIndex = duplicateVerification.findIndex(
+      (candidate) => candidate.type === "FINDING_VERIFICATION_PERSISTED",
+    );
+    const verificationPersisted = duplicateVerification[verificationIndex];
+    assert.ok(verificationPersisted);
+    duplicateVerification.splice(verificationIndex + 1, 0, structuredClone(verificationPersisted));
+    assert.ok(
+      refusalsOf(duplicateVerification).includes("MULTIPLE_FINDING_VERIFICATION_PERSISTED"),
+    );
+  });
+
+  it("requires persisted transitions in lifecycle order", () => {
+    const preliminaryTooEarly = eligibleEvents();
+    const [preliminary] = preliminaryTooEarly.splice(
+      preliminaryTooEarly.findIndex((candidate) => candidate.type === "PRELIMINARY_PERSISTED"),
+      1,
+    );
+    assert.ok(preliminary);
+    preliminaryTooEarly.splice(1, 0, preliminary);
+    assert.ok(refusalsOf(preliminaryTooEarly).includes("PERSISTED_LIFECYCLE_OUT_OF_ORDER"));
+
+    const verificationTooEarly = eligibleEvents();
+    const [verification] = verificationTooEarly.splice(
+      verificationTooEarly.findIndex(
+        (candidate) => candidate.type === "FINDING_VERIFICATION_PERSISTED",
+      ),
+      1,
+    );
+    assert.ok(verification);
+    verificationTooEarly.splice(2, 0, verification);
+    assert.ok(refusalsOf(verificationTooEarly).includes("PERSISTED_LIFECYCLE_OUT_OF_ORDER"));
+  });
+
+  it("requires one terminal failure for the last final attempt while retaining earlier retries", () => {
+    const duplicateTerminal = eligibleEvents();
+    const failureIndex = duplicateTerminal.findIndex(
+      (candidate) => candidate.type === "CALL_FAILED" && candidate.stage === "FINAL",
+    );
+    const terminalFailure = duplicateTerminal[failureIndex];
+    assert.ok(terminalFailure);
+    duplicateTerminal.splice(failureIndex, 0, structuredClone(terminalFailure));
+    assert.ok(refusalsOf(duplicateTerminal).includes("MULTIPLE_TERMINAL_FINAL_FAILURES"));
+
+    const retried = eligibleEvents();
+    const finalIndex = retried.findIndex(
+      (candidate) => candidate.type === "CALL_STARTED" && candidate.stage === "FINAL",
+    );
+    retried.splice(
+      finalIndex,
+      0,
+      callStarted("FINAL", 3),
+      callFailed429(3),
+      event({
+        type: "PROVIDER_RETRY_REQUESTED",
+        stage: "FINAL",
+        failedAttemptNumber: 3,
+        retryAttemptNumber: 4,
+        retriesUsed: 1,
+        maxRetries: 1,
+        delayMs: 1,
+        chargedFailedTokens: 0,
+        chargedFailedCostUsd: 0,
+      }),
+    );
+    const lastStarted = retried.findLast(
+      (candidate) => candidate.type === "CALL_STARTED" && candidate.stage === "FINAL",
+    );
+    const lastFailed = retried.findLast(
+      (candidate) => candidate.type === "CALL_FAILED" && candidate.stage === "FINAL",
+    );
+    assert.ok(lastStarted?.type === "CALL_STARTED" && lastFailed?.type === "CALL_FAILED");
+    lastStarted.attemptNumber = 4;
+    lastFailed.attemptNumber = 4;
+    assert.deepEqual(refusalsOf(retried), []);
+  });
+
   it("reports every failing predicate rather than the first", () => {
     const refusals = refusalsOf([]);
 

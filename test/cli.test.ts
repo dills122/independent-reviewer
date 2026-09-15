@@ -501,7 +501,7 @@ it("requires the OpenRouter key without accepting it as a command-line option", 
       [
         "review",
         "--request",
-        "request.json",
+        "test/fixtures/review-request.valid.json",
         "--config",
         "examples/review-config.gpt-oss-120b.json",
       ],
@@ -1195,7 +1195,7 @@ it("rejects duplicate properties in request and config JSON before provider acce
       1,
     );
     assert.match(errors.at(-1) ?? "", /JSON_DUPLICATE_PROPERTY.*review request/);
-    assert.equal(credentialReads, 1);
+    assert.equal(credentialReads, 0);
     assert.equal(providerCreations, 0);
   } finally {
     await rm(directory, { recursive: true, force: true });

@@ -7,15 +7,55 @@ import {
   RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
   RESOLVED_SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA,
   ResolvedSimpleReviewSettingsV2Schema,
+  type ResolveSimpleReviewSettingsInputV1,
+  resolveSimpleReviewSettingsV1,
   resolveSimpleReviewSettingsV2,
   SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
   SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA,
+  SimpleReviewSettingsOverridesV1Schema,
   SimpleReviewSettingsV1Schema,
   SimpleReviewSettingsV2Schema,
   supportedReviewModelsV1,
 } from "../../src/index.js";
 
 describe("simple review settings", () => {
+  it("keeps the deprecated v1 resolver as an explicit old-name compatibility adapter", () => {
+    const input: ResolveSimpleReviewSettingsInputV1 = {
+      local: {
+        schemaVersion: 1,
+        model: "openai/gpt-oss-120b",
+        maxCostUsd: 0.05,
+        requireAuthorExplanation: true,
+        discoverRepositorySteering: true,
+      },
+      cli: { discoverRepositorySteering: false },
+    };
+
+    assert.deepEqual(SimpleReviewSettingsOverridesV1Schema.parse(input.cli), input.cli);
+    assert.throws(
+      () => SimpleReviewSettingsOverridesV1Schema.parse({ useReviewerRules: false }),
+      /unrecognized key/i,
+    );
+    const resolved = resolveSimpleReviewSettingsV1(input);
+    assert.equal(resolved.schemaVersion, 1);
+    assert.equal(resolved.settings.discoverRepositorySteering, false);
+    assert.equal(resolved.provenance.discoverRepositorySteering, "CLI");
+    assert.equal("useReviewerRules" in resolved.settings, false);
+
+    const current = resolveSimpleReviewSettingsV2({
+      local: {
+        schemaVersion: 2,
+        model: "openai/gpt-oss-120b",
+        maxCostUsd: 0.05,
+        requireAuthorExplanation: true,
+        useReviewerRules: true,
+      },
+      cli: { useReviewerRules: false },
+    });
+    assert.deepEqual(resolved.reviewRunConfig, current.reviewRunConfig);
+    assert.deepEqual(resolved.reviewRunConfigDigest, current.reviewRunConfigDigest);
+  });
+
   it("resolves CLI values over local settings and engine defaults", () => {
     const resolved = resolveSimpleReviewSettingsV2({
       local: {

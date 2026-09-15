@@ -63,6 +63,14 @@ export const SimpleReviewSettingsV2Schema = z.strictObject({
   useReviewerRules: z.boolean(),
 });
 
+/** @deprecated Use `SimpleReviewSettingsOverridesV2Schema`. Kept for v1 API compatibility. */
+export const SimpleReviewSettingsOverridesV1Schema = z.strictObject({
+  model: ReviewModelSlugV1Schema.optional(),
+  maxCostUsd: MaxReviewCostUsdV1Schema.optional(),
+  requireAuthorExplanation: z.boolean().optional(),
+  discoverRepositorySteering: z.boolean().optional(),
+});
+
 export const SimpleReviewSettingsOverridesV2Schema = z.strictObject({
   model: ReviewModelSlugV1Schema.optional(),
   maxCostUsd: MaxReviewCostUsdV1Schema.optional(),
@@ -71,7 +79,7 @@ export const SimpleReviewSettingsOverridesV2Schema = z.strictObject({
 });
 
 const SimpleReviewSettingSourceV1Schema = z.enum(["CLI", "LOCAL", "ENGINE_DEFAULT"]);
-const SimpleReviewSettingsProvenanceV1Schema = z.strictObject({
+export const SimpleReviewSettingsProvenanceV1Schema = z.strictObject({
   model: SimpleReviewSettingSourceV1Schema,
   maxCostUsd: SimpleReviewSettingSourceV1Schema,
   requireAuthorExplanation: SimpleReviewSettingSourceV1Schema,
@@ -213,6 +221,12 @@ export interface ResolveSimpleReviewSettingsInputV2 {
   cli?: unknown;
 }
 
+/** @deprecated Use `ResolveSimpleReviewSettingsInputV2`. */
+export interface ResolveSimpleReviewSettingsInputV1 {
+  local?: unknown;
+  cli?: unknown;
+}
+
 function settingSourceV1(
   name: keyof z.infer<typeof SimpleReviewSettingsOverridesV2Schema>,
   cli: z.infer<typeof SimpleReviewSettingsOverridesV2Schema>,
@@ -255,6 +269,58 @@ export function resolveSimpleReviewSettingsV2(
     settingsDigest: digestCanonicalJson(settings),
     reviewRunConfig,
     reviewRunConfigDigest: digestCanonicalJson(reviewRunConfig),
+  });
+}
+
+/**
+ * @deprecated Use `resolveSimpleReviewSettingsV2`.
+ *
+ * Preserves the public v1 field name at both input and output boundaries while delegating policy
+ * resolution through the current implementation. No v1 input is accepted by the v2 resolver.
+ */
+export function resolveSimpleReviewSettingsV1(
+  input: ResolveSimpleReviewSettingsInputV1,
+): ResolvedSimpleReviewSettingsV1 {
+  const historicalCli = SimpleReviewSettingsOverridesV1Schema.parse(input.cli ?? {});
+  const historicalLocal =
+    input.local === undefined ? undefined : SimpleReviewSettingsV1Schema.parse(input.local);
+  const local =
+    historicalLocal === undefined
+      ? undefined
+      : translateSimpleReviewSettingsV1ToV2(historicalLocal);
+  const current = resolveSimpleReviewSettingsV2({
+    ...(local ? { local } : {}),
+    cli: {
+      ...(historicalCli.model !== undefined ? { model: historicalCli.model } : {}),
+      ...(historicalCli.maxCostUsd !== undefined ? { maxCostUsd: historicalCli.maxCostUsd } : {}),
+      ...(historicalCli.requireAuthorExplanation !== undefined
+        ? { requireAuthorExplanation: historicalCli.requireAuthorExplanation }
+        : {}),
+      ...(historicalCli.discoverRepositorySteering !== undefined
+        ? { useReviewerRules: historicalCli.discoverRepositorySteering }
+        : {}),
+    },
+  });
+  const settings = SimpleReviewSettingsV1Schema.parse({
+    schemaVersion: 1,
+    model: current.settings.model,
+    maxCostUsd: current.settings.maxCostUsd,
+    requireAuthorExplanation: current.settings.requireAuthorExplanation,
+    discoverRepositorySteering: current.settings.useReviewerRules,
+  });
+  return ResolvedSimpleReviewSettingsV1Schema.parse({
+    schemaVersion: 1,
+    settings,
+    provenance: {
+      model: current.provenance.model,
+      maxCostUsd: current.provenance.maxCostUsd,
+      requireAuthorExplanation: current.provenance.requireAuthorExplanation,
+      discoverRepositorySteering: current.provenance.useReviewerRules,
+    },
+    profile: current.profile,
+    settingsDigest: digestCanonicalJson(settings),
+    reviewRunConfig: current.reviewRunConfig,
+    reviewRunConfigDigest: current.reviewRunConfigDigest,
   });
 }
 

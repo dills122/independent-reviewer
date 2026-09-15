@@ -116,6 +116,10 @@ interface PacketPreparationPolicyV1 {
   suppliedConfig?: ReviewRunConfigV3;
   requireAuthorExplanation?: boolean;
   useReviewerRules?: boolean;
+  loadedRequest?: {
+    path: string;
+    request: ReviewRequest;
+  };
 }
 
 interface CommandOptionSpecV1 {
@@ -500,8 +504,10 @@ function friendlySettingsOverridesV1(options: SimpleSettingsCommandOptionsV1) {
 
 async function resolveSimpleSettingsForOptionsV1(
   options: SimpleSettingsCommandOptionsV1,
+  resolvedRepository?: string,
 ): Promise<ResolvedSimpleReviewSettingsV2> {
-  const repository = await resolveRepositoryRootV1(options.repo ?? process.cwd());
+  const repository =
+    resolvedRepository ?? (await resolveRepositoryRootV1(options.repo ?? process.cwd()));
   const maxCostUsd = maxCostOptionV1(options.maxCost);
   return resolveSimpleReviewSettingsV2({
     local: await readLocalSimpleReviewSettingsV2(repository),
@@ -564,6 +570,7 @@ async function showSimpleReviewConfigV1(
 /** The run configuration for this invocation, from `--config` or from simple settings. */
 async function resolveReviewConfigV1(
   options: ReviewConfigurationOptionsV1,
+  resolvedRepository?: string,
 ): Promise<ReviewRunConfigV3> {
   const configPath = options.config;
   const usesSimpleFlags = options.model !== undefined || options.maxCost !== undefined;
@@ -578,7 +585,7 @@ async function resolveReviewConfigV1(
       }),
     );
   }
-  return (await resolveSimpleSettingsForOptionsV1(options)).reviewRunConfig;
+  return (await resolveSimpleSettingsForOptionsV1(options, resolvedRepository)).reviewRunConfig;
 }
 
 /** The human-readable view of the same validated report the JSON view emits. */
@@ -645,6 +652,33 @@ async function friendlyReviewBehaviorV1(options: SimpleSettingsCommandOptionsV1)
   };
 }
 
+/** Request files own author state; only an explicit reviewer-rules flag may override target state. */
+function requestReviewerRulesOverrideV1(
+  options: SimpleSettingsCommandOptionsV1,
+): Pick<PacketPreparationPolicyV1, "useReviewerRules"> {
+  const override = friendlySettingsOverridesV1(options).useReviewerRules;
+  return override === undefined ? {} : { useReviewerRules: override };
+}
+
+async function loadReviewRequestV1(path: string): Promise<{
+  path: string;
+  request: ReviewRequest;
+  repositoryRoot: string;
+}> {
+  const requestPath = resolve(path);
+  const request = ReviewRequestSchema.parse(
+    await readStrictJsonFileV1(requestPath, {
+      maxBytes: MAX_EXTERNAL_JSON_BYTES_V1,
+      source: "review request",
+    }),
+  );
+  return {
+    path: requestPath,
+    request,
+    repositoryRoot: await resolveRepositoryRootV1(request.repository.path),
+  };
+}
+
 async function preparePacket(
   options: PacketCommandOptionsV1,
   policy: PacketPreparationPolicyV1 = {},
@@ -670,9 +704,11 @@ async function preparePacket(
         },
         policy.suppliedConfig,
       );
-  const requestPath = requestOption ? resolve(requestOption) : undefined;
+  const requestPath =
+    policy.loadedRequest?.path ?? (requestOption ? resolve(requestOption) : undefined);
   let request: ReviewRequest;
   if (assembled) request = assembled.request;
+  else if (policy.loadedRequest) request = policy.loadedRequest.request;
   else {
     if (!requestPath) throw new Error("Review request path is required.");
     request = ReviewRequestSchema.parse(
@@ -867,6 +903,7 @@ async function review(
   const explicitAdvancedConfig = options.config !== undefined;
   const explicitSimpleSettings = options.model !== undefined || options.maxCost !== undefined;
   let effectiveOptions = options;
+  const loadedRequest = options.request ? await loadReviewRequestV1(options.request) : undefined;
   if (!options.request) {
     effectiveOptions = { ...options, ...(await loadLocalSettings(options)) };
     if (options.noAuthor) {
@@ -878,15 +915,20 @@ async function review(
       effectiveOptions = withoutLocalConfig;
     }
   }
-  const behavior = await friendlyReviewBehaviorV1(effectiveOptions);
+  const behavior = loadedRequest
+    ? requestReviewerRulesOverrideV1(effectiveOptions)
+    : await friendlyReviewBehaviorV1(effectiveOptions);
   if (effectiveOptions.dryRun) {
-    const config = await resolveReviewConfigV1(effectiveOptions);
+    const config = await resolveReviewConfigV1(effectiveOptions, loadedRequest?.repositoryRoot);
     const temporary = await mkdtemp(join(tmpdir(), "independent-reviewer-preflight-"));
     try {
       const dryOptions = { ...effectiveOptions, output: join(temporary, "packet") };
       const prepared = await preparePacket(dryOptions, {
         expectedConfigId: config.configId,
         suppliedConfig: config,
+        ...(loadedRequest
+          ? { loadedRequest: { path: loadedRequest.path, request: loadedRequest.request } }
+          : {}),
         ...behavior,
       });
       const admission = await preflightReview(prepared.packetPath, config, prepared.repositoryRoot);
@@ -920,7 +962,7 @@ async function review(
       await rm(temporary, { recursive: true, force: true });
     }
   }
-  const config = await resolveReviewConfigV1(effectiveOptions);
+  const config = await resolveReviewConfigV1(effectiveOptions, loadedRequest?.repositoryRoot);
   const apiKey = dependencies.readOpenRouterApiKey();
   if (!apiKey || apiKey.trim().length === 0) {
     throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
@@ -928,6 +970,9 @@ async function review(
   const prepared = await preparePacket(effectiveOptions, {
     expectedConfigId: config.configId,
     suppliedConfig: config,
+    ...(loadedRequest
+      ? { loadedRequest: { path: loadedRequest.path, request: loadedRequest.request } }
+      : {}),
     ...behavior,
   });
   // Construct provider only after every caller-controlled JSON document has passed strict parsing.
