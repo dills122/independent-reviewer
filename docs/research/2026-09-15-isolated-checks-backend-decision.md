@@ -119,13 +119,38 @@ Operator-owned catalog entry:
 | `workingDirectory` | Normalized path inside reconstructed snapshot; cannot escape or be a symlink. |
 | `exitProtocol` | Disjoint pass, assertion-failure, and setup/tool-failure code sets; signals never count as assertion failures. |
 | `baseHeadMode` | `REQUIRED_IDENTICAL`, `HEAD_ONLY_NEW_FEATURE`, or `SINGLE_TARGET`. |
+| `repetitionPlan` | Operator-owned, non-empty ordered plan with plan ID/digest, one fixed runner-owned seed channel, and entries containing unique contiguous zero-based index plus non-empty canonical seed. Repeated seed values are allowed only as separately indexed operator entries; repository and provider content cannot add, remove, reorder, or replace them. |
 | `environmentRequirements` | Capability names, runtime family/version range, architecture, and non-secret variable names; no values. |
 | `oracle` | `SUPPLIED` or `GENERATED`, assertion digest, obligation refs, valid input domain, and required validation record. |
 | `enabledForExternalRequest` | Explicit operator decision; default false. |
 
 Catalog resolution occurs before reviewer interaction and produces a digest of
-the exact entry. Unknown, disabled, changed, or ambiguous IDs return `NOT_RUN`;
-they never fall back to a command string.
+the exact entry, including JCS/SHA-256 digest of the non-empty repetition plan.
+Changing any entry, seed, order, or seed channel requires a new spec revision and
+digest. Unknown, disabled, changed, or ambiguous IDs return `NOT_RUN`; they never
+fall back to a command string.
+
+### `CheckExecutionRequestV1`
+
+Before the first attempt or backend-resource creation, the runner resolves and
+durably syncs one immutable execution request. It binds request ID/digest, exact
+spec/policy/environment/oracle/engine identities, target snapshot identities,
+BASE/HEAD mode, exact canonical repetition-plan snapshot and digest, and the
+complete ordered expected attempt keys. Expected keys are plan-entry-major
+Cartesian product with required targets: `(entry0, BASE)`, `(entry0, HEAD)`,
+then next entry for `REQUIRED_IDENTICAL`; HEAD only for
+`HEAD_ONLY_NEW_FEATURE`; or explicitly named target for `SINGLE_TARGET`.
+
+Operator-owned catalog configuration is the sole source of the plan. Reviewer,
+repository, provider, retry logic, and observed outcomes cannot choose its size
+or seeds. Every `CheckResultV1` binds request digest, repetition-plan digest,
+entry index/seed digest, and target key. Exactly one terminal result must exist
+for every expected key, and none for any other key. Semantic or operational
+outcomes never cause early stop, retry, seed replacement, or favorable-result
+selection. If a fatal controller state makes later execution unsafe, runner
+materializes `NOT_RUN` results with a bounded reason for every remaining key;
+if durable storage cannot do that, the request remains invalid and produces no
+comparison or provider projection.
 
 ### `CheckExecutionPolicyV1`
 
@@ -162,7 +187,7 @@ container/process ID, counters, or other volatile observation:
 | `image` | Manifest digest, config digest, and required local-only acquisition policy. |
 | `dependencies` | Lockfile/content digest and acquisition provenance; `NONE` when image contains all requirements. |
 | `capabilities` | Effective network, mount, user, PID, cgroup/controller, seccomp, capability, privilege, scratch, and output-limit states. |
-| `environment` | Sorted names plus digest of exact fixed values; secret values are forbidden rather than hidden behind a digest. |
+| `environment` | Sorted names plus digest of exact fixed values and identity of the fixed runner-owned seed channel; per-attempt seed values are plan-bound check inputs, not stable environment fields. Secret values are forbidden rather than hidden behind a digest. |
 | `qualification` | Probe-suite version, exact qualifying result digest, and expiry/recheck policy. |
 
 ### `CheckEnvironmentObservationV1`
@@ -177,7 +202,8 @@ One attempt's preflight and runtime observation:
 | `actualBackend` | Actual client/daemon/runtime/kernel/security configuration and private backend resource identity. |
 | `actualImage` | Locally present image/config digests and pull-never preflight receipt. |
 | `actualCapabilities` | Applied network, mount, user, cgroup/controller, seccomp, capability, privilege, and limit readings. |
-| `actualEnvironment` | Sorted names and digest of exact values passed after empty-environment construction. |
+| `actualEnvironment` | Sorted fixed names and digest of exact fixed values passed after empty-environment construction; excludes plan seed value, which is bound separately. |
+| `planEntry` | Exact repetition-plan digest, entry index, seed digest, and runner-owned seed-channel receipt; paired BASE/HEAD attempts must bind the same entry. |
 | `qualificationState` | Qualification freshness and exact probe result used at admission. |
 | `drift` | Empty on admission; any difference from stable profile produces `UNSUPPORTED_ENVIRONMENT` before assertion. |
 
@@ -196,7 +222,7 @@ One immutable attempt result:
 
 | Field | Required meaning |
 | --- | --- |
-| Identity | Result/run/request IDs plus exact check, policy, environment, oracle, snapshot, BASE/HEAD side, and source digests. |
+| Identity | Result/run/request IDs plus exact check, policy, environment, oracle, snapshot, BASE/HEAD side, source, repetition-plan, plan-entry index/seed, target-key, and execution-request digests. |
 | Lifecycle | Requested, admitted, setup-started, assertion-started, terminal-triggered, exited, cleanup-started, and cleanup-finished timestamps/events with valid transition rules. |
 | Assertion outcome | `PASSED`, `FAILED`, or `NOT_OBSERVED`; semantic assertion result stays separate from process lifecycle. |
 | Execution outcome | Exactly one execution taxonomy value below plus a bounded runner reason code. |
@@ -230,8 +256,9 @@ Execution-outcome taxonomy:
 - `UNSUPPORTED_ENVIRONMENT`: backend or required capability/limit could not be
   proven before execution.
 - `NOT_RUN`: disabled, not requested, execution-admission budget rejected, or
-  another explicit pre-setup reason. A later model-delivery budget failure does
-  not rewrite an execution that already happened.
+  blocked by a prior fatal request state, or another explicit pre-setup reason.
+  A later model-delivery budget failure does not rewrite an execution that
+  already happened.
 
 `assertionOutcome` may be `PASSED` or `FAILED` only when execution is
 `COMPLETED` and exact exit-code mapping applies; every other execution outcome
@@ -284,16 +311,18 @@ the private run ledger.
 `CheckProviderStatusV1` is the only model-eligible check artifact in V1. Its
 closed discriminated schema contains only runner-generated identity,
 status/exit, and resource facts. Common fields are check and configured-command
-identities plus stable environment-profile identity. `SINGLE_RESULT_STATUS`
-adds an opaque pre-execution attempt handle, snapshot side, assertion/execution/
+identities, stable environment-profile identity, and repetition-plan digest.
+`TARGET_ATTEMPT_SET_STATUS` atomically contains one ordered status row for every
+planned `HEAD_ONLY_NEW_FEATURE` or `SINGLE_TARGET` attempt: opaque
+pre-execution attempt handle, plan index, snapshot side, assertion/execution/
 cleanup enums, normalized numeric exit code or signal class, normalized resource
-facts, and duration bucket. `COMPARISON_STATUS` instead adds only an opaque
-pre-execution comparison handle, comparability decision/reason code, comparison
-outcome, and aggregate duration/resource buckets; it contains no individual-side
-status. Backend error text and repository-controlled stdout/stderr never
-populate either variant. Neither contains a result/comparison digest, output
-bytes or excerpts, output counts, raw artifact path, scan detail, or raw-derived
-digest.
+facts, and duration bucket, followed by the validator-derived target aggregate.
+`COMPARISON_STATUS` instead adds only an opaque pre-execution comparison handle,
+comparability decision/reason code, validator-derived comparison aggregate, and
+aggregate duration/resource buckets; it contains no individual-side status.
+Backend error text and repository-controlled stdout/stderr never populate either
+variant. Neither contains a result/comparison digest, seed value, output bytes or
+excerpts, output counts, raw artifact path, scan detail, or raw-derived digest.
 
 Before provider delivery, the runner serializes exact `CheckProviderStatusV1`
 bytes and admits them against per-artifact and cumulative evidence/tool bytes
@@ -362,36 +391,84 @@ disputed outcomes. A model-generated test that fails is not self-validating.
 
 For `REQUIRED_IDENTICAL`, one immutable private comparison artifact binds:
 
-- opaque pre-execution comparison handle and exact ordered BASE then HEAD
-  snapshot identities;
+- opaque pre-execution comparison handle, execution-request and repetition-plan
+  digests, and exact ordered BASE then HEAD snapshot identities;
 - one shared check-spec, policy, stable environment-profile, oracle, and engine
   identity;
-- complete predeclared ordered repetition set as `(index, seed)` pairs;
+- complete operator-owned ordered repetition set as `(index, seedDigest)` pairs;
 - for every pair, ordered BASE-result digest then HEAD-result digest, with no
   missing, duplicate, discarded, or unexpected attempt;
 - comparability decision and bounded reason code;
-- exactly one outcome: `REGRESSION_REPRODUCED`, `FIX_REPRODUCED`,
-  `NO_DIFFERENCE`, `PRE_EXISTING_OR_SHARED_FAILURE`, `INCONCLUSIVE`, or
-  `NOT_COMPARABLE`; and
+- validator-derived per-pair classes and aggregate outcome from the total
+  mapping below; and
 - exact digest of the separately serialized provider projection, or `null` when
   projection was suppressed.
 
 Validation traverses the complete graph atomically before provider admission.
 The model never receives an individual side, favorable seed, comparison digest,
-or result digest. Missing/duplicate/unexpected attempts, identity drift,
-executor failure, cleanup failure, or incomplete durable state selects
-`INCONCLUSIVE` and suppresses stronger projection. One atomic
-`CheckProviderStatusV1` may then state the runner-generated comparison outcome;
-its opaque handle is not derived from private result content.
+or result digest. Missing, duplicate, reordered, or unexpected attempt keys;
+plan/request/digest mismatch; or invalid result transitions invalidate the
+comparison rather than producing an aggregate. One atomic
+`CheckProviderStatusV1` may state the runner-generated aggregate only after the
+validator accepts the exact complete set; its opaque handle is not derived from
+private result content.
+
+### Total repetition aggregation
+
+Validator, never caller or model, derives each BASE/HEAD pair class using this
+ordered first-match table. `PASS` means `COMPLETED`/`PASSED`/cleanup succeeded;
+`FAIL` means `COMPLETED`/`FAILED`/cleanup succeeded.
+
+| Precedence | Complete per-seed condition | Pair class |
+| --- | --- | --- |
+| 1 | Either side is a valid terminal `EXECUTOR_FAILURE` result marking its observation chain untrusted | `INCONCLUSIVE_EXECUTOR_FAILURE` |
+| 2 | Either cleanup is `FAILED` | `INCONCLUSIVE_CLEANUP_FAILURE` |
+| 3 | Stable identities match but observation-level comparability is false | `NOT_COMPARABLE` |
+| 4 | Either execution is `UNSUPPORTED_ENVIRONMENT` | `INCONCLUSIVE_UNSUPPORTED_ENVIRONMENT` |
+| 5 | Either execution is `SETUP_FAILURE`, `PROCESS_CRASHED`, `OOM_KILLED`, `OUTPUT_LIMIT_EXCEEDED`, `RESOURCE_LIMIT_EXCEEDED`, `TIMED_OUT`, `CANCELLED`, or `NOT_RUN`, or assertion is `NOT_OBSERVED` | `INCONCLUSIVE_EXECUTION` |
+| 6 | BASE `PASS`, HEAD `FAIL` | `REGRESSION_REPRODUCED` |
+| 7 | BASE `FAIL`, HEAD `PASS` | `FIX_REPRODUCED` |
+| 8 | BASE `PASS`, HEAD `PASS` | `NO_DIFFERENCE` |
+| 9 | BASE `FAIL`, HEAD `FAIL` | `PRE_EXISTING_OR_SHARED_FAILURE` |
+
+For every non-empty complete set of pair classes, validator derives exactly one
+aggregate by this ordered rule:
+
+1. any `INCONCLUSIVE_EXECUTOR_FAILURE` ->
+   `INCONCLUSIVE_EXECUTOR_FAILURE` and suppress provider projection;
+2. else any `INCONCLUSIVE_CLEANUP_FAILURE` ->
+   `INCONCLUSIVE_CLEANUP_FAILURE` and suppress provider projection;
+3. else any `NOT_COMPARABLE` -> `NOT_COMPARABLE`;
+4. else any `INCONCLUSIVE_UNSUPPORTED_ENVIRONMENT` ->
+   `INCONCLUSIVE_UNSUPPORTED_ENVIRONMENT`;
+5. else any `INCONCLUSIVE_EXECUTION` -> `INCONCLUSIVE_EXECUTION`;
+6. else when every pair class is the same semantic class, return that class;
+7. else return `INCONCLUSIVE_MIXED_OR_FLAKY`.
+
+This is total over every valid complete mixed result set: mixed semantic
+directions, pass/fail disagreement across seeds, and any combination of
+operational states cannot fall through or be caller-selected.
+
+For `HEAD_ONLY_NEW_FEATURE` and `SINGLE_TARGET`, request validator preserves the
+exact ordered result for every plan entry and derives one non-differential target
+aggregate using executor, cleanup, unsupported, then other-execution precedence;
+pair comparability is not applicable. If none applies, all `PASS` is
+`ALL_PASSED`, all `FAIL` is `ALL_FAILED`, and any mixture is `MIXED_OR_FLAKY`.
+Local operator report lists every planned entry and terminal result. Eligible
+provider projection is one atomic
+`TARGET_ATTEMPT_SET_STATUS` containing every row in plan order; it cannot omit a
+failed attempt. These target aggregates describe only the named snapshot and
+never imply a regression, fix, improvement, or BASE/HEAD difference.
 
 ## BASE/HEAD differential rules
 
 When `baseHeadMode` is `REQUIRED_IDENTICAL`, run exact same check-spec digest and
 stable environment ID against independently reconstructed BASE and HEAD
-snapshots. Each attempt has its own environment observation. Only source
-identity, designated side, timestamps, and private resource IDs may differ;
-stable-field drift makes pair inconclusive. Preserve both attempt records even
-when one fails.
+snapshots for every operator-owned plan entry. Paired attempts use same seed
+binding; each has its own environment observation. Only source identity,
+designated side, timestamps, and private resource IDs may differ; stable-field
+drift makes pair not comparable. Preserve both attempt records for every seed
+even when an earlier pair fails.
 
 | BASE | HEAD | Allowed interpretation |
 | --- | --- | --- |
@@ -401,16 +478,19 @@ when one fails.
 | completed/pass | completed/pass | Proposed regression not reproduced. |
 | any non-completed or cleanup-failed result | any | Inconclusive; no automatic retry or favorable-result selection. |
 
+Table is semantic summary for one pair; total repetition aggregation and its
+precedence table above are normative for mixed and operational outcomes.
+
 `HEAD_ONLY_NEW_FEATURE` requires a retained non-comparability reason and oracle
 validation. Do not synthesize a BASE command or treat BASE setup failure as a
 regression. It creates no `CheckComparisonV1` and makes no differential claim.
-Repetitions, if predeclared, retain every outcome and seed; evidence cannot
-discard a flaky run or repeat until the desired result appears.
+Every planned repetition retains its result and seed binding; evidence cannot
+discard a flaky run or repeat until desired result appears.
 
 `SINGLE_TARGET` runs one explicitly identified snapshot and creates no
-`CheckComparisonV1`. It may report target behavior under normal result,
-cleanup, oracle, and provider-admission rules, but must not claim a regression,
-fix, improvement, or BASE/HEAD difference.
+`CheckComparisonV1`. It preserves and reports every planned attempt under normal
+result, cleanup, oracle, and provider-admission rules, but must not claim a
+regression, fix, improvement, or BASE/HEAD difference.
 
 ## Backend comparison
 
@@ -528,6 +608,15 @@ Qualification fails closed if a measurement is unavailable.
   non-comparable new feature, single target, flaky seeded check, and stale-result
   identity; prove complete ordered result binding and atomic comparison
   projection;
+- tamper with plan order, seed, request digest, target key, result count, and
+  duplicate/extra attempts; prove comparison/projection rejection. Exercise
+  every per-pair class and all mixed-class precedence branches, including early
+  semantic, setup, unsupported, cleanup, and executor failures; prove every
+  remaining planned key receives an executed or explicit `NOT_RUN` result and
+  aggregate is validator-derived;
+- for multi-attempt `SINGLE_TARGET`, prove local report and eligible atomic
+  provider status include every planned row in plan order without differential
+  wording;
 - verify author logs never acquire `RUNNER_OBSERVED` provenance and no
   non-assertion outcome projects to demonstrated defect.
 

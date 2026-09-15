@@ -585,8 +585,22 @@ ID, never a shell string. Each entry defines:
 - timeout and output-byte limit;
 - network policy;
 - required environment variable names, never their secret values;
+- operator-owned non-empty ordered repetition plan with digest-bound unique
+  indexed entries, non-empty seeds, and fixed runner-owned seed channel;
 - expected isolation level; and
 - whether the check is enabled for external request.
+
+Before first attempt or backend creation, runner durably syncs immutable
+`CheckExecutionRequestV1` with exact spec, policy, stable environment, oracle,
+engine, snapshot target(s), exact canonical repetition-plan snapshot/digest, and
+complete ordered expected attempt keys. Reviewer, repository, provider, retry
+code, and prior outcomes cannot alter plan. Every result binds request/plan
+digest, entry index/seed digest, and target key. Validator requires exactly one
+terminal result per key and no missing, duplicate, reordered, or extra key.
+Results never cause early stop or replacement retry. A fatal safety condition
+creates explicit `NOT_RUN` results for unstarted keys when durable state remains
+trustworthy; otherwise request is invalid and no comparison or provider
+projection exists.
 
 The executor runs against a disposable reconstruction of the frozen target when
 the configured repository environment supports it. It does not run a requested
@@ -635,13 +649,32 @@ not a crash cleanup guarantee.
 
 `REQUIRED_IDENTICAL` differential evidence uses one private, versioned
 comparison artifact binding ordered BASE/HEAD result digests, shared
-check/policy/environment/oracle identities, and the complete predeclared
-repetition/seed set. Provider projection is atomic: never disclose one side or
-select a favorable repetition. Missing, duplicate, drifted, executor-failed, or
-cleanup-failed inputs are inconclusive and suppress stronger projection.
+check/policy/environment/oracle identities, execution-request and plan digests,
+and complete operator-owned repetition/seed set. Provider projection is atomic:
+never disclose one side or select a favorable repetition. Missing, duplicate,
+reordered, extra, or identity-mismatched inputs invalidate comparison and
+suppress projection.
+
+For each valid complete seed pair, validator applies ordered first match:
+terminal `EXECUTOR_FAILURE` -> `INCONCLUSIVE_EXECUTOR_FAILURE`; cleanup failure ->
+`INCONCLUSIVE_CLEANUP_FAILURE`; failed comparability -> `NOT_COMPARABLE`;
+unsupported side -> `INCONCLUSIVE_UNSUPPORTED_ENVIRONMENT`; any other
+non-completed/not-observed side -> `INCONCLUSIVE_EXECUTION`; otherwise BASE/HEAD
+pass/fail maps to `REGRESSION_REPRODUCED`, `FIX_REPRODUCED`, `NO_DIFFERENCE`, or
+`PRE_EXISTING_OR_SHARED_FAILURE`. Across non-empty pair set, same safety
+precedence applies; one uniform semantic class survives, and every other
+semantic mixture is `INCONCLUSIVE_MIXED_OR_FLAKY`. Validator derives outcome;
+caller cannot supply it.
+
 `HEAD_ONLY_NEW_FEATURE` and `SINGLE_TARGET` create no comparison artifact and
-cannot support regression, fix, or other differential claims; `SINGLE_TARGET`
-identifies one exact arbitrary snapshot rather than implying HEAD.
+cannot support regression, fix, or other differential claims. Both preserve
+every planned result and use executor, cleanup, unsupported, then
+other-execution precedence; pair comparability does not apply. Remaining sets
+derive `ALL_PASSED`, `ALL_FAILED`, or `MIXED_OR_FLAKY`. Operator report lists
+every entry; eligible provider status is one atomic ordered attempt set with no
+omitted row.
+`SINGLE_TARGET` identifies one exact arbitrary snapshot rather than implying
+HEAD.
 
 Universal environment construction is deferred. Initial fixtures may use a
 small repository whose named checks need no network or dependency installation.

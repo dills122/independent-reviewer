@@ -59,7 +59,12 @@ Define strict V1 contracts before backend orchestration:
 
 - `NamedCheckSpecV1`: operator-owned check ID/revision, exact argv, fixed working
   directory, exit-code protocol, BASE/HEAD mode, environment capabilities,
-  oracle identity, and explicit enablement;
+  oracle identity, explicit enablement, and a non-empty digest-bound ordered
+  repetition plan with unique indexed entries, non-empty seeds, and fixed runner
+  seed channel;
+- `CheckExecutionRequestV1`: immutable pre-attempt binding of exact
+  spec/policy/environment/oracle/engine/snapshots, canonical repetition-plan
+  snapshot/digest, and complete ordered expected attempt keys;
 - `CheckExecutionPolicyV1`: backend/image/acquisition identity,
   sandbox-private loopback with host/external connectivity denied,
   filesystem/environment rules, hard limits, and termination/cleanup policy;
@@ -69,21 +74,30 @@ Define strict V1 contracts before backend orchestration:
 - `CheckEnvironmentObservationV1`: per-attempt timestamps, actual preflight,
   backend resource IDs, applied controls, and stable-profile drift decision;
 - `CheckResultV1`: exact source/check/policy/environment/oracle bindings,
-  separate assertion/execution/cleanup outcomes, lifecycle, process termination,
-  resource observations, and cleanup receipt;
+  execution-request/repetition-plan/entry binding, separate
+  assertion/execution/cleanup outcomes, lifecycle, process termination, resource
+  observations, and cleanup receipt;
 - private `CheckRawOutputV1` plus runner-generated, budget-admitted
   `CheckProviderStatusV1` containing no repository output or raw-derived digest;
 - `CheckResourceLeaseV1`: crash-durable creation intent/receipt, unpredictable
   ownership identity, expiry, reconciliation, cleanup, and recovery audit;
 - private `CheckComparisonV1`: complete ordered BASE/HEAD result-digest graph,
-  shared identities, repetition/seed set, comparability, and atomic projection;
-  and
+  shared identities, execution request, operator-owned repetition/seed set,
+  validator-derived comparability/aggregate, and atomic projection; and
 - evaluator-owned `OracleValidationV1` for independently validating generated
   assertions and input domains before execution.
 
 Use shared contract primitives and JCS/SHA-256 artifact identity. Historical
 evidence is comparable only under exact source, check, policy, environment,
 oracle, and engine identities; V1 never reuses it as current runner evidence.
+
+Operator catalog is sole repetition-plan authority. Runner durably syncs the
+resolved immutable execution request before first attempt or backend create.
+Each result binds request, plan, entry, seed, and target. Exact expected set is
+mandatory: no missing, duplicate, reordered, extra, outcome-selected retry, or
+early stop. When a fatal safe-execution condition prevents later starts, runner
+records explicit `NOT_RUN` results for every remaining key; inability to persist
+the complete set invalidates request and suppresses comparison/provider output.
 
 Assertion outcome is `PASSED`, `FAILED`, or `NOT_OBSERVED`. Execution outcome is
 `COMPLETED`, `SETUP_FAILURE`, `PROCESS_CRASHED`, `EXECUTOR_FAILURE`, `OOM_KILLED`,
@@ -180,14 +194,34 @@ or flaky evidence is inconclusive. New features may use an explicit
 manufacture a BASE control.
 
 For `REQUIRED_IDENTICAL`, one private `CheckComparisonV1` binds ordered
-BASE/HEAD result digests, all shared identities, and the complete predeclared
-repetition/seed set. Validation and provider projection are atomic: model
+BASE/HEAD result digests, all shared identities, execution-request and plan
+digests, and the complete operator-owned repetition/seed set. Validation and
+provider projection are atomic: model
 receives one runner-generated comparison status, never one side or a favorable
-repetition. Missing, duplicate, unexpected, executor-failed, cleanup-failed, or
-identity-drifted input is inconclusive and suppresses stronger projection.
+repetition. Missing, duplicate, reordered, unexpected, or identity-mismatched
+input invalidates comparison and suppresses projection; valid executor-failed,
+cleanup-failed, or non-comparable results follow deterministic aggregate mapping.
 `HEAD_ONLY_NEW_FEATURE` and `SINGLE_TARGET` create no comparison artifact and
 make no regression/fix or differential claim; `SINGLE_TARGET` names one exact
 arbitrary snapshot rather than implying HEAD.
+
+Validator owns total aggregate mapping. For each complete seed pair, ordered
+first match is: valid terminal `EXECUTOR_FAILURE` ->
+`INCONCLUSIVE_EXECUTOR_FAILURE`; cleanup failure ->
+`INCONCLUSIVE_CLEANUP_FAILURE`; failed observation comparability ->
+`NOT_COMPARABLE`; unsupported side ->
+`INCONCLUSIVE_UNSUPPORTED_ENVIRONMENT`; any other non-completed/not-observed
+side -> `INCONCLUSIVE_EXECUTION`; then BASE/HEAD pass/fail maps respectively to
+regression, fix, no difference, or pre-existing/shared failure. Across seeds,
+same precedence applies; otherwise one uniform semantic class survives and any
+semantic mixture becomes `INCONCLUSIVE_MIXED_OR_FLAKY`. Aggregate is derived,
+never accepted from caller input.
+
+For `HEAD_ONLY_NEW_FEATURE` and `SINGLE_TARGET`, validator applies same safety
+precedence except pair comparability, then derives `ALL_PASSED`, `ALL_FAILED`,
+or `MIXED_OR_FLAKY`. Operator report preserves every planned result, and eligible
+provider status is one atomic ordered attempt set. No row may be omitted and no
+target aggregate is differential evidence.
 
 ## Alternatives considered
 
