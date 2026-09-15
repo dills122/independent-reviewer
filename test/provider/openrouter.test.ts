@@ -118,6 +118,42 @@ describe("OpenRouterProviderV1", () => {
     assert.equal(routing.allow_fallbacks, true);
   });
 
+  it("excludes every provider reported in an open-routing failure chain", async () => {
+    let wire: Record<string, unknown> = {};
+    const provider = new OpenRouterProviderV1(
+      "secret-key",
+      providerRouting,
+      async (_input, init) => {
+        wire = JSON.parse(String(init?.body));
+        return Response.json({ choices: [{ finish_reason: "stop", message: { content: "{}" } }] });
+      },
+    );
+    const retry = provider.forRetry(
+      new ProviderCallError("PROVIDER_ERROR", "routing chain exhausted", {
+        retryable: true,
+        diagnostic: {
+          httpStatus: 502,
+          providerErrorCode: "502",
+          providerMessage: null,
+          errorType: null,
+          providerCode: null,
+          providerName: "DeepInfra",
+          model: null,
+          responseId: null,
+          retryAfter: null,
+          previousErrors: [{ provider: "CoreWeave", code: "429" }],
+        },
+      }),
+      request,
+    );
+
+    assert.ok(retry);
+    await retry.complete(request);
+    const routing = wire.provider as Record<string, unknown>;
+    assert.deepEqual(routing.ignore, ["CoreWeave", "DeepInfra"]);
+    assert.equal(routing.allow_fallbacks, true);
+  });
+
   it("gives up when a pinned run has no other configured endpoint", async () => {
     const pinned = new OpenRouterProviderV1(
       "secret-key",
@@ -162,6 +198,42 @@ describe("OpenRouterProviderV1", () => {
 
     assert.ok(retry);
     assert.deepEqual(retry.auditRequest(request).preferredProviderEndpoints, ["coreweave/fp4"]);
+  });
+
+  it("removes every failed provider from a pinned routing chain", () => {
+    const pinned = new OpenRouterProviderV1(
+      "secret-key",
+      {
+        ...providerRouting,
+        order: ["coreweave/fp4", "deepinfra/bf16", "akashml/bf16", "dekallm/bf16"],
+        pinToOrder: true,
+      },
+      async () => Response.json({}),
+    );
+    const retry = pinned.forRetry(
+      new ProviderCallError("PROVIDER_ERROR", "routing chain exhausted", {
+        retryable: true,
+        diagnostic: {
+          httpStatus: 502,
+          providerErrorCode: "502",
+          providerMessage: null,
+          errorType: null,
+          providerCode: null,
+          providerName: "DeepInfra",
+          model: null,
+          responseId: null,
+          retryAfter: null,
+          previousErrors: [{ provider: "CoreWeave", code: "429" }],
+        },
+      }),
+      request,
+    );
+
+    assert.ok(retry);
+    assert.deepEqual(retry.auditRequest(request).preferredProviderEndpoints, [
+      "akashml/bf16",
+      "dekallm/bf16",
+    ]);
   });
 
   it("retries a missing finish reason but not an explicit one", async () => {
@@ -292,7 +364,7 @@ describe("OpenRouterProviderV1", () => {
     assert.equal(result.provider, "Mock Provider");
 
     const audit = provider.auditRequest(request);
-    assert.equal(audit.providerPolicyVersion, "openrouter-chat-completions-v5");
+    assert.equal(audit.providerPolicyVersion, "openrouter-chat-completions-v6");
     assert.deepEqual(audit.wireBodyDigest, sha256Utf8(String(capturedInit?.body)));
     assert.equal(audit.wireBodyBytes, Buffer.byteLength(String(capturedInit?.body), "utf8"));
     assert.notDeepEqual(

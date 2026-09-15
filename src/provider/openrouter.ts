@@ -16,7 +16,7 @@ import {
 } from "./review-provider.js";
 
 const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
-const OPENROUTER_PROVIDER_POLICY_VERSION_V5 = "openrouter-chat-completions-v5";
+const OPENROUTER_PROVIDER_POLICY_VERSION_V6 = "openrouter-chat-completions-v6";
 /** Shared by every provider instance that is not handed an explicit pacer, including tests. */
 const sharedCallPacer = new ProviderCallPacerV1();
 const OPENROUTER_PUBLIC_HEADERS_V1 = {
@@ -409,6 +409,25 @@ function normalizedProviderIdentity(value: string | null | undefined): string | 
   return providerSlug(value)?.toLowerCase() ?? null;
 }
 
+function failedProviderSlugs(error: ProviderCallError): string[] {
+  const candidates = [
+    ...(error.diagnostic?.previousErrors?.map(({ provider }) => provider) ?? []),
+    error.responseMetadata?.provider,
+    error.diagnostic?.providerName,
+  ];
+  const identities = new Set<string>();
+  const failed: string[] = [];
+  for (const candidate of candidates) {
+    const slug = providerSlug(candidate);
+    const identity = normalizedProviderIdentity(slug);
+    if (slug !== null && identity !== null && !identities.has(identity)) {
+      identities.add(identity);
+      failed.push(slug);
+    }
+  }
+  return failed;
+}
+
 /**
  * OpenRouter adapter. Every call is a single non-streaming request: a review response is
  * structured JSON nobody watches arrive, so streaming only added SSE framing, partial-JSON and
@@ -451,7 +470,7 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
       body: wireBody,
     });
     return {
-      providerPolicyVersion: OPENROUTER_PROVIDER_POLICY_VERSION_V5,
+      providerPolicyVersion: OPENROUTER_PROVIDER_POLICY_VERSION_V6,
       preferredProviderEndpoints: this.#routing.order ? [...this.#routing.order] : null,
       excludedProviderEndpoints:
         this.#ignoredProviders.length > 0 ? [...this.#ignoredProviders] : null,
@@ -466,20 +485,20 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
   }
 
   /**
-   * Excludes the endpoint that just failed and lets OpenRouter re-route. A pinned run has no
-   * other endpoint to move to, so it drops the failed head of `order` instead.
+   * Excludes every endpoint OpenRouter reports in the failed routing chain and lets it re-route.
+   * A pinned run with no provider identity drops the failed head of `order` instead.
    */
   forRetry(error: ProviderCallError, _request: ReviewProviderRequestV1): ReviewProviderV1 | null {
-    const failed = providerSlug(
-      error.responseMetadata?.provider ?? error.diagnostic?.providerName ?? null,
+    const failed = failedProviderSlugs(error);
+    const failedIdentities = new Set(
+      failed.map((provider) => normalizedProviderIdentity(provider)),
     );
     if (this.#routing.pinToOrder) {
       const order = this.#routing.order ?? [];
-      const failedIdentity = normalizedProviderIdentity(failed);
       const withoutFailed =
-        failedIdentity === null
+        failedIdentities.size === 0
           ? order
-          : order.filter((endpoint) => normalizedProviderIdentity(endpoint) !== failedIdentity);
+          : order.filter((endpoint) => !failedIdentities.has(normalizedProviderIdentity(endpoint)));
       const remaining = withoutFailed.length < order.length ? withoutFailed : order.slice(1);
       if (remaining.length === 0) return null;
       return new OpenRouterProviderV1(
@@ -490,13 +509,19 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
         this.#ignoredProviders,
       );
     }
-    if (!failed || this.#ignoredProviders.includes(failed)) {
+    const ignoredIdentities = new Set(
+      this.#ignoredProviders.map((provider) => normalizedProviderIdentity(provider)),
+    );
+    const newlyFailed = failed.filter(
+      (provider) => !ignoredIdentities.has(normalizedProviderIdentity(provider)),
+    );
+    if (newlyFailed.length === 0) {
       // Nothing new to exclude; OpenRouter still re-routes across the full eligible pool.
       return this;
     }
     return new OpenRouterProviderV1(this.#apiKey, this.#routing, this.#fetch, this.#pacer, [
       ...this.#ignoredProviders,
-      failed,
+      ...newlyFailed,
     ]);
   }
 
