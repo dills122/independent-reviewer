@@ -20,11 +20,67 @@ export interface EvaluationArtifactGraphInputV1 {
   cases: readonly unknown[];
   attempts: readonly unknown[];
   adjudications: readonly unknown[];
+  references: EvaluationArtifactReferencesV1;
   score: unknown;
+}
+
+export interface EvaluationArtifactReferencesV1 {
+  cases: readonly { caseId: string; reference: string }[];
+  split: string;
+  experiment: string;
+  attempts: readonly { attemptId: string; reference: string }[];
+  adjudications: readonly { adjudicationId: string; reference: string }[];
 }
 
 function assertEqual(actual: string | number, expected: string | number, message: string): void {
   if (actual !== expected) throw new TypeError(message);
+}
+
+function bindArtifactLocations(
+  references: EvaluationArtifactReferencesV1,
+  expectedIds: {
+    cases: readonly string[];
+    split: string;
+    experiment: string;
+    attempts: readonly string[];
+    adjudications: readonly string[];
+  },
+): Map<string, string> {
+  const locations = new Map<string, string>();
+  const owners = new Map<string, string>();
+  const add = (type: string, id: string, reference: string): void => {
+    const key = `${type}:${id}`;
+    if (locations.has(key)) throw new TypeError(`duplicate raw artifact location ${key}`);
+    if (typeof reference !== "string" || reference.trim().length === 0) {
+      throw new TypeError(`raw artifact location ${key} must be nonempty`);
+    }
+    const priorOwner = owners.get(reference);
+    if (priorOwner !== undefined) {
+      throw new TypeError(
+        `ambiguous raw artifact location ${reference} for ${priorOwner} and ${key}`,
+      );
+    }
+    locations.set(key, reference);
+    owners.set(reference, key);
+  };
+  for (const entry of references.cases) add("CASE", entry.caseId, entry.reference);
+  add("SPLIT", expectedIds.split, references.split);
+  add("EXPERIMENT", expectedIds.experiment, references.experiment);
+  for (const entry of references.attempts) add("ATTEMPT", entry.attemptId, entry.reference);
+  for (const entry of references.adjudications)
+    add("ADJUDICATION", entry.adjudicationId, entry.reference);
+
+  const expectedKeys = [
+    ...expectedIds.cases.map((id) => `CASE:${id}`),
+    `SPLIT:${expectedIds.split}`,
+    `EXPERIMENT:${expectedIds.experiment}`,
+    ...expectedIds.attempts.map((id) => `ATTEMPT:${id}`),
+    ...expectedIds.adjudications.map((id) => `ADJUDICATION:${id}`),
+  ];
+  if (locations.size !== expectedKeys.length || expectedKeys.some((key) => !locations.has(key))) {
+    throw new TypeError("raw artifact locations must cover exact graph artifact set");
+  }
+  return locations;
 }
 
 export interface EvaluationNumericContributionV1 {
@@ -980,36 +1036,59 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     throw new TypeError("score enforcement coverage does not match adjudications");
   }
 
-  const expectedArtifacts = new Map<string, string>();
+  const expectedLocations = bindArtifactLocations(input.references, {
+    cases: cases.map(({ caseId }) => caseId),
+    split: split.splitVersion,
+    experiment: experiment.experimentId,
+    attempts: attempts.map(({ attemptId }) => attemptId),
+    adjudications: adjudications.map(({ adjudicationId }) => adjudicationId),
+  });
+  const expectedArtifacts = new Map<string, { digest: string; reference: string }>();
   for (const caseManifest of cases)
-    expectedArtifacts.set(
-      `CASE:${caseManifest.caseId}`,
-      digestEvaluationArtifactV1(EvaluationCaseManifestV1Schema, caseManifest).value,
-    );
-  expectedArtifacts.set(`SPLIT:${split.splitVersion}`, splitDigest.value);
-  expectedArtifacts.set(`EXPERIMENT:${experiment.experimentId}`, experimentDigest.value);
+    expectedArtifacts.set(`CASE:${caseManifest.caseId}`, {
+      digest: digestEvaluationArtifactV1(EvaluationCaseManifestV1Schema, caseManifest).value,
+      reference: expectedLocations.get(`CASE:${caseManifest.caseId}`) as string,
+    });
+  expectedArtifacts.set(`SPLIT:${split.splitVersion}`, {
+    digest: splitDigest.value,
+    reference: expectedLocations.get(`SPLIT:${split.splitVersion}`) as string,
+  });
+  expectedArtifacts.set(`EXPERIMENT:${experiment.experimentId}`, {
+    digest: experimentDigest.value,
+    reference: expectedLocations.get(`EXPERIMENT:${experiment.experimentId}`) as string,
+  });
   for (const attempt of attempts)
-    expectedArtifacts.set(
-      `ATTEMPT:${attempt.attemptId}`,
-      digestEvaluationArtifactV1(EvaluationAttemptRecordV1Schema, attempt).value,
-    );
+    expectedArtifacts.set(`ATTEMPT:${attempt.attemptId}`, {
+      digest: digestEvaluationArtifactV1(EvaluationAttemptRecordV1Schema, attempt).value,
+      reference: expectedLocations.get(`ATTEMPT:${attempt.attemptId}`) as string,
+    });
   for (const adjudication of adjudications)
-    expectedArtifacts.set(
-      `ADJUDICATION:${adjudication.adjudicationId}`,
-      digestEvaluationArtifactV1(EvaluationAdjudicationRecordV1Schema, adjudication).value,
-    );
+    expectedArtifacts.set(`ADJUDICATION:${adjudication.adjudicationId}`, {
+      digest: digestEvaluationArtifactV1(EvaluationAdjudicationRecordV1Schema, adjudication).value,
+      reference: expectedLocations.get(`ADJUDICATION:${adjudication.adjudicationId}`) as string,
+    });
   const actualArtifacts = new Map(
-    score.rawArtifactReferences.map((entry) => [`${entry.type}:${entry.id}`, entry.digest.value]),
+    score.rawArtifactReferences.map((entry) => [
+      `${entry.type}:${entry.id}`,
+      { digest: entry.digest.value, reference: entry.reference },
+    ]),
   );
   assertEqual(
     actualArtifacts.size,
     expectedArtifacts.size,
     "score raw references must cover exact graph artifacts",
   );
-  for (const [key, digest] of expectedArtifacts)
+  for (const [key, expected] of expectedArtifacts) {
+    const actual = actualArtifacts.get(key);
     assertEqual(
-      actualArtifacts.get(key) ?? "",
-      digest,
+      actual?.digest ?? "",
+      expected.digest,
       `score raw reference has wrong or missing digest for ${key}`,
     );
+    assertEqual(
+      actual?.reference ?? "",
+      expected.reference,
+      `score raw reference has wrong or missing location for ${key}`,
+    );
+  }
 }

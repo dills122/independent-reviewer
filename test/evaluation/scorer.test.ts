@@ -95,6 +95,7 @@ describe("evaluation scorer", () => {
         cases: graph.cases,
         attempts: graph.attempts,
         adjudications: graph.adjudications,
+        references: graph.references,
         score: first,
       }),
     );
@@ -571,6 +572,9 @@ describe("evaluation scorer", () => {
     permuted.experiment.comparisons.reverse();
     permuted.attempts.reverse();
     permuted.adjudications.reverse();
+    permuted.references.cases.reverse();
+    permuted.references.attempts.reverse();
+    permuted.references.adjudications.reverse();
 
     const rescored = scoreGraph(permuted);
     const permutedScore = structuredClone(canonical);
@@ -596,6 +600,7 @@ describe("evaluation scorer", () => {
         cases: permuted.cases,
         attempts: permuted.attempts,
         adjudications: permuted.adjudications,
+        references: permuted.references,
         score: permutedScore,
       }),
     );

@@ -113,6 +113,10 @@ bounds because repeated calls are not independent cases or families. Artifact ar
 UTF-16 artifact ID. Numeric totals retain each value's artifact ID, order by magnitude then numeric
 value then UTF-16 artifact ID, and use Neumaier compensated summation.
 
+Graph validation receives artifact locations independently from score under validation. Registry must
+cover every case, split, experiment, attempt, and adjudication exactly once; one location cannot
+alias multiple artifacts. Score type, ID, location, and recomputed digest must match registry entry.
+
 `scorer-policy.ts` retains canonical policy bytes, scorer version, and their SHA-256 digest. Every
 experiment and score must claim those exact values. Separate raw-artifact reference is unnecessary:
 experiment engine commit and source-tree digest bind implementation containing policy source, while

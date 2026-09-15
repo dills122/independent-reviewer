@@ -15,6 +15,7 @@ import {
 } from "./artifact-contracts.js";
 import {
   deriveEvaluationAttemptMetricCountsV1,
+  type EvaluationArtifactReferencesV1,
   sumEvaluationNumbersV1,
   validateEvaluationArtifactGraphV1,
 } from "./artifact-graph.js";
@@ -22,14 +23,6 @@ import { assertEvaluationScorerIdentityV1, EVALUATION_SCORER_POLICY_V1 } from ".
 
 type MetricName = (typeof EvaluationMetricNameV1Schema.options)[number];
 type MetricCount = { metric: MetricName; numerator: number; denominator: number };
-
-export interface EvaluationArtifactReferencesV1 {
-  cases: readonly { caseId: string; reference: string }[];
-  split: string;
-  experiment: string;
-  attempts: readonly { attemptId: string; reference: string }[];
-  adjudications: readonly { adjudicationId: string; reference: string }[];
-}
 
 export interface EvaluationScorerInputV1 {
   experiment: unknown;
@@ -458,6 +451,7 @@ export function scoreEvaluationArtifactsV1(
     cases,
     attempts,
     adjudications,
+    references: input.references,
     score: report,
   });
   return report;

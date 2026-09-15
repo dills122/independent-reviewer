@@ -270,6 +270,28 @@ describe("evaluation artifact graph", () => {
     );
   });
 
+  it("binds every raw artifact location to an independent unambiguous registry", () => {
+    const wrongLocation = makeEvaluationGraph();
+    first(wrongLocation.score.rawArtifactReferences).reference = "moved/case.json";
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(wrongLocation),
+      /raw reference.*location/i,
+    );
+
+    const ambiguous = makeEvaluationGraph();
+    const reusedReference = first(ambiguous.references.cases).reference;
+    const attemptLocation = first(ambiguous.references.attempts);
+    attemptLocation.reference = reusedReference;
+    const rawAttempt = first(
+      ambiguous.score.rawArtifactReferences.filter(({ type }) => type === "ATTEMPT"),
+    );
+    rawAttempt.reference = reusedReference;
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(ambiguous),
+      /ambiguous raw artifact location/i,
+    );
+  });
+
   it("enforces exact complete deltas declared before execution", () => {
     const missing = makeEvaluationGraph();
     missing.score.pairedDeltas = [];

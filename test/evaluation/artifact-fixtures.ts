@@ -351,6 +351,19 @@ export function makeEvaluationGraph() {
       };
     });
   });
+  const references = {
+    cases: cases.map(({ caseId }) => ({ caseId, reference: `cases/${caseId}.json` })),
+    split: "split.json",
+    experiment: "experiment.json",
+    attempts: attempts.map(({ attemptId }) => ({
+      attemptId,
+      reference: `attempts/${attemptId}.json`,
+    })),
+    adjudications: adjudications.map(({ adjudicationId }) => ({
+      adjudicationId,
+      reference: `adjudications/${adjudicationId}.json`,
+    })),
+  };
   const rawArtifactReferences = [
     ...cases.map((value) => ({
       type: "CASE",
@@ -493,5 +506,5 @@ export function makeEvaluationGraph() {
     },
     rawArtifactReferences,
   };
-  return { cases, split, experiment, attempts, adjudications, score };
+  return { cases, split, experiment, attempts, adjudications, score, references };
 }
