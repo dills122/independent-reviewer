@@ -113,6 +113,10 @@ bounds because repeated calls are not independent cases or families. Artifact ar
 UTF-16 artifact ID. Numeric totals retain each value's artifact ID, order by magnitude then numeric
 value then UTF-16 artifact ID, and use Neumaier compensated summation.
 
+USD values use fixed nine-decimal units. Contracts reject excess precision or values whose scaled
+units exceed JavaScript safe-integer range. Cost totals and budget comparisons use integer units,
+so boundaries such as `0.1 + 0.2 <= 0.3` remain exact without masking a one-unit overage.
+
 Graph validation receives artifact locations independently from score under validation. Registry must
 cover every case, split, experiment, attempt, and adjudication exactly once; one location cannot
 alias multiple artifacts. Score type, ID, location, and recomputed digest must match registry entry.

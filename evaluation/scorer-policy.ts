@@ -3,6 +3,7 @@ import * as z from "zod";
 import { jsonDocument, sha256BytesDigestV1 } from "../src/contracts/json-document.js";
 import { type DigestV1, DigestV1Schema } from "../src/contracts/snapshot-manifest.js";
 import { EvaluationMetricNameV1Schema } from "./artifact-contracts.js";
+import { EVALUATION_USD_DECIMAL_PLACES_V1 } from "./usd.js";
 
 export const EVALUATION_SCORER_VERSION_V1 = "evaluation-scorer-v1";
 
@@ -20,6 +21,11 @@ export const EvaluationScorerPolicyV1Schema = z.strictObject({
   cleanControlIdentity: z.literal("EXHAUSTIVE_ZERO_EXPECTED_ROOTS_V1"),
   failedStageRetention: z.literal("UNAVAILABLE_V1"),
   aggregation: z.literal("MAGNITUDE_VALUE_UTF16_ARTIFACT_ID_ORDER_NEUMAIER_SUM_V1"),
+  usd: z.strictObject({
+    decimalPlaces: z.literal(EVALUATION_USD_DECIMAL_PLACES_V1),
+    excessPrecision: z.literal("REJECT_V1"),
+    aggregation: z.literal("FIXED_SCALE_INTEGER_SUM_UTF16_ARTIFACT_ID_ORDER_V1"),
+  }),
   interval: z.strictObject({
     method: z.literal("CONSERVATIVE_BOUNDS_V1"),
     confidenceLevel: z.literal(0.95),
@@ -42,6 +48,11 @@ export const EVALUATION_SCORER_POLICY_V1 = EvaluationScorerPolicyV1Schema.parse(
   cleanControlIdentity: "EXHAUSTIVE_ZERO_EXPECTED_ROOTS_V1",
   failedStageRetention: "UNAVAILABLE_V1",
   aggregation: "MAGNITUDE_VALUE_UTF16_ARTIFACT_ID_ORDER_NEUMAIER_SUM_V1",
+  usd: {
+    decimalPlaces: EVALUATION_USD_DECIMAL_PLACES_V1,
+    excessPrecision: "REJECT_V1",
+    aggregation: "FIXED_SCALE_INTEGER_SUM_UTF16_ARTIFACT_ID_ORDER_V1",
+  },
   interval: {
     method: "CONSERVATIVE_BOUNDS_V1",
     confidenceLevel: 0.95,

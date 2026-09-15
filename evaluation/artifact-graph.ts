@@ -13,6 +13,7 @@ import {
   validateEvaluationFamilySplitV1,
 } from "./artifact-contracts.js";
 import { assertEvaluationScorerIdentityV1, EVALUATION_SCORER_POLICY_V1 } from "./scorer-policy.js";
+import { evaluationUsdToUnitsV1, sumEvaluationUsdV1 } from "./usd.js";
 
 export interface EvaluationArtifactGraphInputV1 {
   experiment: unknown;
@@ -781,7 +782,7 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
   );
   assertEqual(
     score.cost.reportedCostUsd,
-    sumEvaluationNumbersV1(
+    sumEvaluationUsdV1(
       attempts.map((attempt) => ({
         artifactId: attempt.attemptId,
         value: attempt.usage.knownCostUsd ?? 0,
@@ -811,7 +812,7 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
   );
   assertEqual(
     score.cost.conservativeChargeUsd,
-    sumEvaluationNumbersV1(
+    sumEvaluationUsdV1(
       attempts.map((attempt) => ({
         artifactId: attempt.attemptId,
         value: attempt.usage.conservativeChargeUsd,
@@ -821,7 +822,7 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
   );
   assertEqual(
     score.cost.admittedCeilingUsd,
-    sumEvaluationNumbersV1(
+    sumEvaluationUsdV1(
       attempts.map((attempt) => ({
         artifactId: attempt.attemptId,
         value: attempt.usage.admittedCeilingUsd,
@@ -829,7 +830,10 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     ),
     "score admitted ceiling does not match attempts",
   );
-  if (score.cost.admittedCeilingUsd > experiment.budgets.maxTotalCostUsd) {
+  if (
+    evaluationUsdToUnitsV1(score.cost.admittedCeilingUsd) >
+    evaluationUsdToUnitsV1(experiment.budgets.maxTotalCostUsd)
+  ) {
     throw new TypeError("score admitted ceiling exceeds experiment budget");
   }
   assertDistribution(

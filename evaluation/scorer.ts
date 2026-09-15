@@ -20,6 +20,7 @@ import {
   validateEvaluationArtifactGraphV1,
 } from "./artifact-graph.js";
 import { assertEvaluationScorerIdentityV1, EVALUATION_SCORER_POLICY_V1 } from "./scorer-policy.js";
+import { sumEvaluationUsdV1 } from "./usd.js";
 
 type MetricName = (typeof EvaluationMetricNameV1Schema.options)[number];
 type MetricCount = { metric: MetricName; numerator: number; denominator: number };
@@ -381,7 +382,7 @@ export function scoreEvaluationArtifactsV1(
       execution: [],
     },
     cost: {
-      reportedCostUsd: sumEvaluationNumbersV1(
+      reportedCostUsd: sumEvaluationUsdV1(
         attempts.map((attempt) => ({
           artifactId: attempt.attemptId,
           value: attempt.usage.knownCostUsd ?? 0,
@@ -399,13 +400,13 @@ export function scoreEvaluationArtifactsV1(
           value: attempt.usage.unknownCostAttempts,
         })),
       ),
-      conservativeChargeUsd: sumEvaluationNumbersV1(
+      conservativeChargeUsd: sumEvaluationUsdV1(
         attempts.map((attempt) => ({
           artifactId: attempt.attemptId,
           value: attempt.usage.conservativeChargeUsd,
         })),
       ),
-      admittedCeilingUsd: sumEvaluationNumbersV1(
+      admittedCeilingUsd: sumEvaluationUsdV1(
         attempts.map((attempt) => ({
           artifactId: attempt.attemptId,
           value: attempt.usage.admittedCeilingUsd,

@@ -556,7 +556,7 @@ describe("evaluation scorer", () => {
     const costs = new Map(
       [...graph.attempts]
         .sort((left, right) => left.attemptId.localeCompare(right.attemptId))
-        .map(({ attemptId }, index) => [attemptId, [10_000_000_000_000_000, 1, 1, 0.25][index]]),
+        .map(({ attemptId }, index) => [attemptId, [0.030000001, 0.019999999, 0.01, 0.02][index]]),
     );
     for (const attempt of graph.attempts) {
       const cost = costs.get(attempt.attemptId);
@@ -620,6 +620,44 @@ describe("evaluation scorer", () => {
 
     assert.equal(sumEvaluationNumbersV1(contributions), 30_000_000_000_000_004);
     assert.equal(sumEvaluationNumbersV1([...contributions].reverse()), 30_000_000_000_000_004);
+  });
+
+  it("aggregates fixed-scale USD exactly at and above budget boundary", () => {
+    const atBudget = makeEvaluationGraph();
+    const charges = [0.1, 0.2, 0, 0];
+    for (const [index, attempt] of atBudget.attempts.entries()) {
+      const charge = charges[index] as number;
+      attempt.usage.knownCostUsd = charge;
+      attempt.usage.conservativeChargeUsd = charge;
+      attempt.usage.admittedCeilingUsd = charge;
+    }
+    atBudget.experiment.budgets.maxTotalCostUsd = 0.3;
+    rebindExperiment(atBudget);
+
+    const score = scoreGraph(atBudget);
+    assert.equal(score.cost.reportedCostUsd, 0.3);
+    assert.equal(score.cost.conservativeChargeUsd, 0.3);
+    assert.equal(score.cost.admittedCeilingUsd, 0.3);
+
+    const overBudget = makeEvaluationGraph();
+    const overage = [0.100000001, 0.2, 0, 0];
+    for (const [index, attempt] of overBudget.attempts.entries()) {
+      const charge = overage[index] as number;
+      attempt.usage.knownCostUsd = charge;
+      attempt.usage.conservativeChargeUsd = charge;
+      attempt.usage.admittedCeilingUsd = charge;
+    }
+    overBudget.experiment.budgets.maxTotalCostUsd = 0.3;
+    rebindExperiment(overBudget);
+    assert.throws(() => scoreGraph(overBudget), /admitted ceiling exceeds experiment budget/i);
+  });
+
+  it("rejects USD values beyond retained nine-decimal precision", () => {
+    const graph = makeEvaluationGraph();
+    const attempt = graph.attempts[0];
+    assert.ok(attempt);
+    attempt.usage.knownCostUsd = 0.0000000001;
+    assert.throws(() => scoreGraph(graph), /USD value supports at most 9 decimal places/i);
   });
 
   it("uses stable non-oracle semantic roots for novel defects and their duplicates", () => {

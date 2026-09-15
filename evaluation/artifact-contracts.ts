@@ -8,6 +8,7 @@ import {
   prefixedIdentifier,
 } from "../src/contracts/primitives.js";
 import { type DigestV1, DigestV1Schema } from "../src/contracts/snapshot-manifest.js";
+import { EvaluationUsdV1Schema, evaluationUsdToUnitsV1 } from "./usd.js";
 
 const EvaluationCaseIdV1Schema = prefixedIdentifier("case");
 const EvaluationFamilyIdV1Schema = prefixedIdentifier("family");
@@ -383,7 +384,7 @@ export const EvaluationExperimentManifestV1Schema = z
     repetitionCount: PositiveSafeIntegerSchema,
     seed: SafeNonnegativeIntegerSchema.nullable(),
     budgets: z.strictObject({
-      maxTotalCostUsd: NonnegativeFiniteNumberSchema,
+      maxTotalCostUsd: EvaluationUsdV1Schema,
       maxElapsedMs: PositiveSafeIntegerSchema,
     }),
     stopRules: z.array(NonEmptyTextSchema).min(1),
@@ -574,12 +575,12 @@ export const EvaluationAttemptRecordV1Schema = z
       promptTokens: SafeNonnegativeIntegerSchema.nullable(),
       completionTokens: SafeNonnegativeIntegerSchema.nullable(),
       totalTokens: SafeNonnegativeIntegerSchema.nullable(),
-      knownCostUsd: NonnegativeFiniteNumberSchema.nullable(),
+      knownCostUsd: EvaluationUsdV1Schema.nullable(),
       providerAttempts: SafeNonnegativeIntegerSchema,
       knownCostAttempts: SafeNonnegativeIntegerSchema,
       unknownCostAttempts: SafeNonnegativeIntegerSchema,
-      conservativeChargeUsd: NonnegativeFiniteNumberSchema,
-      admittedCeilingUsd: NonnegativeFiniteNumberSchema,
+      conservativeChargeUsd: EvaluationUsdV1Schema,
+      admittedCeilingUsd: EvaluationUsdV1Schema,
       evidenceBytes: SafeNonnegativeIntegerSchema,
       outputBytes: SafeNonnegativeIntegerSchema,
     }),
@@ -816,7 +817,10 @@ export const EvaluationAttemptRecordV1Schema = z
         path: ["usage", "providerAttempts"],
       });
     }
-    if (record.usage.conservativeChargeUsd > record.usage.admittedCeilingUsd) {
+    if (
+      evaluationUsdToUnitsV1(record.usage.conservativeChargeUsd) >
+      evaluationUsdToUnitsV1(record.usage.admittedCeilingUsd)
+    ) {
       context.addIssue({
         code: "custom",
         message: "conservative charge cannot exceed admitted ceiling",
@@ -1066,10 +1070,10 @@ const AttemptScoreResourcesV1Schema = z.strictObject({
   knownCostAttempts: SafeNonnegativeIntegerSchema,
   evidenceBytes: SafeNonnegativeIntegerSchema,
   outputBytes: SafeNonnegativeIntegerSchema,
-  reportedCostUsd: NonnegativeFiniteNumberSchema,
+  reportedCostUsd: EvaluationUsdV1Schema,
   unknownCostAttempts: SafeNonnegativeIntegerSchema,
-  conservativeChargeUsd: NonnegativeFiniteNumberSchema,
-  admittedCeilingUsd: NonnegativeFiniteNumberSchema,
+  conservativeChargeUsd: EvaluationUsdV1Schema,
+  admittedCeilingUsd: EvaluationUsdV1Schema,
 });
 
 const AttemptMetricContributionV1Schema = z.strictObject({
@@ -1219,11 +1223,11 @@ export const EvaluationScoreReportV1Schema = z
         .length(0, "execution resources remain unavailable without digest-bound evidence"),
     }),
     cost: z.strictObject({
-      reportedCostUsd: NonnegativeFiniteNumberSchema,
+      reportedCostUsd: EvaluationUsdV1Schema,
       knownCostAttempts: SafeNonnegativeIntegerSchema,
       unknownCostAttempts: SafeNonnegativeIntegerSchema,
-      conservativeChargeUsd: NonnegativeFiniteNumberSchema,
-      admittedCeilingUsd: NonnegativeFiniteNumberSchema,
+      conservativeChargeUsd: EvaluationUsdV1Schema,
+      admittedCeilingUsd: EvaluationUsdV1Schema,
     }),
     rawArtifactReferences: z
       .array(
@@ -1450,7 +1454,10 @@ export const EvaluationScoreReportV1Schema = z
         path: ["cost"],
       });
     }
-    if (report.cost.conservativeChargeUsd > report.cost.admittedCeilingUsd) {
+    if (
+      evaluationUsdToUnitsV1(report.cost.conservativeChargeUsd) >
+      evaluationUsdToUnitsV1(report.cost.admittedCeilingUsd)
+    ) {
       context.addIssue({
         code: "custom",
         message: "conservative charge cannot exceed admitted ceiling",
