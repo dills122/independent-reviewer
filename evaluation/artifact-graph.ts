@@ -6,6 +6,7 @@ import {
   EvaluationEngineIdentityV1Schema,
   EvaluationExperimentManifestV1Schema,
   EvaluationFamilySplitManifestV1Schema,
+  EvaluationMetricNameV1Schema,
   EvaluationScoreReportV1Schema,
   EvaluationSourceIdentityV1Schema,
   validateEvaluationFamilySplitV1,
@@ -64,6 +65,150 @@ function assertDistribution(
   if (JSON.stringify(actual) !== JSON.stringify(expected)) {
     throw new TypeError(`score ${label} distribution does not match attempts`);
   }
+}
+
+type MetricName = (typeof EvaluationMetricNameV1Schema.options)[number];
+type MetricCount = { metric: MetricName; numerator: number; denominator: number };
+
+function metricCountsForAttempt(
+  attempt: ReturnType<typeof EvaluationAttemptRecordV1Schema.parse>,
+  caseManifest: ReturnType<typeof EvaluationCaseManifestV1Schema.parse>,
+  adjudications: readonly ReturnType<typeof EvaluationAdjudicationRecordV1Schema.parse>[],
+): MetricCount[] {
+  const claimByReference = new Map(
+    attempt.findingClaims.map((claim) => [claim.findingReference, claim]),
+  );
+  const finalAdjudications = adjudications.filter(
+    ({ findingReference }) => claimByReference.get(findingReference)?.emittedAtStage === "FINAL",
+  );
+  const finalDefects = finalAdjudications.filter(
+    ({ findingReference }) => claimByReference.get(findingReference)?.claimKind === "DEFECT",
+  );
+  const completed =
+    attempt.terminalOutcome.kind === "DELIVERED" ||
+    attempt.terminalOutcome.kind === "SEMANTIC_ABSTENTION";
+  const expectedRoots = new Set(
+    caseManifest.oracleInventory.expectedRoots.map(({ rootId }) => rootId),
+  );
+  const matchedFinalRoots = new Set(
+    finalAdjudications.flatMap(({ label, matchedRootId }) =>
+      label === "MATCHED_DEFECT" && matchedRootId !== null ? [matchedRootId] : [],
+    ),
+  );
+  const supported = finalDefects.filter(
+    ({ label }) => label === "MATCHED_DEFECT" || label === "NOVEL_VALID_DEFECT",
+  ).length;
+  const invalid = finalDefects.filter(({ label }) => label === "INVALID_DEFECT").length;
+  const unresolved = finalDefects.filter(({ label }) => label === "UNRESOLVED").length;
+  const duplicates = finalDefects.filter(({ label }) => label === "DUPLICATE").length;
+  const clean = caseManifest.pair?.role === "CLEAN";
+  const completeEvidence = caseManifest.oracleInventory.expectedUncertainties.length === 0;
+  const expectedUncertainties = new Set(
+    caseManifest.oracleInventory.expectedUncertainties.map(({ uncertaintyId }) => uncertaintyId),
+  );
+  const matchedUncertainties = new Set(
+    finalAdjudications.flatMap(({ label, matchedUncertaintyId }) =>
+      label === "SUPPORTED_UNCERTAINTY" && matchedUncertaintyId !== null
+        ? [matchedUncertaintyId]
+        : [],
+    ),
+  );
+  const preliminaryRoots = new Set(
+    adjudications.flatMap(({ findingReference, label, matchedRootId }) =>
+      claimByReference.get(findingReference)?.emittedAtStage === "PRELIMINARY" &&
+      label === "MATCHED_DEFECT" &&
+      matchedRootId !== null
+        ? [matchedRootId]
+        : [],
+    ),
+  );
+  const retainedRoots = [...preliminaryRoots].filter((rootId) => matchedFinalRoots.has(rootId));
+  const expectedRootCount = expectedRoots.size;
+  return [
+    {
+      metric: "KNOWN_DEFECT_RECALL_COMPLETED",
+      numerator: completed ? matchedFinalRoots.size : 0,
+      denominator: completed ? expectedRootCount : 0,
+    },
+    {
+      metric: "KNOWN_DEFECT_RECALL_ALL_STARTS",
+      numerator: completed ? matchedFinalRoots.size : 0,
+      denominator: expectedRootCount,
+    },
+    {
+      metric: "ADJUDICATED_DEFECT_PRECISION",
+      numerator: supported,
+      denominator: supported + invalid,
+    },
+    {
+      metric: "CONSERVATIVE_PRECISION_BOUND",
+      numerator: supported,
+      denominator: supported + invalid + unresolved,
+    },
+    { metric: "UNIQUE_ACTION_YIELD", numerator: supported, denominator: finalDefects.length },
+    {
+      metric: "CLEAN_FALSE_POSITIVE_RATE",
+      numerator: completed && clean && invalid > 0 ? 1 : 0,
+      denominator: completed && clean ? 1 : 0,
+    },
+    {
+      metric: "FALSE_ABSTENTION_RATE",
+      numerator:
+        completed && completeEvidence && attempt.terminalOutcome.kind === "SEMANTIC_ABSTENTION"
+          ? 1
+          : 0,
+      denominator: completed && completeEvidence ? 1 : 0,
+    },
+    {
+      metric: "CORRECT_UNCERTAINTY_RATE",
+      numerator:
+        completed &&
+        expectedUncertainties.size > 0 &&
+        [...expectedUncertainties].every((id) => matchedUncertainties.has(id))
+          ? 1
+          : 0,
+      denominator: completed && expectedUncertainties.size > 0 ? 1 : 0,
+    },
+    { metric: "DUPLICATE_RATE", numerator: duplicates, denominator: finalDefects.length },
+    { metric: "DELIVERY_RATE", numerator: completed ? 1 : 0, denominator: 1 },
+    {
+      metric: "STAGE_RETENTION_RATE",
+      numerator: retainedRoots.length,
+      denominator: preliminaryRoots.size,
+    },
+  ];
+}
+
+function aggregateMetricCounts(groups: readonly (readonly MetricCount[])[]): MetricCount[] {
+  return EvaluationMetricNameV1Schema.options.map((metric) => ({
+    metric,
+    numerator: groups.reduce(
+      (sum, counts) => sum + (counts.find((entry) => entry.metric === metric)?.numerator ?? 0),
+      0,
+    ),
+    denominator: groups.reduce(
+      (sum, counts) => sum + (counts.find((entry) => entry.metric === metric)?.denominator ?? 0),
+      0,
+    ),
+  }));
+}
+
+function assertMetricCounts(
+  actual: readonly { metric: string; numerator: number; denominator: number }[],
+  expected: readonly MetricCount[],
+  label: string,
+): void {
+  const actualByMetric = new Map(actual.map((entry) => [entry.metric, entry]));
+  for (const count of expected) {
+    const entry = actualByMetric.get(count.metric);
+    if (entry?.numerator !== count.numerator || entry.denominator !== count.denominator) {
+      throw new TypeError(`score ${label} metric ${count.metric} does not match artifacts`);
+    }
+  }
+}
+
+function metricValue(count: MetricCount): number | null {
+  return count.denominator === 0 ? null : count.numerator / count.denominator;
 }
 
 export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraphInputV1): void {
@@ -195,6 +340,51 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
         throw new TypeError("adjudication matched root does not belong to case oracle");
       }
     }
+    if (adjudication.matchedUncertaintyId !== null) {
+      const caseManifest = caseById.get(adjudication.caseId);
+      if (
+        !caseManifest?.oracleInventory.expectedUncertainties.some(
+          ({ uncertaintyId }) => uncertaintyId === adjudication.matchedUncertaintyId,
+        )
+      ) {
+        throw new TypeError("adjudication matched uncertainty does not belong to case oracle");
+      }
+    }
+    const caseManifest = caseById.get(adjudication.caseId);
+    if (!caseManifest) throw new TypeError("adjudication case is unavailable");
+    for (const evidence of adjudication.causalEvidence) {
+      if (evidence.source === "CASE_INPUT") {
+        const retained = caseManifest.reviewerInputInventory.some(
+          ({ role, reference, digest }) =>
+            (role === "SOURCE_CHANGE" || role === "SUPPORTING_SOURCE") &&
+            reference === evidence.reference &&
+            digest.value === evidence.digest.value,
+        );
+        if (!retained)
+          throw new TypeError("adjudication causal evidence is not retained case input");
+      } else {
+        const report =
+          attempt.terminalOutcome.kind === "DELIVERED" ||
+          attempt.terminalOutcome.kind === "SEMANTIC_ABSTENTION"
+            ? attempt.terminalOutcome
+            : null;
+        if (
+          report?.reportReference !== evidence.reference ||
+          report.reportDigest.value !== evidence.digest.value
+        ) {
+          throw new TypeError("adjudication causal evidence is not retained report bytes");
+        }
+      }
+    }
+    if (
+      ["MATCHED_DEFECT", "NOVEL_VALID_DEFECT", "DUPLICATE"].includes(adjudication.label) &&
+      !adjudication.causalEvidence.some(({ source }) => source === "CASE_INPUT")
+    ) {
+      throw new TypeError("supported defect adjudication requires retained case causal evidence");
+    }
+    if (Date.parse(adjudication.adjudicatedAt) < Date.parse(attempt.completedAt)) {
+      throw new TypeError("adjudication cannot precede attempt completion");
+    }
     const claimKey = `${adjudication.attemptId}:${adjudication.findingReference}`;
     if (adjudicationByClaim.has(claimKey))
       throw new TypeError(`duplicate adjudication for ${claimKey}`);
@@ -208,6 +398,29 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
       if (!adjudicationByClaim.has(`${attempt.attemptId}:${claim.findingReference}`)) {
         throw new TypeError(
           `missing adjudication for ${attempt.attemptId}:${claim.findingReference}`,
+        );
+      }
+    }
+    const attemptAdjudications = adjudications.filter(
+      ({ attemptId }) => attemptId === attempt.attemptId,
+    );
+    const creditedRoots = new Set<string>();
+    for (const adjudication of attemptAdjudications) {
+      if (adjudication.label === "MATCHED_DEFECT" && adjudication.matchedRootId !== null) {
+        if (creditedRoots.has(adjudication.matchedRootId)) {
+          throw new TypeError("known root cannot receive more than one recall credit per attempt");
+        }
+        creditedRoots.add(adjudication.matchedRootId);
+      }
+    }
+    for (const adjudication of attemptAdjudications) {
+      if (
+        adjudication.label === "DUPLICATE" &&
+        adjudication.matchedRootId !== null &&
+        !creditedRoots.has(adjudication.matchedRootId)
+      ) {
+        throw new TypeError(
+          "duplicate adjudication must reference a credited root in same attempt",
         );
       }
     }
@@ -228,6 +441,21 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     score.scorerPolicyDigest.value,
     experiment.scorerPolicyDigest.value,
     "score has a different scorer policy identity",
+  );
+  if (
+    adjudications.some(
+      ({ adjudicatedAt }) => Date.parse(adjudicatedAt) > Date.parse(score.generatedAt),
+    )
+  ) {
+    throw new TypeError("score generation cannot precede adjudication");
+  }
+  if (attempts.some(({ completedAt }) => Date.parse(completedAt) > Date.parse(score.generatedAt))) {
+    throw new TypeError("score generation cannot precede attempt completion");
+  }
+  assertEqual(
+    JSON.stringify(score.metrics.map(({ metric }) => metric)),
+    JSON.stringify(experiment.metricSet),
+    "score metric set does not match experiment declaration",
   );
   assertEqual(
     score.missingness.startedAttempts,
@@ -259,6 +487,54 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     JSON.stringify(score.adjudicationCoverage.unresolvedAdjudicationIds),
     JSON.stringify(unresolvedIds),
     "score unresolved adjudication IDs do not match graph",
+  );
+  const evidenceByAttempt = new Map(score.attemptEvidence.map((entry) => [entry.attemptId, entry]));
+  assertEqual(
+    evidenceByAttempt.size,
+    attempts.length,
+    "score attempt evidence must cover every attempt",
+  );
+  const contributionByAttempt = new Map<string, MetricCount[]>();
+  for (const attempt of attempts) {
+    const evidence = evidenceByAttempt.get(attempt.attemptId);
+    if (!evidence) throw new TypeError(`score omits attempt evidence ${attempt.attemptId}`);
+    assertEqual(
+      evidence.attemptDigest.value,
+      digestEvaluationArtifactV1(EvaluationAttemptRecordV1Schema, attempt).value,
+      "score attempt evidence has a different attempt identity",
+    );
+    const attemptAdjudications = adjudications.filter(
+      ({ attemptId }) => attemptId === attempt.attemptId,
+    );
+    assertEqual(
+      JSON.stringify(evidence.adjudicationIds),
+      JSON.stringify(attemptAdjudications.map(({ adjudicationId }) => adjudicationId).sort()),
+      "score attempt evidence has different adjudication coverage",
+    );
+    const caseManifest = caseById.get(attempt.caseId);
+    if (!caseManifest) throw new TypeError("attempt evidence case is unavailable");
+    const contribution = metricCountsForAttempt(attempt, caseManifest, attemptAdjudications);
+    contributionByAttempt.set(attempt.attemptId, contribution);
+    assertMetricCounts(evidence.metrics, contribution, `attempt ${attempt.attemptId}`);
+    const expectedResources = {
+      providerAttempts: attempt.usage.providerAttempts,
+      evidenceBytes: attempt.usage.evidenceBytes,
+      outputBytes: attempt.usage.outputBytes,
+      reportedCostUsd: attempt.usage.knownCostUsd ?? 0,
+      unknownCostAttempts: attempt.usage.unknownCostAttempts,
+      conservativeChargeUsd: attempt.usage.conservativeChargeUsd,
+      admittedCeilingUsd: attempt.usage.admittedCeilingUsd,
+    };
+    if (JSON.stringify(evidence.resources) !== JSON.stringify(expectedResources)) {
+      throw new TypeError(
+        `score attempt ${attempt.attemptId} resource evidence does not match attempt`,
+      );
+    }
+  }
+  assertMetricCounts(
+    score.metrics,
+    aggregateMetricCounts([...contributionByAttempt.values()]),
+    "global",
   );
   assertEqual(
     score.resources.providerAttempts,
@@ -344,6 +620,15 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
       assignmentByCase.get(caseManifest.caseId)?.split ?? "",
       "case breakdown has a different split identity",
     );
+    assertMetricCounts(
+      breakdown.metrics,
+      aggregateMetricCounts(
+        attempts
+          .filter(({ caseId }) => caseId === caseManifest.caseId)
+          .map(({ attemptId }) => contributionByAttempt.get(attemptId) ?? []),
+      ),
+      `case ${caseManifest.caseId}`,
+    );
   }
   const expectedFamilies = new Map<string, "DEVELOPMENT" | "HOLDOUT">();
   for (const assignment of split.assignments)
@@ -359,14 +644,136 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
       expectedFamilies.get(breakdown.familyId) ?? "",
       "family breakdown has a different split identity",
     );
+    assertMetricCounts(
+      breakdown.metrics,
+      aggregateMetricCounts(
+        attempts
+          .filter(({ familyId }) => familyId === breakdown.familyId)
+          .map(({ attemptId }) => contributionByAttempt.get(attemptId) ?? []),
+      ),
+      `family ${breakdown.familyId}`,
+    );
   }
   const pairIds = new Set(cases.flatMap(({ pair }) => (pair === null ? [] : [pair.pairId])));
-  for (const delta of score.pairedDeltas) {
-    if (!pairIds.has(delta.pairId))
-      throw new TypeError(`score contains unknown pair ${delta.pairId}`);
-    if (!variantIds.has(delta.baselineVariantId) || !variantIds.has(delta.candidateVariantId)) {
-      throw new TypeError("score paired delta contains unknown variant");
+  const expectedDeltaKeys = new Set<string>();
+  for (const comparison of experiment.comparisons) {
+    for (const pairId of comparison.pairIds) {
+      if (!pairIds.has(pairId))
+        throw new TypeError(`experiment comparison contains unknown pair ${pairId}`);
+      for (const metric of comparison.metrics) {
+        const key = `${comparison.comparisonId}:${pairId}:${metric}`;
+        if (expectedDeltaKeys.has(key))
+          throw new TypeError(`duplicate declared score delta ${key}`);
+        expectedDeltaKeys.add(key);
+        const delta = score.pairedDeltas.find(
+          (entry) =>
+            entry.comparisonId === comparison.comparisonId &&
+            entry.pairId === pairId &&
+            entry.metric === metric,
+        );
+        if (!delta) throw new TypeError(`score omits declared paired delta ${key}`);
+        assertEqual(
+          delta.baselineVariantId,
+          comparison.baselineVariantId,
+          "score delta has different baseline variant",
+        );
+        assertEqual(
+          delta.candidateVariantId,
+          comparison.candidateVariantId,
+          "score delta has different candidate variant",
+        );
+        const pairCaseIds = new Set(
+          cases.flatMap(({ caseId, pair }) => (pair?.pairId === pairId ? [caseId] : [])),
+        );
+        const countsForVariant = (variantId: string) =>
+          aggregateMetricCounts(
+            attempts
+              .filter(
+                ({ caseId, variantId: attemptVariantId }) =>
+                  pairCaseIds.has(caseId) && attemptVariantId === variantId,
+              )
+              .map(({ attemptId }) => contributionByAttempt.get(attemptId) ?? []),
+          ).find((entry) => entry.metric === metric) as MetricCount;
+        const baselineValue = metricValue(countsForVariant(comparison.baselineVariantId));
+        const candidateValue = metricValue(countsForVariant(comparison.candidateVariantId));
+        if (delta.baselineValue !== baselineValue || delta.candidateValue !== candidateValue) {
+          throw new TypeError(`score paired delta ${key} values do not match attempts`);
+        }
+      }
     }
+  }
+  assertEqual(
+    score.pairedDeltas.length,
+    expectedDeltaKeys.size,
+    "score paired deltas must exactly match experiment declarations",
+  );
+
+  const severityEligible = adjudications.filter((adjudication) => {
+    const attempt = attemptById.get(adjudication.attemptId);
+    return (
+      attempt?.findingClaims.find(
+        ({ findingReference }) => findingReference === adjudication.findingReference,
+      )?.claimKind === "DEFECT"
+    );
+  });
+  const severityClassified = severityEligible.filter(
+    ({ severityCalibration }) => severityCalibration !== null,
+  );
+  const severityUnavailable = severityEligible
+    .filter(({ severityCalibration }) => severityCalibration === null)
+    .map(({ adjudicationId }) => adjudicationId)
+    .sort();
+  const severityRank = { NOT_APPLICABLE: 0, NON_BLOCKING: 1, BLOCKING: 2 } as const;
+  const exact = severityClassified.filter(
+    ({ severityCalibration }) => severityCalibration?.expected === severityCalibration?.observed,
+  ).length;
+  const underclassified = severityClassified.filter(
+    ({ severityCalibration }) =>
+      severityCalibration !== null &&
+      severityRank[severityCalibration.observed] < severityRank[severityCalibration.expected],
+  ).length;
+  const overclassified = severityClassified.length - exact - underclassified;
+  const expectedSeverity = {
+    eligibleAdjudications: severityEligible.length,
+    classifiedAdjudications: severityClassified.length,
+    exact,
+    underclassified,
+    overclassified,
+    unavailableAdjudicationIds: severityUnavailable,
+  };
+  if (JSON.stringify(score.severityCalibration) !== JSON.stringify(expectedSeverity)) {
+    throw new TypeError("score severity calibration does not match adjudications");
+  }
+  const enforcementEligible = adjudications.filter(
+    (adjudication) => caseById.get(adjudication.caseId)?.reviewMode === "STANDARDS",
+  );
+  const enforcementClassified = enforcementEligible.filter(
+    ({ enforcementClassification }) => enforcementClassification !== null,
+  );
+  const enforcementUnavailable = enforcementEligible
+    .filter(({ enforcementClassification }) => enforcementClassification === null)
+    .map(({ adjudicationId }) => adjudicationId)
+    .sort();
+  const enforcementCounts = new Map<string, number>();
+  for (const adjudication of enforcementClassified) {
+    const classification = adjudication.enforcementClassification;
+    if (classification !== null) {
+      const key = `${classification.expected}:${classification.observed}`;
+      enforcementCounts.set(key, (enforcementCounts.get(key) ?? 0) + 1);
+    }
+  }
+  for (const cell of score.enforcementConfusion.cells) {
+    if (cell.count !== (enforcementCounts.get(`${cell.expected}:${cell.observed}`) ?? 0)) {
+      throw new TypeError("score enforcement confusion does not match adjudications");
+    }
+  }
+  if (
+    score.enforcementConfusion.eligibleAdjudications !== enforcementEligible.length ||
+    score.enforcementConfusion.classifiedAdjudications !== enforcementClassified.length ||
+    JSON.stringify(score.enforcementConfusion.unavailableAdjudicationIds) !==
+      JSON.stringify(enforcementUnavailable)
+  ) {
+    throw new TypeError("score enforcement coverage does not match adjudications");
   }
 
   const expectedArtifacts = new Map<string, string>();

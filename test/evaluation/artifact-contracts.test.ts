@@ -6,6 +6,7 @@ import {
   EvaluationAdjudicationRecordV1Schema,
   EvaluationAttemptRecordV1Schema,
   EvaluationCaseManifestV1Schema,
+  EvaluationExperimentManifestV1Schema,
   EvaluationScoreReportV1Schema,
   serializeEvaluationArtifactV1,
   validateEvaluationFamilySplitV1,
@@ -91,6 +92,32 @@ describe("evaluation artifact contracts", () => {
     );
   });
 
+  it("freezes complete metric and baseline/candidate comparison membership", () => {
+    const { experiment } = makeEvaluationGraph();
+    assert.doesNotThrow(() => EvaluationExperimentManifestV1Schema.parse(experiment));
+    assert.throws(
+      () =>
+        EvaluationExperimentManifestV1Schema.parse({
+          ...experiment,
+          metricSet: experiment.metricSet.slice(0, 1),
+        }),
+      /every protocol metric/i,
+    );
+    assert.throws(
+      () =>
+        EvaluationExperimentManifestV1Schema.parse({
+          ...experiment,
+          comparisons: [
+            {
+              ...first(experiment.comparisons),
+              candidateVariantId: "variant_baseline",
+            },
+          ],
+        }),
+      /comparison variants must differ/i,
+    );
+  });
+
   it("enforces stage order, artifact states, terminal report identity, and accounting", () => {
     const { attempts } = makeEvaluationGraph();
     const attempt = first(attempts);
@@ -149,7 +176,13 @@ describe("evaluation artifact contracts", () => {
       runtimeRunReference: null,
       stageOutcomes: [
         base.stageOutcomes[0],
-        { stage: "FINDING_VERIFICATION", state: "FAILED", artifactDigest: null, elapsedMs: 700 },
+        {
+          stage: "FINDING_VERIFICATION",
+          state: "FAILED",
+          artifactDigest: null,
+          elapsedMs: 700,
+          providerCall: true,
+        },
       ],
       findingClaims: [],
       terminalOutcome: {
@@ -167,6 +200,7 @@ describe("evaluation artifact contracts", () => {
       ...base,
       terminalOutcome: {
         kind: "SEMANTIC_ABSTENTION",
+        reportReference: base.terminalOutcome.reportReference,
         reportDigest: first(base.stageOutcomes.slice(2)).artifactDigest,
         reason: "Required evidence unavailable.",
       },
@@ -183,6 +217,17 @@ describe("evaluation artifact contracts", () => {
         }),
       /provider failure.*failed stage/i,
     );
+  });
+
+  it("counts provider calls independently from successful local logical stages", () => {
+    const { attempts } = makeEvaluationGraph();
+    const attempt = structuredClone(
+      attempts.find(({ caseId }) => caseId === "case_clean") ?? first(attempts),
+    );
+    attempt.findingClaims = [];
+    first(attempt.stageOutcomes.slice(1, 2)).providerCall = false;
+    attempt.usage.providerAttempts = 2;
+    assert.doesNotThrow(() => EvaluationAttemptRecordV1Schema.parse(attempt));
   });
 
   it("requires causal evidence and human promotion authority for supported labels", () => {
@@ -213,6 +258,17 @@ describe("evaluation artifact contracts", () => {
     assert.throws(
       () => EvaluationScoreReportV1Schema.parse({ ...score, caseBreakdowns: [] }),
       /too_small|at least one/i,
+    );
+    assert.throws(
+      () =>
+        EvaluationScoreReportV1Schema.parse({
+          ...score,
+          caseBreakdowns: score.caseBreakdowns.map((breakdown) => ({
+            ...breakdown,
+            metrics: breakdown.metrics.slice(0, 1),
+          })),
+        }),
+      /breakdown requires every protocol metric/i,
     );
     const zero = {
       ...score,

@@ -83,8 +83,49 @@ const interval = {
   upper: 1,
   independentUnit: "CASE",
 };
-const metrics = () =>
-  metricNames.map((metric) => ({ metric, numerator: 1, denominator: 2, value: 0.5, interval }));
+type MetricName = (typeof metricNames)[number];
+type Count = { metric: MetricName; numerator: number; denominator: number };
+const scoredMetrics = (counts: readonly Count[]) =>
+  counts.map(({ metric, numerator, denominator }) => ({
+    metric,
+    numerator,
+    denominator,
+    value: denominator === 0 ? null : numerator / denominator,
+    interval: denominator === 0 ? null : interval,
+  }));
+const attemptCounts = (defect: boolean): Count[] => [
+  {
+    metric: "KNOWN_DEFECT_RECALL_COMPLETED",
+    numerator: defect ? 1 : 0,
+    denominator: defect ? 1 : 0,
+  },
+  {
+    metric: "KNOWN_DEFECT_RECALL_ALL_STARTS",
+    numerator: defect ? 1 : 0,
+    denominator: defect ? 1 : 0,
+  },
+  { metric: "ADJUDICATED_DEFECT_PRECISION", numerator: defect ? 1 : 0, denominator: 1 },
+  { metric: "CONSERVATIVE_PRECISION_BOUND", numerator: defect ? 1 : 0, denominator: 1 },
+  { metric: "UNIQUE_ACTION_YIELD", numerator: defect ? 1 : 0, denominator: 1 },
+  { metric: "CLEAN_FALSE_POSITIVE_RATE", numerator: defect ? 0 : 1, denominator: defect ? 0 : 1 },
+  { metric: "FALSE_ABSTENTION_RATE", numerator: 0, denominator: 1 },
+  { metric: "CORRECT_UNCERTAINTY_RATE", numerator: 0, denominator: 0 },
+  { metric: "DUPLICATE_RATE", numerator: 0, denominator: 1 },
+  { metric: "DELIVERY_RATE", numerator: 1, denominator: 1 },
+  { metric: "STAGE_RETENTION_RATE", numerator: 0, denominator: 0 },
+];
+const addCounts = (groups: readonly Count[][]): Count[] =>
+  metricNames.map((metric) => ({
+    metric,
+    numerator: groups.reduce(
+      (sum, counts) => sum + (counts.find((entry) => entry.metric === metric)?.numerator ?? 0),
+      0,
+    ),
+    denominator: groups.reduce(
+      (sum, counts) => sum + (counts.find((entry) => entry.metric === metric)?.denominator ?? 0),
+      0,
+    ),
+  }));
 const distribution = (value: number) => ({
   count: 4,
   minimum: value,
@@ -127,6 +168,16 @@ export function makeEvaluationGraph() {
     seed: 7,
     budgets: { maxTotalCostUsd: 0.08, maxElapsedMs: 3_600_000 },
     stopRules: ["Stop on oracle leakage."],
+    metricSet: [...metricNames],
+    comparisons: [
+      {
+        comparisonId: "comparison_candidate",
+        baselineVariantId: "variant_baseline",
+        candidateVariantId: "variant_candidate",
+        pairIds: ["pair_checkout"],
+        metrics: ["KNOWN_DEFECT_RECALL_COMPLETED"],
+      },
+    ],
   };
   const experimentManifestDigest = digestEvaluationArtifactV1(
     EvaluationExperimentManifestV1Schema,
@@ -160,24 +211,39 @@ export function makeEvaluationGraph() {
         completedAt: "2026-09-15T12:00:01.000Z",
         elapsedMs: 1_000,
         stageOutcomes: [
-          { stage: "PRELIMINARY", state: "SUCCEEDED", artifactDigest: sha("9"), elapsedMs: 300 },
+          {
+            stage: "PRELIMINARY",
+            state: "SUCCEEDED",
+            artifactDigest: sha("9"),
+            elapsedMs: 300,
+            providerCall: true,
+          },
           {
             stage: "FINDING_VERIFICATION",
             state: "SUCCEEDED",
             artifactDigest: sha("a"),
             elapsedMs: 300,
+            providerCall: true,
           },
-          { stage: "FINAL", state: "SUCCEEDED", artifactDigest: reportDigest, elapsedMs: 400 },
+          {
+            stage: "FINAL",
+            state: "SUCCEEDED",
+            artifactDigest: reportDigest,
+            elapsedMs: 400,
+            providerCall: true,
+          },
         ],
         findingClaims: [
           {
             findingReference: `finding_${suffix}`,
             claimDigest: sha(index === 0 ? "b" : "c"),
             emittedAtStage: "FINAL",
+            claimKind: "DEFECT",
           },
         ],
         terminalOutcome: {
           kind: "DELIVERED",
+          reportReference: `.review-runs/${suffix}/report.json`,
           reportDigest,
           verdict: caseManifest.pair.role === "DEFECT" ? "NOT_READY" : "READY",
         },
@@ -200,6 +266,12 @@ export function makeEvaluationGraph() {
     const defect = attempt.caseId === "case_defect";
     const claim = attempt.findingClaims[0];
     if (claim === undefined) throw new TypeError("fixture attempt must contain one claim");
+    const caseManifest = cases.find(({ caseId }) => caseId === attempt.caseId);
+    if (caseManifest === undefined) throw new TypeError("fixture attempt case must exist");
+    const sourceInput = caseManifest.reviewerInputInventory.find(
+      ({ role }) => role === "SOURCE_CHANGE",
+    );
+    if (sourceInput === undefined) throw new TypeError("fixture case needs source input");
     return {
       schemaVersion: 1,
       adjudicationId: `adjudication_${index + 1}`,
@@ -211,7 +283,14 @@ export function makeEvaluationGraph() {
       claimDigest: claim.claimDigest,
       label: defect ? "MATCHED_DEFECT" : "INVALID_DEFECT",
       matchedRootId: defect ? "root_double_conversion" : null,
-      causalEvidence: defect ? [{ reference: "checkout.mjs:10", digest: sha("d") }] : [],
+      causalEvidence: defect
+        ? [{ source: "CASE_INPUT", reference: sourceInput.reference, digest: sourceInput.digest }]
+        : [],
+      matchedUncertaintyId: null,
+      severityCalibration: defect
+        ? { expected: "BLOCKING", observed: "BLOCKING" }
+        : { expected: "NOT_APPLICABLE", observed: "BLOCKING" },
+      enforcementClassification: null,
       adjudicator: { type: "MODEL_ASSISTED", identity: "judge-v1" },
       promotionAuthority: defect ? { type: "HUMAN", identity: "reviewer@example.invalid" } : null,
       rationale: defect
@@ -261,7 +340,9 @@ export function makeEvaluationGraph() {
     scorerVersion: experiment.scorerVersion,
     scorerPolicyDigest: experiment.scorerPolicyDigest,
     generatedAt: "2026-09-15T12:10:00.000Z",
-    metrics: metrics(),
+    metrics: scoredMetrics(
+      addCounts(attempts.map((attempt) => attemptCounts(attempt.caseId === "case_defect"))),
+    ),
     adjudicationCoverage: {
       totalClaims: 4,
       resolvedClaims: 4,
@@ -273,17 +354,69 @@ export function makeEvaluationGraph() {
       caseId: value.caseId,
       familyId: value.familyId,
       split: "DEVELOPMENT",
-      metrics: metrics(),
+      metrics: scoredMetrics(
+        addCounts(
+          attempts
+            .filter(({ caseId }) => caseId === value.caseId)
+            .map(() => attemptCounts(value.caseId === "case_defect")),
+        ),
+      ),
     })),
-    familyBreakdowns: [{ familyId: "family_checkout", split: "DEVELOPMENT", metrics: metrics() }],
+    familyBreakdowns: [
+      {
+        familyId: "family_checkout",
+        split: "DEVELOPMENT",
+        metrics: scoredMetrics(
+          addCounts(attempts.map((attempt) => attemptCounts(attempt.caseId === "case_defect"))),
+        ),
+      },
+    ],
+    attemptEvidence: attempts.map((attempt) => ({
+      attemptId: attempt.attemptId,
+      attemptDigest: digestEvaluationArtifactV1(EvaluationAttemptRecordV1Schema, attempt),
+      adjudicationIds: adjudications
+        .filter(({ attemptId }) => attemptId === attempt.attemptId)
+        .map(({ adjudicationId }) => adjudicationId),
+      metrics: attemptCounts(attempt.caseId === "case_defect"),
+      resources: {
+        providerAttempts: attempt.usage.providerAttempts,
+        evidenceBytes: attempt.usage.evidenceBytes,
+        outputBytes: attempt.usage.outputBytes,
+        reportedCostUsd: attempt.usage.knownCostUsd ?? 0,
+        unknownCostAttempts: attempt.usage.unknownCostAttempts,
+        conservativeChargeUsd: attempt.usage.conservativeChargeUsd,
+        admittedCeilingUsd: attempt.usage.admittedCeilingUsd,
+      },
+    })),
+    severityCalibration: {
+      eligibleAdjudications: 4,
+      classifiedAdjudications: 4,
+      exact: 2,
+      underclassified: 0,
+      overclassified: 2,
+      unavailableAdjudicationIds: [],
+    },
+    enforcementConfusion: {
+      eligibleAdjudications: 0,
+      classifiedAdjudications: 0,
+      cells: ["REQUIRED", "RECOMMENDED", "NOT_APPLICABLE", "UNAVAILABLE"].flatMap((expected) =>
+        ["REQUIRED", "RECOMMENDED", "NOT_APPLICABLE", "UNAVAILABLE"].map((observed) => ({
+          expected,
+          observed,
+          count: 0,
+        })),
+      ),
+      unavailableAdjudicationIds: [],
+    },
     pairedDeltas: [
       {
+        comparisonId: "comparison_candidate",
         pairId: "pair_checkout",
         baselineVariantId: "variant_baseline",
         candidateVariantId: "variant_candidate",
         metric: "KNOWN_DEFECT_RECALL_COMPLETED",
-        baselineValue: 0.5,
-        candidateValue: 0.5,
+        baselineValue: 1,
+        candidateValue: 1,
         delta: 0,
       },
     ],

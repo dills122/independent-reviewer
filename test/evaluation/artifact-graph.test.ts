@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
+import {
+  digestEvaluationArtifactV1,
+  EvaluationAdjudicationRecordV1Schema,
+} from "../../evaluation/artifact-contracts.js";
 import { validateEvaluationArtifactGraphV1 } from "../../evaluation/artifact-graph.js";
 import { makeEvaluationGraph, sha } from "./artifact-fixtures.js";
 
@@ -101,6 +105,116 @@ describe("evaluation artifact graph", () => {
 
     const badVariant = makeEvaluationGraph();
     first(badVariant.score.pairedDeltas).candidateVariantId = "variant_unknown";
-    assert.throws(() => validateEvaluationArtifactGraphV1(badVariant), /unknown variant/i);
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(badVariant),
+      /different candidate variant/i,
+    );
+  });
+
+  it("enforces exact complete deltas declared before execution", () => {
+    const missing = makeEvaluationGraph();
+    missing.score.pairedDeltas = [];
+    assert.throws(() => validateEvaluationArtifactGraphV1(missing), /omits declared paired delta/i);
+
+    const extra = makeEvaluationGraph();
+    extra.score.pairedDeltas.push({
+      ...first(extra.score.pairedDeltas),
+      comparisonId: "comparison_extra",
+    });
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(extra),
+      /paired deltas must exactly match/i,
+    );
+  });
+
+  it("recomputes score metrics and attempt-level resource evidence", () => {
+    const global = makeEvaluationGraph();
+    const recall = global.score.metrics.find(
+      ({ metric }) => metric === "KNOWN_DEFECT_RECALL_COMPLETED",
+    );
+    assert.ok(recall);
+    Object.assign(recall, { numerator: 1, denominator: 2, value: 0.5 });
+    assert.throws(() => validateEvaluationArtifactGraphV1(global), /global metric.*artifacts/i);
+
+    const contribution = makeEvaluationGraph();
+    first(first(contribution.score.attemptEvidence).metrics).numerator = 0;
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(contribution),
+      /attempt .* metric.*artifacts/i,
+    );
+
+    const resource = makeEvaluationGraph();
+    first(resource.score.attemptEvidence).resources.evidenceBytes += 1;
+    assert.throws(() => validateEvaluationArtifactGraphV1(resource), /resource evidence/i);
+
+    const aggregateResource = makeEvaluationGraph();
+    aggregateResource.score.resources.providerAttempts += 1;
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(aggregateResource),
+      /provider-attempt total does not match/i,
+    );
+  });
+
+  it("recomputes severity calibration and enforcement confusion", () => {
+    const severity = makeEvaluationGraph();
+    severity.score.severityCalibration.exact = 1;
+    severity.score.severityCalibration.overclassified = 3;
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(severity),
+      /severity calibration does not match/i,
+    );
+
+    const enforcement = makeEvaluationGraph();
+    enforcement.score.enforcementConfusion.eligibleAdjudications = 1;
+    enforcement.score.enforcementConfusion.classifiedAdjudications = 1;
+    first(enforcement.score.enforcementConfusion.cells).count = 1;
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(enforcement),
+      /enforcement (?:coverage|confusion) does not match/i,
+    );
+  });
+
+  it("binds causal evidence to retained bytes and orders attempt, adjudication, and score", () => {
+    const wrongEvidence = makeEvaluationGraph();
+    first(first(wrongEvidence.adjudications).causalEvidence).digest = sha("0");
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(wrongEvidence),
+      /not retained case input/i,
+    );
+
+    const reportEvidence = makeEvaluationGraph();
+    const adjudication = first(reportEvidence.adjudications);
+    const attempt = first(reportEvidence.attempts);
+    assert.equal(adjudication.attemptId, attempt.attemptId);
+    assert.ok("reportDigest" in attempt.terminalOutcome);
+    adjudication.causalEvidence.push({
+      source: "REPORT",
+      reference: attempt.terminalOutcome.reportReference,
+      digest: attempt.terminalOutcome.reportDigest,
+    });
+    const rawAdjudication = reportEvidence.score.rawArtifactReferences.find(
+      ({ type, id }) => type === "ADJUDICATION" && id === adjudication.adjudicationId,
+    );
+    assert.ok(rawAdjudication);
+    rawAdjudication.digest = digestEvaluationArtifactV1(
+      EvaluationAdjudicationRecordV1Schema,
+      adjudication,
+    );
+    assert.doesNotThrow(() => validateEvaluationArtifactGraphV1(reportEvidence));
+
+    const earlyAdjudication = makeEvaluationGraph();
+    first(earlyAdjudication.attempts).completedAt = "2026-09-15T12:06:00.000Z";
+    first(earlyAdjudication.attempts).elapsedMs = 360_000;
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(earlyAdjudication),
+      /adjudication cannot precede attempt completion/i,
+    );
+
+    const earlyScore = makeEvaluationGraph();
+    earlyScore.score.generatedAt = "2026-09-15T12:04:00.000Z";
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(earlyScore),
+      /score generation cannot precede adjudication/i,
+    );
   });
 });

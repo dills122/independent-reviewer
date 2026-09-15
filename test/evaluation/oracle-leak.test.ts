@@ -127,4 +127,59 @@ describe("evaluation oracle leak checking", () => {
       /oracle root.*FINDING_VERIFICATION/i,
     );
   });
+
+  it("detects oracle text fragmented across canonical metadata values", () => {
+    assert.throws(
+      () =>
+        assertNoEvaluationOracleLeakV1({
+          oracle,
+          messages: [
+            {
+              stage: "FINAL",
+              reference: "metadata.json",
+              content: {
+                a: "Checkout converts cents ",
+                b: "a second time.",
+              },
+            },
+          ],
+        }),
+      /oracle root.*FINAL/i,
+    );
+
+    const encoded = hiddenBytes.toString("base64");
+    assert.throws(
+      () =>
+        assertNoEvaluationOracleLeakV1({
+          oracle,
+          messages: [
+            {
+              stage: "TOOL_RESULT",
+              reference: "metadata.json",
+              content: { a: encoded.slice(0, 20), b: encoded.slice(20) },
+            },
+          ],
+        }),
+      /oracle content.*TOOL_RESULT/i,
+    );
+  });
+
+  it("does not join reordered or interrupted benign fragments into a leak", () => {
+    assert.doesNotThrow(() =>
+      assertNoEvaluationOracleLeakV1({
+        oracle,
+        messages: [
+          {
+            stage: "FINAL",
+            reference: "metadata.json",
+            content: {
+              a: "a second time.",
+              b: "Independent evaluator note.",
+              c: "Checkout converts cents ",
+            },
+          },
+        ],
+      }),
+    );
+  });
 });

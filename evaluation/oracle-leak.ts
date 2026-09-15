@@ -1,4 +1,4 @@
-import { cloneCanonicalJson } from "../src/contracts/canonical-json.js";
+import { canonicalizeJson, cloneCanonicalJson } from "../src/contracts/canonical-json.js";
 import { sha256BytesDigestV1 } from "../src/contracts/json-document.js";
 import { type DigestV1, DigestV1Schema } from "../src/contracts/snapshot-manifest.js";
 
@@ -40,25 +40,30 @@ interface EvaluationOracleLeakInputV1 {
   }[];
 }
 
-function collectStrings(value: unknown, output: string[]): void {
+function collectStrings(value: unknown, keys: string[], values: string[]): void {
   if (typeof value === "string") {
-    output.push(value);
+    values.push(value);
     return;
   }
   if (Array.isArray(value)) {
-    for (const item of value) collectStrings(item, output);
+    for (const item of value) collectStrings(item, keys, values);
     return;
   }
   if (value !== null && typeof value === "object") {
     for (const [key, nested] of Object.entries(value)) {
-      output.push(key);
-      collectStrings(nested, output);
+      keys.push(key);
+      collectStrings(nested, keys, values);
     }
   }
 }
 
 function contains(haystacks: readonly string[], needle: string): boolean {
   return needle.length > 0 && haystacks.some((haystack) => haystack.includes(needle));
+}
+
+function encodedForms(value: string): string[] {
+  const bytes = Buffer.from(value, "utf8");
+  return [value, bytes.toString("base64"), bytes.toString("hex"), canonicalizeJson(value)];
 }
 
 export function assertNoEvaluationOracleLeakV1(input: EvaluationOracleLeakInputV1): void {
@@ -76,10 +81,9 @@ export function assertNoEvaluationOracleLeakV1(input: EvaluationOracleLeakInputV
       );
     }
     artifactDigests.add(declared.value);
-    artifactIdentifiers.push(artifact.reference, declared.value);
+    artifactIdentifiers.push(...encodedForms(artifact.reference), ...encodedForms(declared.value));
     const decoded = Buffer.from(artifact.bytes).toString("utf8");
-    if (decoded.length > 0) artifactContents.push(decoded);
-    artifactContents.push(Buffer.from(artifact.bytes).toString("base64"));
+    if (decoded.length > 0) artifactContents.push(...encodedForms(decoded));
   }
 
   for (const message of input.messages) {
@@ -88,8 +92,13 @@ export function assertNoEvaluationOracleLeakV1(input: EvaluationOracleLeakInputV
     if (message.reference.trim().length === 0)
       throw new TypeError("reviewer message reference is empty");
     const content = cloneCanonicalJson(message.content);
-    const strings = [message.reference];
-    collectStrings(content, strings);
+    const keys: string[] = [];
+    const values: string[] = [];
+    collectStrings(content, keys, values);
+    const canonicalMessage = canonicalizeJson({ content, reference: message.reference });
+    const strings = [message.reference, canonicalMessage, ...keys, ...values];
+    const joinedChannels = [keys.join(""), values.join(""), [...keys, ...values].join("")];
+    const scanChannels = [...strings, ...joinedChannels];
     if (message.bytes !== undefined) {
       const digest = sha256BytesDigestV1(Buffer.from(message.bytes));
       if (artifactDigests.has(digest.value)) {
@@ -98,27 +107,30 @@ export function assertNoEvaluationOracleLeakV1(input: EvaluationOracleLeakInputV
         );
       }
     }
-    if (artifactContents.some((oracleContent) => contains(strings, oracleContent))) {
+    if (artifactContents.some((oracleContent) => contains(scanChannels, oracleContent))) {
       throw new TypeError(`oracle content entered ${message.stage} message`);
     }
-    if (artifactIdentifiers.some((identifier) => contains(strings, identifier))) {
+    if (artifactIdentifiers.some((identifier) => contains(scanChannels, identifier))) {
       throw new TypeError(`oracle artifact identity entered ${message.stage} message`);
     }
     for (const root of input.oracle.expectedRoots) {
-      if (contains(strings, root.rootId) || contains(strings, root.description)) {
+      if (
+        encodedForms(root.rootId).some((form) => contains(scanChannels, form)) ||
+        encodedForms(root.description).some((form) => contains(scanChannels, form))
+      ) {
         throw new TypeError(`oracle root entered ${message.stage} message`);
       }
     }
     for (const uncertainty of input.oracle.expectedUncertainties) {
       if (
-        contains(strings, uncertainty.uncertaintyId) ||
-        contains(strings, uncertainty.description)
+        encodedForms(uncertainty.uncertaintyId).some((form) => contains(scanChannels, form)) ||
+        encodedForms(uncertainty.description).some((form) => contains(scanChannels, form))
       ) {
         throw new TypeError(`oracle uncertainty entered ${message.stage} message`);
       }
     }
     for (const label of input.oracle.forbiddenLabels) {
-      if (contains(strings, label)) {
+      if (encodedForms(label).some((form) => contains(scanChannels, form))) {
         throw new TypeError(`forbidden evaluator label entered ${message.stage} message`);
       }
     }

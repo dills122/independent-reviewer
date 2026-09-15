@@ -12,6 +12,7 @@ export type IdentifierPrefixV1 =
   | "attempt"
   | "brief"
   | "case"
+  | "comparison"
   | "check"
   | "config"
   | "context"

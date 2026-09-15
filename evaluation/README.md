@@ -73,14 +73,18 @@ owns reproducible selection, fixture construction, paid admission, and result ac
 `artifact-contracts.ts` defines package-private v1 validation and serialization contracts for case,
 split, experiment, attempt, adjudication, and score artifacts. `artifact-graph.ts` validates one
 fully supplied artifact graph against frozen case, split, experiment, source, engine, variant,
-repetition, claim, and raw-reference identities. Pair membership is explicit and complete; zero-
-denominator metrics, unresolved adjudications, terminal failures, and cost uncertainty remain
-visible.
+repetition, claim, and raw-reference identities. Experiment manifests predeclare full metric and
+baseline/candidate pair-comparison membership. Graph validation recomputes attempt, case, family,
+and aggregate counts, paired deltas, resources, latency, cost, severity calibration, and enforcement
+confusion from retained attempt/adjudication evidence. Pair membership is explicit and complete;
+local logical stages remain distinct from provider calls; zero-denominator metrics, unresolved
+adjudications, terminal failures, and cost uncertainty remain visible.
 
 `oracle-leak.ts` checks supplied reviewer messages, message metadata, references, and attachment
 bytes against evaluator-only roots, uncertainties, labels, artifact identities, and content. Caller
-must supply every message and attachment available to each reviewer stage; this module does not
-intercept provider traffic or discover omitted messages.
+must supply every message and attachment available to each reviewer stage. Checks cover canonical
+serialized messages, fragmented metadata values, and raw/base64/hex forms without concatenating
+across messages. This module does not intercept provider traffic or discover omitted messages.
 
 These evaluator-only modules do not allocate corpus splits, execute scoring, collect runtime
 messages, integrate artifacts into matrix runs, call providers, or change product behavior. Those
