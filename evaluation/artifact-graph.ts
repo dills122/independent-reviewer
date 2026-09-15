@@ -1,3 +1,4 @@
+import { compareUtf16 } from "../src/contracts/primitives.js";
 import {
   digestEvaluationArtifactV1,
   EvaluationAdjudicationRecordV1Schema,
@@ -23,6 +24,20 @@ export interface EvaluationArtifactGraphInputV1 {
 
 function assertEqual(actual: string | number, expected: string | number, message: string): void {
   if (actual !== expected) throw new TypeError(message);
+}
+
+export function sumEvaluationNumbersV1(values: readonly number[]): number {
+  const sorted = [...values].sort(
+    (left, right) => Math.abs(left) - Math.abs(right) || left - right,
+  );
+  let sum = 0;
+  let correction = 0;
+  for (const value of sorted) {
+    const next = sum + value;
+    correction += Math.abs(sum) >= Math.abs(value) ? sum - next + value : value - next + sum;
+    sum = next;
+  }
+  return sum + correction;
 }
 
 function summarize(values: readonly number[]): {
@@ -257,11 +272,15 @@ function metricValue(count: MetricCount): number | null {
 export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraphInputV1): void {
   const experiment = EvaluationExperimentManifestV1Schema.parse(input.experiment);
   const split = EvaluationFamilySplitManifestV1Schema.parse(input.split);
-  const cases = input.cases.map((value) => EvaluationCaseManifestV1Schema.parse(value));
-  const attempts = input.attempts.map((value) => EvaluationAttemptRecordV1Schema.parse(value));
-  const adjudications = input.adjudications.map((value) =>
-    EvaluationAdjudicationRecordV1Schema.parse(value),
-  );
+  const cases = input.cases
+    .map((value) => EvaluationCaseManifestV1Schema.parse(value))
+    .sort((left, right) => compareUtf16(left.caseId, right.caseId));
+  const attempts = input.attempts
+    .map((value) => EvaluationAttemptRecordV1Schema.parse(value))
+    .sort((left, right) => compareUtf16(left.attemptId, right.attemptId));
+  const adjudications = input.adjudications
+    .map((value) => EvaluationAdjudicationRecordV1Schema.parse(value))
+    .sort((left, right) => compareUtf16(left.adjudicationId, right.adjudicationId));
   const score = EvaluationScoreReportV1Schema.parse(input.score);
 
   validateEvaluationFamilySplitV1(split, cases);
@@ -601,42 +620,42 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
   );
   assertEqual(
     score.resources.providerAttempts,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.providerAttempts, 0),
+    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.providerAttempts)),
     "score provider-attempt total does not match attempts",
   );
   assertEqual(
     score.resources.evidenceBytes,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.evidenceBytes, 0),
+    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.evidenceBytes)),
     "score evidence-byte total does not match attempts",
   );
   assertEqual(
     score.resources.outputBytes,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.outputBytes, 0),
+    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.outputBytes)),
     "score output-byte total does not match attempts",
   );
   assertEqual(
     score.cost.reportedCostUsd,
-    attempts.reduce((sum, attempt) => sum + (attempt.usage.knownCostUsd ?? 0), 0),
+    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.knownCostUsd ?? 0)),
     "score reported cost does not match attempts",
   );
   assertEqual(
     score.cost.knownCostAttempts,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.knownCostAttempts, 0),
+    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.knownCostAttempts)),
     "score known-cost total does not match attempts",
   );
   assertEqual(
     score.cost.unknownCostAttempts,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.unknownCostAttempts, 0),
+    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.unknownCostAttempts)),
     "score unknown-cost total does not match attempts",
   );
   assertEqual(
     score.cost.conservativeChargeUsd,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.conservativeChargeUsd, 0),
+    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.conservativeChargeUsd)),
     "score conservative charge does not match attempts",
   );
   assertEqual(
     score.cost.admittedCeilingUsd,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.admittedCeilingUsd, 0),
+    sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.admittedCeilingUsd)),
     "score admitted ceiling does not match attempts",
   );
   if (score.cost.admittedCeilingUsd > experiment.budgets.maxTotalCostUsd) {

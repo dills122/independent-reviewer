@@ -15,6 +15,7 @@ import {
 } from "./artifact-contracts.js";
 import {
   deriveEvaluationAttemptMetricCountsV1,
+  sumEvaluationNumbersV1,
   validateEvaluationArtifactGraphV1,
 } from "./artifact-graph.js";
 
@@ -194,11 +195,15 @@ export function scoreEvaluationArtifactsV1(
 ): EvaluationScoreReportV1 {
   const experiment = EvaluationExperimentManifestV1Schema.parse(input.experiment);
   const split = EvaluationFamilySplitManifestV1Schema.parse(input.split);
-  const cases = input.cases.map((value) => EvaluationCaseManifestV1Schema.parse(value));
-  const attempts = input.attempts.map((value) => EvaluationAttemptRecordV1Schema.parse(value));
-  const adjudications = input.adjudications.map((value) =>
-    EvaluationAdjudicationRecordV1Schema.parse(value),
-  );
+  const cases = input.cases
+    .map((value) => EvaluationCaseManifestV1Schema.parse(value))
+    .sort((left, right) => compareUtf16(left.caseId, right.caseId));
+  const attempts = input.attempts
+    .map((value) => EvaluationAttemptRecordV1Schema.parse(value))
+    .sort((left, right) => compareUtf16(left.attemptId, right.attemptId));
+  const adjudications = input.adjudications
+    .map((value) => EvaluationAdjudicationRecordV1Schema.parse(value))
+    .sort((left, right) => compareUtf16(left.adjudicationId, right.adjudicationId));
   const caseById = new Map(cases.map((caseManifest) => [caseManifest.caseId, caseManifest]));
   const contributions = new Map(
     attempts.map((attempt) => {
@@ -360,31 +365,28 @@ export function scoreEvaluationArtifactsV1(
       },
     },
     resources: {
-      providerAttempts: attempts.reduce((sum, attempt) => sum + attempt.usage.providerAttempts, 0),
-      evidenceBytes: attempts.reduce((sum, attempt) => sum + attempt.usage.evidenceBytes, 0),
-      outputBytes: attempts.reduce((sum, attempt) => sum + attempt.usage.outputBytes, 0),
+      providerAttempts: sumEvaluationNumbersV1(
+        attempts.map((attempt) => attempt.usage.providerAttempts),
+      ),
+      evidenceBytes: sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.evidenceBytes)),
+      outputBytes: sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.outputBytes)),
       execution: [],
     },
     cost: {
-      reportedCostUsd: attempts.reduce(
-        (sum, attempt) => sum + (attempt.usage.knownCostUsd ?? 0),
-        0,
+      reportedCostUsd: sumEvaluationNumbersV1(
+        attempts.map((attempt) => attempt.usage.knownCostUsd ?? 0),
       ),
-      knownCostAttempts: attempts.reduce(
-        (sum, attempt) => sum + attempt.usage.knownCostAttempts,
-        0,
+      knownCostAttempts: sumEvaluationNumbersV1(
+        attempts.map((attempt) => attempt.usage.knownCostAttempts),
       ),
-      unknownCostAttempts: attempts.reduce(
-        (sum, attempt) => sum + attempt.usage.unknownCostAttempts,
-        0,
+      unknownCostAttempts: sumEvaluationNumbersV1(
+        attempts.map((attempt) => attempt.usage.unknownCostAttempts),
       ),
-      conservativeChargeUsd: attempts.reduce(
-        (sum, attempt) => sum + attempt.usage.conservativeChargeUsd,
-        0,
+      conservativeChargeUsd: sumEvaluationNumbersV1(
+        attempts.map((attempt) => attempt.usage.conservativeChargeUsd),
       ),
-      admittedCeilingUsd: attempts.reduce(
-        (sum, attempt) => sum + attempt.usage.admittedCeilingUsd,
-        0,
+      admittedCeilingUsd: sumEvaluationNumbersV1(
+        attempts.map((attempt) => attempt.usage.admittedCeilingUsd),
       ),
     },
     rawArtifactReferences: [

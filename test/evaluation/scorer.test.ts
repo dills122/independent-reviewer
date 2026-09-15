@@ -457,4 +457,41 @@ describe("evaluation scorer", () => {
       })),
     );
   });
+
+  it("is invariant under artifact permutations and fractional aggregation order", () => {
+    const graph = makeEvaluationGraph();
+    const costs = new Map(
+      [...graph.attempts]
+        .sort((left, right) => left.attemptId.localeCompare(right.attemptId))
+        .map(({ attemptId }, index) => [attemptId, [10_000_000_000_000_000, 1, 1, 0.25][index]]),
+    );
+    for (const attempt of graph.attempts) {
+      const cost = costs.get(attempt.attemptId);
+      assert.ok(cost !== undefined);
+      attempt.usage.knownCostUsd = cost;
+    }
+    const canonical = scoreGraph(graph);
+    const permuted = structuredClone(graph);
+    permuted.cases.reverse();
+    permuted.split.assignments.reverse();
+    permuted.experiment.caseIds.reverse();
+    permuted.experiment.variants.reverse();
+    permuted.experiment.comparisons.reverse();
+    permuted.attempts.reverse();
+    permuted.adjudications.reverse();
+
+    const rescored = scoreGraph(permuted);
+
+    assert.deepEqual(rescored, canonical);
+    assert.doesNotThrow(() =>
+      validateEvaluationArtifactGraphV1({
+        experiment: permuted.experiment,
+        split: permuted.split,
+        cases: permuted.cases,
+        attempts: permuted.attempts,
+        adjudications: permuted.adjudications,
+        score: canonical,
+      }),
+    );
+  });
 });
