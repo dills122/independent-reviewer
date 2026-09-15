@@ -103,6 +103,10 @@ export async function reconstructEvaluationCorpusCaseV1(
   caseRoot: string,
 ): Promise<ReconstructedEvaluationCorpusCaseV1> {
   const corpus = validateEvaluationCorpusDefinitionV1(EVALUATION_CORPUS_V1);
+  const canonicalCase = EVALUATION_CASES_V1.find(({ id }) => id === testCase.id);
+  if (!canonicalCase || jsonDocument(canonicalCase) !== jsonDocument(testCase)) {
+    throw new Error(`Supplied case does not match catalog case ${testCase.id}.`);
+  }
   const definition = corpus.cases.find(({ caseId }) => caseId === rawDefinition.caseId);
   if (
     !definition ||

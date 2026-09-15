@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -17,6 +17,7 @@ import {
   reconstructEvaluationCorpusV1,
 } from "../../evaluation/corpus-reconstruction.js";
 import { EVALUATION_CASES_V1 } from "../../evaluation/matrix-selection.js";
+import type { EvaluationCaseV1 } from "../../evaluation/matrix-types.js";
 
 const exec = promisify(execFile);
 
@@ -64,6 +65,19 @@ async function withHostileGitEnvironment<T>(root: string, callback: () => Promis
       else process.env[key] = value;
     }
   }
+}
+
+async function assertCaseMutationRejectedBeforeFileSystemWork(
+  testCase: EvaluationCaseV1,
+  caseRoot: string,
+): Promise<void> {
+  const definition = EVALUATION_CORPUS_V1.cases.find(({ caseId }) => caseId === testCase.id);
+  assert.ok(definition);
+  await assert.rejects(
+    () => reconstructEvaluationCorpusCaseV1(testCase, definition, caseRoot),
+    /catalog case/i,
+  );
+  await assert.rejects(() => stat(caseRoot), { code: "ENOENT" });
 }
 
 describe("evaluation corpus reconstruction", () => {
@@ -208,6 +222,59 @@ describe("evaluation corpus reconstruction", () => {
         const reconstructed = await reconstructEvaluationCorpusV1(join(temporaryRoot, "full"));
         assert.equal(reconstructed.cases.length, 30);
       });
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects mutated clean HEAD content before creating a case directory", async () => {
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "evaluation-corpus-"));
+    try {
+      const canonical = EVALUATION_CASES_V1.find(({ id }) => id === "case_001");
+      assert.ok(canonical);
+      const mutated = {
+        ...canonical,
+        repository: {
+          files: canonical.repository.files.map((file, index) =>
+            index === 0 ? { ...file, head: `${file.head ?? ""}\n// mutated clean HEAD\n` } : file,
+          ),
+        },
+      } satisfies EvaluationCaseV1;
+      await assertCaseMutationRejectedBeforeFileSystemWork(mutated, join(temporaryRoot, "clean"));
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects mutated reviewer content before creating a case directory", async () => {
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "evaluation-corpus-"));
+    try {
+      const canonical = EVALUATION_CASES_V1.find(({ id }) => id === "case_018");
+      assert.ok(canonical);
+      assert.equal(canonical.reviewer.kind, "requirements");
+      const mutated = {
+        ...canonical,
+        reviewer: { ...canonical.reviewer, authorApproach: "Uncatalogued author narrative." },
+      } satisfies EvaluationCaseV1;
+      await assertCaseMutationRejectedBeforeFileSystemWork(
+        mutated,
+        join(temporaryRoot, "reviewer"),
+      );
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects mutated oracle content before creating a case directory", async () => {
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "evaluation-corpus-"));
+    try {
+      const canonical = EVALUATION_CASES_V1.find(({ id }) => id === "case_018");
+      assert.ok(canonical);
+      const mutated = {
+        ...canonical,
+        oracle: { ...canonical.oracle, expectedRootIds: ["root_uncatalogued"] },
+      } satisfies EvaluationCaseV1;
+      await assertCaseMutationRejectedBeforeFileSystemWork(mutated, join(temporaryRoot, "oracle"));
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });
     }
