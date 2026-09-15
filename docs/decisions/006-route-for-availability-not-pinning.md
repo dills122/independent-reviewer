@@ -100,6 +100,14 @@ Pace calls. `budgets.minimumCallIntervalMs` (default 1500) is passed to a
 per-run `ProviderCallPacerV1`, so workers sharing a model stay under the account
 burst limit instead of discovering it.
 
+When OpenRouter reports a routing chain in `previous_errors`, an application
+retry excludes every named provider plus the terminal failed provider. Excluding
+only the terminal provider can send the retry back to an endpoint OpenRouter
+already reported as failed. Pinned runs remove the complete failed set from
+their configured order; open runs send the complete set through
+`provider.ignore`. Provider policy V6 records this behavior while retaining V5
+run-record compatibility.
+
 Final-stage resume eligibility becomes structural rather than an exact literal
 event sequence, because an in-run retry inserts extra events and a retried run is
 exactly the kind of run resume exists for.
@@ -124,3 +132,9 @@ Whitespace containment is gone with streaming. If constrained-decoding whitespac
 recurs, it now presents as a truncated or malformed non-streaming response, which
 the existing `INVALID_RESPONSE` path and the final-output repair call already
 handle.
+
+The 2026-09-15 paid matrix checkpoint demonstrated a two-provider chain failure:
+CoreWeave returned 429, DeepInfra returned 502, and the application retry removed
+only DeepInfra before CoreWeave returned another 429. The evaluation-only pinned
+pool now appends AkashML and DekaLLM after the previously qualified endpoints;
+see [provider-chain failover validation](../validation/2026-09-15-provider-chain-failover.md).
