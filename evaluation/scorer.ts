@@ -18,6 +18,7 @@ import {
   sumEvaluationNumbersV1,
   validateEvaluationArtifactGraphV1,
 } from "./artifact-graph.js";
+import { assertEvaluationScorerIdentityV1 } from "./scorer-policy.js";
 
 type MetricName = (typeof EvaluationMetricNameV1Schema.options)[number];
 type MetricCount = { metric: MetricName; numerator: number; denominator: number };
@@ -194,6 +195,7 @@ export function scoreEvaluationArtifactsV1(
   input: EvaluationScorerInputV1,
 ): EvaluationScoreReportV1 {
   const experiment = EvaluationExperimentManifestV1Schema.parse(input.experiment);
+  assertEvaluationScorerIdentityV1(experiment);
   const split = EvaluationFamilySplitManifestV1Schema.parse(input.split);
   const cases = input.cases
     .map((value) => EvaluationCaseManifestV1Schema.parse(value))

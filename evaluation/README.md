@@ -80,7 +80,10 @@ confusion from retained attempt/adjudication evidence. Pair membership is explic
 preliminary and final stages are provider-backed while eligible no-adverse-claim verification stays
 local. Known-cost and unknown-cost attempt counts reconcile to every provider attempt. Stage
 retention credits both retained true roots and removed false roots without double-crediting final
-duplicates. Defect, uncertainty, and useful/invalid recommendation labels remain claim-kind scoped.
+duplicates, and failed attempts contribute no retention denominator. `matchedRootId` is semantic
+root identity for all supported defects: `MATCHED_DEFECT` names a case-oracle root,
+`NOVEL_VALID_DEFECT` names a non-oracle root, and `DUPLICATE` names a root credited in same attempt
+and stage. Defect, uncertainty, and useful/invalid recommendation labels remain claim-kind scoped.
 Zero-denominator metrics, unresolved adjudications, terminal failures, and cost uncertainty remain
 visible. Execution-resource summaries remain empty until a later contract can bind them to retained
 attempt evidence.
@@ -100,7 +103,14 @@ then validates complete graph before returning. Zero denominators stay unavailab
 failures remain missing delivery while semantic abstentions remain delivered reports and are scored
 through false-abstention policy. Recommendation adjudications stay visible in exact raw/evidence
 coverage but cannot inflate defect metrics. Current intervals use explicit conservative `[0, 1]`
-bounds because repeated calls are not independent cases or families.
+bounds because repeated calls are not independent cases or families. Artifact arrays are ordered by
+UTF-16 artifact ID before aggregation, and numeric totals use fixed-order compensated summation.
+
+`scorer-policy.ts` retains canonical policy bytes, scorer version, and their SHA-256 digest. Every
+experiment and score must claim those exact values. Separate raw-artifact reference is unnecessary:
+experiment engine commit and source-tree digest bind implementation containing policy source, while
+experiment and score artifacts both carry policy digest derived directly from exported canonical
+document bytes.
 
 These evaluator-only modules do not allocate corpus splits, collect runtime messages, integrate
 artifacts into matrix runs, call providers, or change product behavior. Those integration steps

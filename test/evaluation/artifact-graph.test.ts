@@ -330,4 +330,20 @@ describe("evaluation artifact graph", () => {
       /score generation cannot precede adjudication/i,
     );
   });
+
+  it("rejects graphs claiming an unimplemented scorer version or policy", () => {
+    const wrongVersion = makeEvaluationGraph();
+    wrongVersion.experiment.scorerVersion = "evaluation-scorer-spoofed";
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(wrongVersion),
+      /unsupported scorer version/i,
+    );
+
+    const wrongPolicy = makeEvaluationGraph();
+    wrongPolicy.experiment.scorerPolicyDigest = sha("0");
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(wrongPolicy),
+      /unsupported scorer policy digest/i,
+    );
+  });
 });

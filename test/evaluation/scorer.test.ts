@@ -10,6 +10,12 @@ import {
 } from "../../evaluation/artifact-contracts.js";
 import { validateEvaluationArtifactGraphV1 } from "../../evaluation/artifact-graph.js";
 import { scoreEvaluationArtifactsV1 } from "../../evaluation/scorer.js";
+import {
+  EVALUATION_SCORER_POLICY_DIGEST_V1,
+  EVALUATION_SCORER_POLICY_DOCUMENT_V1,
+  EVALUATION_SCORER_VERSION_V1,
+} from "../../evaluation/scorer-policy.js";
+import { sha256BytesDigestV1 } from "../../src/contracts/json-document.js";
 import { makeEvaluationGraph } from "./artifact-fixtures.js";
 
 function artifactReferences(graph: ReturnType<typeof makeEvaluationGraph>) {
@@ -536,6 +542,21 @@ describe("evaluation scorer", () => {
       matchedRootId: "root_novel_rounding",
     });
     duplicate.matchedRootId = "root_novel_rounding";
+    const preliminary = graph.adjudications.find(({ attemptId, findingReference, label }) => {
+      const claim = attempt.findingClaims.find(
+        ({ findingReference: reference }) => reference === findingReference,
+      );
+      return (
+        attemptId === attempt.attemptId &&
+        claim?.emittedAtStage === "PRELIMINARY" &&
+        label === "MATCHED_DEFECT"
+      );
+    });
+    assert.ok(preliminary);
+    Object.assign(preliminary, {
+      label: "NOVEL_VALID_DEFECT",
+      matchedRootId: "root_novel_rounding",
+    });
 
     assert.doesNotThrow(() => EvaluationAdjudicationRecordV1Schema.parse(credited));
     const score = scoreGraph(graph);
@@ -544,6 +565,7 @@ describe("evaluation scorer", () => {
     assert.equal(metric(score.metrics, "ADJUDICATED_DEFECT_PRECISION").value, 0.5);
     assert.equal(metric(score.metrics, "UNIQUE_ACTION_YIELD").value, 1 / 3);
     assert.equal(metric(score.metrics, "DUPLICATE_RATE").value, 1 / 3);
+    assert.equal(metric(score.metrics, "STAGE_RETENTION_RATE").value, 1);
   });
 
   it("rejects novel credit for an oracle root and repeated credit for one novel root", () => {
@@ -586,5 +608,26 @@ describe("evaluation scorer", () => {
     duplicate.matchedRootId = "root_novel_orphan";
 
     assert.throws(() => scoreGraph(graph), /duplicate.*credited semantic root.*FINAL/i);
+  });
+
+  it("binds scoring to retained V1 implementation and canonical policy bytes", () => {
+    assert.equal(EVALUATION_SCORER_VERSION_V1, "evaluation-scorer-v1");
+    assert.deepEqual(
+      EVALUATION_SCORER_POLICY_DIGEST_V1,
+      sha256BytesDigestV1(Buffer.from(EVALUATION_SCORER_POLICY_DOCUMENT_V1, "utf8")),
+    );
+
+    const wrongVersion = makeEvaluationGraph();
+    wrongVersion.experiment.scorerVersion = "evaluation-scorer-spoofed";
+    rebindExperiment(wrongVersion);
+    assert.throws(() => scoreGraph(wrongVersion), /unsupported scorer version/i);
+
+    const wrongPolicy = makeEvaluationGraph();
+    wrongPolicy.experiment.scorerPolicyDigest = {
+      algorithm: "SHA256",
+      value: "0".repeat(64),
+    };
+    rebindExperiment(wrongPolicy);
+    assert.throws(() => scoreGraph(wrongPolicy), /unsupported scorer policy digest/i);
   });
 });

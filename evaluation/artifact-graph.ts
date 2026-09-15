@@ -12,6 +12,7 @@ import {
   EvaluationSourceIdentityV1Schema,
   validateEvaluationFamilySplitV1,
 } from "./artifact-contracts.js";
+import { assertEvaluationScorerIdentityV1 } from "./scorer-policy.js";
 
 export interface EvaluationArtifactGraphInputV1 {
   experiment: unknown;
@@ -289,6 +290,8 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     .map((value) => EvaluationAdjudicationRecordV1Schema.parse(value))
     .sort((left, right) => compareUtf16(left.adjudicationId, right.adjudicationId));
   const score = EvaluationScoreReportV1Schema.parse(input.score);
+
+  assertEvaluationScorerIdentityV1(experiment);
 
   validateEvaluationFamilySplitV1(split, cases);
   const splitDigest = digestEvaluationArtifactV1(EvaluationFamilySplitManifestV1Schema, split);

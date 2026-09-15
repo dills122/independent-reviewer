@@ -8,6 +8,10 @@ import {
   EvaluationFamilySplitManifestV1Schema,
   EvaluationSourceIdentityV1Schema,
 } from "../../evaluation/artifact-contracts.js";
+import {
+  EVALUATION_SCORER_POLICY_DIGEST_V1,
+  EVALUATION_SCORER_VERSION_V1,
+} from "../../evaluation/scorer-policy.js";
 
 export const sha = (value: string) => ({ algorithm: "SHA256" as const, value: value.repeat(64) });
 
@@ -156,8 +160,8 @@ export function makeEvaluationGraph() {
     experimentId: "experiment_baseline",
     corpusVersion: "corpus_v1",
     splitManifestDigest: digestEvaluationArtifactV1(EvaluationFamilySplitManifestV1Schema, split),
-    scorerVersion: "scorer_v1",
-    scorerPolicyDigest: sha("3"),
+    scorerVersion: EVALUATION_SCORER_VERSION_V1,
+    scorerPolicyDigest: EVALUATION_SCORER_POLICY_DIGEST_V1,
     engine: { commit, sourceTreeDigest: sha("4"), dirtyStateDigest: null },
     caseIds: cases.map(({ caseId }) => caseId),
     variants: ["baseline", "candidate"].map((name) => ({
