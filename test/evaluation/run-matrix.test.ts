@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -7,6 +7,7 @@ import { EVALUATION_CASES_V1 } from "../../evaluation/matrix-selection.js";
 import {
   evaluateCaseCompletionV1,
   executeEvaluationCaseV1,
+  MAX_MATRIX_ERROR_MESSAGE_LENGTH_V1,
   summarizeRunRecordV1,
   validateLiveEngineStateV1,
 } from "../../evaluation/run-matrix.js";
@@ -141,6 +142,151 @@ describe("evaluation matrix run accounting", () => {
         await readFile(join(root, testCase.id, "matrix-result.json"), "utf8"),
       );
       assert.equal(persisted.complete, false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("persists CLI failure diagnostics when no final report is delivered", async () => {
+    const root = await mkdtemp(join(tmpdir(), "review-matrix-cli-failure-"));
+    const testCase = EVALUATION_CASES_V1[0];
+    assert.ok(testCase);
+    try {
+      const result = await executeEvaluationCaseV1(
+        {
+          testCase,
+          execution: "live",
+          runRoot: root,
+          configPath: "/unused/config.json",
+          configId: "config_test",
+          io: { stdout: () => undefined, stderr: () => undefined },
+        },
+        {
+          prepareCase: async (_testCase, caseRoot) => {
+            await mkdir(caseRoot);
+            return {
+              repositoryPath: join(caseRoot, "repo"),
+              controlPath: join(caseRoot, "control.json"),
+              outputPath: join(caseRoot, "packet"),
+              cliArguments: [],
+            };
+          },
+          runCli: async (_args, io) => {
+            io?.stderr(
+              `\u001b[2JProvider final attempt failed with HTTP 502. ${"x".repeat(1_000)}`,
+            );
+            return 1;
+          },
+        },
+      );
+
+      assert.equal(result.complete, false);
+      assert.match(result.error?.message ?? "", /exited 1.*HTTP 502/i);
+      assert.equal(result.error?.name, "ReviewIncomplete");
+      assert.ok((result.error?.message.length ?? 0) <= MAX_MATRIX_ERROR_MESSAGE_LENGTH_V1);
+      assert.equal((result.error?.message ?? "").includes("\u001b"), false);
+      assert.match(result.error?.message ?? "", /\.\.\.$/);
+      const persisted = JSON.parse(
+        await readFile(join(root, testCase.id, "matrix-result.json"), "utf8"),
+      );
+      assert.match(persisted.error?.message ?? "", /exited 1.*HTTP 502/i);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies an invalid final report as a bounded incomplete review", async () => {
+    const root = await mkdtemp(join(tmpdir(), "review-matrix-invalid-final-"));
+    const testCase = EVALUATION_CASES_V1[0];
+    assert.ok(testCase);
+    try {
+      const result = await executeEvaluationCaseV1(
+        {
+          testCase,
+          execution: "live",
+          runRoot: root,
+          configPath: "/unused/config.json",
+          configId: "config_test",
+          io: { stdout: () => undefined, stderr: () => undefined },
+        },
+        {
+          prepareCase: async (_testCase, caseRoot) => {
+            const outputPath = join(caseRoot, "packet");
+            await mkdir(join(outputPath, "review"), { recursive: true });
+            await writeFile(join(outputPath, "review", "final.json"), "{");
+            return {
+              repositoryPath: join(caseRoot, "repo"),
+              controlPath: join(caseRoot, "control.json"),
+              outputPath,
+              cliArguments: [],
+            };
+          },
+          runCli: async (_args, io) => {
+            io?.stderr("Final report validation failed.");
+            return 0;
+          },
+        },
+      );
+
+      assert.equal(result.complete, false);
+      assert.equal(result.error?.name, "ReviewIncomplete");
+      assert.match(
+        result.error?.message ?? "",
+        /exited 0.*validation.*evaluation report case_001/i,
+      );
+      assert.match(result.error?.message ?? "", /stderr: Final report validation failed/i);
+      const persisted = JSON.parse(
+        await readFile(join(root, testCase.id, "matrix-result.json"), "utf8"),
+      );
+      assert.deepEqual(persisted.error, result.error);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps validated reports distinct from bounded accounting failures", async () => {
+    const root = await mkdtemp(join(tmpdir(), "review-matrix-accounting-failure-"));
+    const testCase = EVALUATION_CASES_V1[0];
+    assert.ok(testCase);
+    try {
+      const result = await executeEvaluationCaseV1(
+        {
+          testCase,
+          execution: "live",
+          runRoot: root,
+          configPath: "/unused/config.json",
+          configId: "config_test",
+          io: { stdout: () => undefined, stderr: () => undefined },
+        },
+        {
+          prepareCase: async (_testCase, caseRoot) => {
+            await mkdir(caseRoot);
+            return {
+              repositoryPath: join(caseRoot, "repo"),
+              controlPath: join(caseRoot, "control.json"),
+              outputPath: join(caseRoot, "packet"),
+              cliArguments: [],
+            };
+          },
+          runCli: async (_args, io) => {
+            io?.stderr("Runner retained this final diagnostic.");
+            return 0;
+          },
+          readVerdict: async () => "READY",
+          readRunRecord: async () => {
+            throw new Error(`Invalid run ledger ${"y".repeat(1_000)}`);
+          },
+        },
+      );
+
+      assert.equal(result.complete, false);
+      assert.equal(result.actualVerdict, "READY");
+      assert.equal(result.error?.name, "MatrixAccountingError");
+      assert.match(result.error?.message ?? "", /validated verdict READY.*accounting failed/i);
+      assert.match(result.error?.message ?? "", /accounting: Invalid run ledger.*\.\.\./i);
+      assert.match(result.error?.message ?? "", /stderr: Runner retained this final diagnostic/i);
+      assert.doesNotMatch(result.error?.message ?? "", /without a validated final report/i);
+      assert.ok((result.error?.message.length ?? 0) <= MAX_MATRIX_ERROR_MESSAGE_LENGTH_V1);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-
+import { terminalText } from "../src/cli/review-output.js";
 import { runCliV1 } from "../src/cli.js";
 import { FinalReviewReportV1Schema } from "../src/contracts/review-results.js";
 import {
@@ -77,6 +77,83 @@ export interface MatrixCaseResultV1 {
   stdout: readonly string[];
   stderr: readonly string[];
   error: { name: string; message: string } | null;
+}
+
+export const MAX_MATRIX_ERROR_MESSAGE_LENGTH_V1 = 512;
+const MAX_MATRIX_ERROR_CONTEXT_LENGTH_V1 = 160;
+
+function boundedMatrixTextV1(message: string, maxLength: number): string {
+  const normalized = terminalText(message).trim();
+  if (normalized.length <= maxLength) return normalized;
+  let prefixLength = maxLength - 3;
+  const finalCodeUnit = normalized.charCodeAt(prefixLength - 1);
+  if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) prefixLength -= 1;
+  return `${normalized.slice(0, prefixLength)}...`;
+}
+
+function boundedMatrixErrorMessageV1(message: string): string {
+  return boundedMatrixTextV1(message, MAX_MATRIX_ERROR_MESSAGE_LENGTH_V1);
+}
+
+function matrixErrorContextV1(
+  stderr: readonly string[],
+  detailLabel: string,
+  detail?: string,
+): string {
+  const lastDiagnostic = stderr.at(-1);
+  return [
+    detail
+      ? `${detailLabel}: ${boundedMatrixTextV1(detail, MAX_MATRIX_ERROR_CONTEXT_LENGTH_V1)}`
+      : null,
+    lastDiagnostic
+      ? `stderr: ${boundedMatrixTextV1(lastDiagnostic, MAX_MATRIX_ERROR_CONTEXT_LENGTH_V1)}`
+      : null,
+  ]
+    .filter((value): value is string => value !== null)
+    .join("; ");
+}
+
+function reviewIncompleteErrorV1(
+  cliExitCode: number,
+  stderr: readonly string[],
+  detail?: string,
+): NonNullable<MatrixCaseResultV1["error"]> {
+  const context = matrixErrorContextV1(stderr, "validation", detail);
+  return {
+    name: "ReviewIncomplete",
+    message: boundedMatrixErrorMessageV1(
+      `Review command exited ${cliExitCode} without a validated final report${context ? `: ${context}` : "."}`,
+    ),
+  };
+}
+
+function matrixAccountingErrorV1(
+  cliExitCode: number,
+  actualVerdict: EvaluationVerdictV1,
+  stderr: readonly string[],
+  detail: string,
+): NonNullable<MatrixCaseResultV1["error"]> {
+  const context = matrixErrorContextV1(stderr, "accounting", detail);
+  return {
+    name: "MatrixAccountingError",
+    message: boundedMatrixErrorMessageV1(
+      `Review command exited ${cliExitCode} with validated verdict ${actualVerdict}, but matrix accounting failed${context ? `: ${context}` : "."}`,
+    ),
+  };
+}
+
+function matrixExecutionErrorV1(
+  cliExitCode: number,
+  stderr: readonly string[],
+  detail: string,
+): NonNullable<MatrixCaseResultV1["error"]> {
+  const context = matrixErrorContextV1(stderr, "execution", detail);
+  return {
+    name: "MatrixExecutionError",
+    message: boundedMatrixErrorMessageV1(
+      `Review command exited ${cliExitCode} without a successful matrix case${context ? `: ${context}` : "."}`,
+    ),
+  };
 }
 
 function finiteNonnegativeV1(value: number | null): number {
@@ -225,6 +302,8 @@ interface ExecuteEvaluationCaseInputV1 {
 interface ExecuteEvaluationCaseDependenciesV1 {
   prepareCase?: typeof prepareEvaluationCaseV1;
   runCli?: typeof runCliV1;
+  readVerdict?: typeof readVerdictV1;
+  readRunRecord?: typeof readRunRecordV1;
 }
 
 export async function executeEvaluationCaseV1(
@@ -233,6 +312,8 @@ export async function executeEvaluationCaseV1(
 ): Promise<MatrixCaseResultV1> {
   const prepareCase = dependencies.prepareCase ?? prepareEvaluationCaseV1;
   const runCli = dependencies.runCli ?? runCliV1;
+  const readVerdict = dependencies.readVerdict ?? readVerdictV1;
+  const readRunRecord = dependencies.readRunRecord ?? readRunRecordV1;
   const caseRoot = join(input.runRoot, input.testCase.id);
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -263,11 +344,11 @@ export async function executeEvaluationCaseV1(
     );
     actualVerdict =
       input.execution === "live"
-        ? await readVerdictV1(input.testCase, join(prepared.outputPath, "review", "final.json"))
+        ? await readVerdict(input.testCase, join(prepared.outputPath, "review", "final.json"))
         : null;
     const events =
       input.execution === "live"
-        ? await readRunRecordV1(join(prepared.outputPath, "review", "run-record.jsonl"))
+        ? await readRunRecord(join(prepared.outputPath, "review", "run-record.jsonl"))
         : [];
     accounting = summarizeRunRecordV1(events);
     const completion = evaluateCaseCompletionV1({
@@ -277,6 +358,32 @@ export async function executeEvaluationCaseV1(
       expectedVerdict: input.testCase.oracle.expectedVerdict,
     });
     const ledgerMatches = input.execution === "dry" || accounting.terminalState === actualVerdict;
+    const complete = completion.complete && ledgerMatches;
+    let incompleteError: MatrixCaseResultV1["error"] = null;
+    if (!complete) {
+      if (input.execution === "dry") {
+        incompleteError = matrixExecutionErrorV1(
+          cliExitCode,
+          stderr,
+          "provider-free admission did not complete",
+        );
+      } else if (actualVerdict === null) {
+        incompleteError = reviewIncompleteErrorV1(cliExitCode, stderr);
+      } else if (!ledgerMatches) {
+        incompleteError = matrixAccountingErrorV1(
+          cliExitCode,
+          actualVerdict,
+          stderr,
+          `run ledger terminal state ${accounting.terminalState ?? "missing"} does not match validated verdict`,
+        );
+      } else {
+        incompleteError = matrixExecutionErrorV1(
+          cliExitCode,
+          stderr,
+          `validated verdict ${actualVerdict} is incompatible with the CLI exit status`,
+        );
+      }
+    }
     const result: MatrixCaseResultV1 = {
       schemaVersion: 1,
       caseId: input.testCase.id,
@@ -285,13 +392,13 @@ export async function executeEvaluationCaseV1(
       actualVerdict,
       cliExitCode,
       elapsedMs: Date.now() - startedAtMs,
-      complete: completion.complete && ledgerMatches,
+      complete,
       verdictMatched: completion.verdictMatched,
       ledgerTerminalStateMatched: ledgerMatches,
       accounting,
       stdout,
       stderr,
-      error: null,
+      error: incompleteError,
     };
     await writeJsonV1(join(caseRoot, "matrix-result.json"), result);
     input.io.stdout(
@@ -302,16 +409,22 @@ export async function executeEvaluationCaseV1(
     if (input.execution === "live" && outputPath) {
       try {
         accounting = summarizeRunRecordV1(
-          await readRunRecordV1(join(outputPath, "review", "run-record.jsonl")),
+          await readRunRecord(join(outputPath, "review", "run-record.jsonl")),
         );
       } catch {
         /* The original malformed-ledger error remains the case failure reason. */
       }
     }
-    const normalized =
+    const normalizedCause =
       error instanceof Error
-        ? { name: error.name, message: error.message }
+        ? { name: error.name, message: boundedMatrixErrorMessageV1(error.message) }
         : { name: "Error", message: "Unknown evaluation case failure." };
+    const normalized =
+      input.execution !== "live" || cliExitCode === null
+        ? normalizedCause
+        : actualVerdict === null
+          ? reviewIncompleteErrorV1(cliExitCode, stderr, normalizedCause.message)
+          : matrixAccountingErrorV1(cliExitCode, actualVerdict, stderr, normalizedCause.message);
     const result: MatrixCaseResultV1 = {
       schemaVersion: 1,
       caseId: input.testCase.id,
