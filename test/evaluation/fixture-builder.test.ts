@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -50,6 +50,29 @@ describe("evaluation fixture reconstruction", () => {
       await prepareEvaluationCaseV1(testCase, target);
       await assert.rejects(() => prepareEvaluationCaseV1(testCase, target), /already exists/i);
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores developer-global Git hooks while reconstructing a fixture", async () => {
+    const root = await mkdtemp(join(tmpdir(), "review-evaluation-"));
+    const hookDirectory = join(root, "hooks");
+    const globalConfigPath = join(root, "hostile-gitconfig");
+    const previousGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
+    try {
+      await mkdir(hookDirectory);
+      await writeFile(join(hookDirectory, "pre-commit"), "#!/bin/sh\nexit 91\n", { mode: 0o755 });
+      await writeFile(globalConfigPath, `[core]\n\thooksPath = ${hookDirectory}\n`, "utf8");
+      process.env.GIT_CONFIG_GLOBAL = globalConfigPath;
+
+      const testCase = EVALUATION_CASES_V1[0];
+      assert.ok(testCase);
+      await assert.doesNotReject(() =>
+        prepareEvaluationCaseV1(testCase, join(root, "isolated-case")),
+      );
+    } finally {
+      if (previousGlobalConfig === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = previousGlobalConfig;
       await rm(root, { recursive: true, force: true });
     }
   });

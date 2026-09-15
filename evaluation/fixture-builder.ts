@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
+import { devNull } from "node:os";
 import { dirname, isAbsolute, join, normalize, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -53,6 +54,8 @@ async function git(repositoryPath: string, ...arguments_: string[]): Promise<voi
       ...process.env,
       GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
       GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+      GIT_CONFIG_GLOBAL: devNull,
+      GIT_CONFIG_NOSYSTEM: "1",
     },
   });
 }
