@@ -595,8 +595,11 @@ non-mutating.
 
 If dependencies or required isolation cannot be proven, execution outcome is
 `UNSUPPORTED_ENVIRONMENT`. Assertion, execution, and cleanup outcomes remain
-separate: a crash, OOM, output/resource limit, timeout, cancellation, or cleanup
-failure cannot be presented as an assertion failure. The report distinguishes:
+separate: a crash, OOM, output/resource limit, timeout, cancellation,
+controller capture/persistence/reconciliation failure, or cleanup failure cannot
+be presented as an assertion failure. A broken trusted observation chain is
+`EXECUTOR_FAILURE`, forces `NOT_OBSERVED`, and produces no check-status delivery
+or claim projection. The report distinguishes:
 
 - `AUTHOR_CLAIMED`: described by the author but not observed by this runner;
 - `RUNNER_OBSERVED`: command, environment, exit status, and output observed;
@@ -606,12 +609,39 @@ failure cannot be presented as an assertion failure. The report distinguishes:
 `RUNNER_OBSERVED` is provenance, not a claim that assertion succeeded: report
 must retain assertion, execution, and cleanup states together.
 
-Raw check output is private runner evidence. Only a separately derived artifact
-that passes secret/disclosure policy and exact evidence/tool/conversation budget
-admission may enter a provider message. It binds exact transmitted bytes and
-digest inside runner-owned untrusted-evidence framing. Secret-bearing,
-disclosure-rejected, cleanup-failed, ambiguously encoded, or over-budget output
-is not transmitted.
+Raw check output, decoded text, counts, artifact references, and raw-derived
+digests are private runner evidence. V1 provider delivery contains only a closed
+`CheckProviderStatusV1` schema of runner-generated status, normalized exit, and
+resource facts. Exact serialized status bytes must pass per-artifact and
+cumulative evidence/tool/token/conversation/call/time admission with mandatory
+later-call reserves; request ledger binds exact status-message bytes and complete
+wire-body digest. Repository-controlled stdout/stderr never enters the provider
+message. `EXECUTOR_FAILURE`, cleanup failure, incomplete durable state, or
+admission failure suppresses check-status delivery.
+
+Richer output is deferred. A later version may expose only exact worker-visible
+frozen bytes whose remote-disclosure and budget admission completed before
+execution. Generated stdout/stderr and post-execution redaction remain
+ineligible without a new versioned decision and leak-corpus qualification.
+
+Backend resources use crash-durable, unpredictable runner-owned identities and
+leases. Creation intent is durably synced before create and an identity-bound
+receipt before use. Startup reconciliation and an independently supervised
+janitor block new admission until expired, uncertain, cleanup-failed, or
+ledger-divergent resources are removed or explicitly reconciled. Manual recovery
+targets one exact ID, requires confirmation, and appends an audit event; wildcard
+or global prune is forbidden. In-process child spawning is controller machinery,
+not a crash cleanup guarantee.
+
+`REQUIRED_IDENTICAL` differential evidence uses one private, versioned
+comparison artifact binding ordered BASE/HEAD result digests, shared
+check/policy/environment/oracle identities, and the complete predeclared
+repetition/seed set. Provider projection is atomic: never disclose one side or
+select a favorable repetition. Missing, duplicate, drifted, executor-failed, or
+cleanup-failed inputs are inconclusive and suppress stronger projection.
+`HEAD_ONLY_NEW_FEATURE` and `SINGLE_TARGET` create no comparison artifact and
+cannot support regression, fix, or other differential claims; `SINGLE_TARGET`
+identifies one exact arbitrary snapshot rather than implying HEAD.
 
 Universal environment construction is deferred. Initial fixtures may use a
 small repository whose named checks need no network or dependency installation.

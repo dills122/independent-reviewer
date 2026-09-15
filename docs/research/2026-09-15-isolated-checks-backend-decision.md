@@ -29,7 +29,7 @@ maintenance cost shows the current wrapper cannot meet the controller contract.
 
 Dependency acquisition is a separate, operator-controlled phase. A check run
 uses a locally present, digest-pinned image with implicit pulls disabled and
-network denied. It never runs a package installer. Issue
+host/external connectivity denied. It never runs a package installer. Issue
 [#113](https://github.com/dills122/independent-reviewer/issues/113) provides
 promising macOS evidence that Tree-sitter WASM assets survive
 `npm ci --ignore-scripts`, but it does not establish Linux support, packaging
@@ -89,8 +89,7 @@ Protected host assets include:
   metadata, API keys, Git credential helpers, and package-registry credentials;
 - Docker/Podman/containerd sockets, host control sockets, devices, and the host
   PID namespace;
-- loopback and external network unless an operator-owned future policy names a
-  narrowly scoped destination;
+- host loopback, adjacent sandboxes, metadata, DNS, and external network;
 - other runs, user processes, host resources, and artifacts after cancellation
   or completion.
 
@@ -138,13 +137,13 @@ Operator-owned authority and limits:
 | `backend` | Exact backend kind, release digest/version, runtime handler, platform, architecture, and required feature set. |
 | `image` | Registry/name plus immutable OCI digest; tags alone forbidden. |
 | `sourceMode` | Controller-generated reconstruction of one admitted snapshot; no mutable worktree mount. |
-| `network` | V1 must be `DENY_ALL`; DNS, loopback peers, host networking, and implicit image pulls denied. |
+| `network` | V1 must be `SANDBOX_PRIVATE_LOOPBACK_ONLY`: loopback inside one sandbox works, with no route to host loopback, adjacent sandboxes, DNS, metadata, or external networks. Implicit image pulls remain denied. |
 | `filesystem` | Read-only image, private reconstructed source, bounded writable scratch, no host bind mounts or devices. |
 | `environment` | Start empty; add only fixed runner values and resolved operator-owned non-secret values. Ambient inheritance forbidden. Bind the canonical name/value document by digest. |
 | `limits` | Hard wall time, CPU quota, memory, PIDs, disk/scratch bytes and inodes, stdout bytes, stderr bytes, and combined retained bytes. |
 | `termination` | Monotonic deadline, graceful interval, forced kill, descendant accounting, removal deadline, and orphan scan. |
 | `acquisition` | `PREBUILT_LOCAL_ONLY`; implicit pull and in-run install forbidden. |
-| `outputDisclosure` | Secret/disclosure detector policy, fail-closed handling, model-safe byte cap, and cumulative evidence/tool/conversation admission limits. |
+| `providerProjection` | Fixed allowlist of runner-generated status/exit/resource facts plus cumulative evidence/tool/conversation admission limits. Repository output and raw-derived digests forbidden. |
 
 Admission fails when backend introspection cannot prove every requested feature
 and limit is active. Docker documents that rootless cgroup flags can be ignored
@@ -203,7 +202,7 @@ One immutable attempt result:
 | Execution outcome | Exactly one execution taxonomy value below plus a bounded runner reason code. |
 | Cleanup outcome | `SUCCEEDED`, `FAILED`, or `NOT_REQUIRED`, independently retained after execution outcome. |
 | Process | Executor identity, PID/container identity where safe, exit code or signal, OOM/resource events, and cleanup receipt. |
-| Output | Local-only raw-output reference and optional separately admitted model-safe-output reference. |
+| Output | Local-only raw-output reference. No raw bytes, excerpts, artifact references, or raw-derived digests enter provider projection. |
 | Limits | Declared and observed wall time, CPU, peak memory, PID peak, scratch bytes/inodes, and unavailable measurements. |
 | Provenance | `RUNNER_OBSERVED`; author logs live in separate evidence and can never populate these fields. |
 
@@ -217,6 +216,9 @@ Execution-outcome taxonomy:
   `UNSUPPORTED_ENVIRONMENT` instead.
 - `PROCESS_CRASHED`: unclassified signal, abnormal exit, or lost process made
   configured assertion semantics unavailable.
+- `EXECUTOR_FAILURE`: controller I/O, stream capture/drain/hash, durable event or
+  artifact persistence, backend protocol, or reconciliation failure broke the
+  trusted observation chain.
 - `OOM_KILLED`: backend gives authoritative evidence that memory limit caused
   termination.
 - `OUTPUT_LIMIT_EXCEEDED`: stdout, stderr, or combined observed-byte limit was
@@ -233,63 +235,110 @@ Execution-outcome taxonomy:
 
 `assertionOutcome` may be `PASSED` or `FAILED` only when execution is
 `COMPLETED` and exact exit-code mapping applies; every other execution outcome
-requires `NOT_OBSERVED`. First durable causal terminal event wins. An
-authoritative backend OOM/resource event is recorded as its specific outcome;
-otherwise output limit, timeout, or cancellation uses whichever controller event
-was durably recorded first. A later cleanup kill or exit signal never rewrites
-that cause. Unknown abnormal termination is `PROCESS_CRASHED`.
+requires `NOT_OBSERVED`. First durable causal terminal event wins.
+`OUTPUT_LIMIT_EXCEEDED` is valid only when the runner measured the configured
+cap and durably recorded that measurement and terminal trigger. A broken stream,
+missing bytes, failed drain/hash, or failed event/artifact persistence is
+`EXECUTOR_FAILURE`, not an output-limit result.
+
+`EXECUTOR_FAILURE` has trust precedence over a controller timeout,
+output-limit, or cancellation trigger from the same incomplete observation
+chain. It forces `NOT_OBSERVED`, suppresses check-status transmission and claim
+projection, and retains any earlier controller trigger only as a private
+diagnostic event. If the durable result/event store itself is unavailable, no
+valid `CheckResultV1` exists and the runner fails closed. Before finalization, a
+later authoritative, identity-bound backend receipt may classify an earlier
+`PROCESS_CRASHED`, `TIMED_OUT`, `OUTPUT_LIMIT_EXCEEDED`, or `CANCELLED` event as
+`OOM_KILLED` or `RESOURCE_LIMIT_EXCEEDED` only when it proves the resource event
+occurred at or before the controller trigger. Otherwise the first durable cause
+stands. Such a receipt does not rehabilitate `EXECUTOR_FAILURE`; it remains
+secondary private evidence. A cleanup kill or later exit signal never rewrites
+the cause. Unknown abnormal termination is `PROCESS_CRASHED`.
 
 Cleanup is independent. Once backend resources exist it must be `SUCCEEDED` or
 `FAILED`, even after a completed assertion. Cleanup failure never rewrites
 assertion or execution history, but makes claim projection `INCONCLUSIVE`, blocks
-result reuse/transmission of repository output, and marks backend unhealthy until
+result reuse and check-status transmission, and marks backend unhealthy until
 operator reconciliation proves no survivor. `NOT_REQUIRED` is valid only before
 any backend resource was created.
 
 A separate claim-evidence projection may say `SUPPORTS_CLAIM`,
 `CONTRADICTS_CLAIM`, `INCONCLUSIVE`, or `NOT_APPLICABLE`. Support or contradiction
 requires `COMPLETED`, `PASSED`/`FAILED`, `cleanupOutcome: SUCCEEDED`, validated
-oracle, comparable environment where required, and admitted model-safe evidence.
-Every other combination, inconsistent pair, or flaky observation projects to
-`INCONCLUSIVE`; none becomes a code defect.
+oracle, comparable environment where required, and an atomically admitted
+runner-generated provider status or comparison. `EXECUTOR_FAILURE` produces no
+projection. Every other complete combination, inconsistent pair, or flaky
+observation projects to `INCONCLUSIVE`; none becomes a code defect.
 
-### Raw-local and model-safe output
+### Raw-local output and provider-safe status
 
 `CheckRawOutputV1` is private runner evidence and is never placed in a model
 message. It binds result/stream IDs, bytes observed before termination, streaming
 digest over those observed bytes, clean-EOF status, retained-prefix byte count
 and digest, truncation/limit cause, private artifact reference, and capture
 errors. stdout and stderr remain separate. A digest over a retained prefix is
-never labeled as digest of complete output.
+never labeled as digest of complete output. All raw bytes, decoded text, counts,
+content-shape metadata, artifact references, and raw-derived digests remain in
+the private run ledger.
 
-`CheckTransmittedOutputV1` is a separately derived artifact. It binds raw-output
-digests, disclosure-policy and scanner versions, scan decision, any
-non-sensitive rule IDs and transformation ranges, exact final UTF-8 bytes and digest,
-byte/token counts, truncation markers, and the tool/conversation admission
-receipt. Exact bytes include runner-owned provenance/delimiter text. Provider
-request ledger additionally binds the complete containing message and wire body.
+`CheckProviderStatusV1` is the only model-eligible check artifact in V1. Its
+closed discriminated schema contains only runner-generated identity,
+status/exit, and resource facts. Common fields are check and configured-command
+identities plus stable environment-profile identity. `SINGLE_RESULT_STATUS`
+adds an opaque pre-execution attempt handle, snapshot side, assertion/execution/
+cleanup enums, normalized numeric exit code or signal class, normalized resource
+facts, and duration bucket. `COMPARISON_STATUS` instead adds only an opaque
+pre-execution comparison handle, comparability decision/reason code, comparison
+outcome, and aggregate duration/resource buckets; it contains no individual-side
+status. Backend error text and repository-controlled stdout/stderr never
+populate either variant. Neither contains a result/comparison digest, output
+bytes or excerpts, output counts, raw artifact path, scan detail, or raw-derived
+digest.
 
-V1 disclosure policy is fail closed:
+Before provider delivery, the runner serializes exact `CheckProviderStatusV1`
+bytes and admits them against per-artifact and cumulative evidence/tool bytes
+and tokens, conversation bytes, call/time limits, and conservative reserves for
+all mandatory later calls. The provider request ledger binds the exact admitted
+status-message bytes and complete wire-body digest. Admission failure stops
+delivery; it cannot clip silently or borrow mandatory reserve. Repository output
+never participates in this admission and cannot bypass it. `EXECUTOR_FAILURE`,
+cleanup failure, or incomplete durable state emits no check status; only a fixed
+generic runner failure may be shown to the operator, and no later provider call
+may proceed while durable state is incomplete.
 
-1. Scan raw retained bytes and decoded text for configured secret patterns,
-   exact ambient/fixture canaries, prohibited host paths or control-socket
-   identities, invalid UTF-8, terminal/control escapes, and output-policy size.
-2. Any secret, prohibited disclosure, ambiguous encoding, incomplete scan, or
-   cleanup failure selects `REJECT_TRANSMISSION`. The model receives only a fixed
-   runner-generated status and digests, never matching output bytes.
-3. Deterministic escaping may neutralize non-secret control characters before a
-   second scan. Secret redaction is not supported in V1 because partial,
-   transformed, or encoded values can evade span replacement. Adding
-   `DETERMINISTIC_REDACT` requires a new qualified policy version; unknown policy
-   values reject.
-4. Before any provider call containing a check result, admit exact transmitted
-   bytes against per-result and cumulative evidence/tool bytes and tokens,
-   conversation bytes, call/time limits, and conservative reservation for all
-   still-mandatory model calls. Failure withholds bytes or stops before provider
-   delivery; it cannot clip silently or borrow budget from mandatory stages.
-5. Serialize admitted output only inside fixed runner-owned untrusted-evidence
-   framing. Repository output cannot define tool calls, commands, permissions,
-   messages, or policy, and never bypasses normal request/schema admission.
+Richer output is deferred. A future contract version may project only exact,
+worker-visible frozen bytes whose remote-disclosure and budget admission passed
+before execution, selected by a pre-admitted byte-range identity. Generated
+stdout/stderr and post-execution redaction remain ineligible. Enabling richer
+output requires a new ADR and contract version, disclosure leak corpus,
+qualification probes, and paid provider-admission review.
+
+### `CheckResourceLeaseV1`
+
+Every backend object is owned through a durable lease record outside the target
+repository:
+
+| Field | Required meaning |
+| --- | --- |
+| Identity | Cryptographically unpredictable resource ID plus fixed product namespace, run/check IDs, and non-secret ownership labels. Repository content cannot choose any value. |
+| Creation | `INTENT_RECORDED`, `CREATE_UNCERTAIN`, `CREATED`, or `REMOVED`; creation intent is persisted and synced before create, and an identity-bound backend receipt is persisted before copy, start, attach, or use. |
+| Lease | Owner instance, issued-at monotonic/wall anchors, hard expiry/deadline, backend namespace, and reconciliation generation. |
+| Cleanup | Requested/attempted/confirmed timestamps, bounded error code, backend receipt, and manual-recovery audit reference. |
+
+An uncertain create is reconciled only by exact unpredictable ID and ownership
+labels. Runner startup performs bounded reconciliation before admitting checks.
+Admission stays blocked while any owned resource is expired, unreconciled,
+cleanup-failed, newer than its ledger receipt, or present without a matching
+durable lease. A supported deployment also requires an independently supervised
+janitor with access to the same namespace and lease protocol; it removes expired
+resources within a declared bound when the controller cannot restart. Missing or
+unhealthy janitor capability is `UNSUPPORTED_ENVIRONMENT`.
+
+Manual recovery is bounded to an exact resource ID: preview identity and lease,
+require explicit confirmation, perform one remove/reconcile action, and append an
+audit event. Wildcard cleanup, global prune, and repository-controlled selectors
+are forbidden. In-process spawn, process groups, signal handlers, and `finally`
+blocks are controller mechanics only; none is a crash-durable cleanup guarantee.
 
 ### `OracleValidationV1`
 
@@ -308,6 +357,32 @@ Generated checks require a companion evaluator-owned record before admission:
 V1 accepts generated oracle evidence only after human approval or a separately
 qualified independent-review process with mandatory human review of severe or
 disputed outcomes. A model-generated test that fails is not self-validating.
+
+### `CheckComparisonV1`
+
+For `REQUIRED_IDENTICAL`, one immutable private comparison artifact binds:
+
+- opaque pre-execution comparison handle and exact ordered BASE then HEAD
+  snapshot identities;
+- one shared check-spec, policy, stable environment-profile, oracle, and engine
+  identity;
+- complete predeclared ordered repetition set as `(index, seed)` pairs;
+- for every pair, ordered BASE-result digest then HEAD-result digest, with no
+  missing, duplicate, discarded, or unexpected attempt;
+- comparability decision and bounded reason code;
+- exactly one outcome: `REGRESSION_REPRODUCED`, `FIX_REPRODUCED`,
+  `NO_DIFFERENCE`, `PRE_EXISTING_OR_SHARED_FAILURE`, `INCONCLUSIVE`, or
+  `NOT_COMPARABLE`; and
+- exact digest of the separately serialized provider projection, or `null` when
+  projection was suppressed.
+
+Validation traverses the complete graph atomically before provider admission.
+The model never receives an individual side, favorable seed, comparison digest,
+or result digest. Missing/duplicate/unexpected attempts, identity drift,
+executor failure, cleanup failure, or incomplete durable state selects
+`INCONCLUSIVE` and suppresses stronger projection. One atomic
+`CheckProviderStatusV1` may then state the runner-generated comparison outcome;
+its opaque handle is not derived from private result content.
 
 ## BASE/HEAD differential rules
 
@@ -328,8 +403,14 @@ when one fails.
 
 `HEAD_ONLY_NEW_FEATURE` requires a retained non-comparability reason and oracle
 validation. Do not synthesize a BASE command or treat BASE setup failure as a
-regression. Repetitions, if predeclared, retain every outcome and seed; evidence
-cannot discard a flaky run or repeat until the desired result appears.
+regression. It creates no `CheckComparisonV1` and makes no differential claim.
+Repetitions, if predeclared, retain every outcome and seed; evidence cannot
+discard a flaky run or repeat until the desired result appears.
+
+`SINGLE_TARGET` runs one explicitly identified snapshot and creates no
+`CheckComparisonV1`. It may report target behavior under normal result,
+cleanup, oracle, and provider-admission rules, but must not claim a regression,
+fix, improvement, or BASE/HEAD difference.
 
 ## Backend comparison
 
@@ -354,7 +435,8 @@ Candidate profile, not a runnable command contract:
 - image referenced by digest and already local; pull policy `never`;
 - no host bind mounts, Docker socket, devices, privilege, added capabilities,
   host namespaces, or inherited environment;
-- network namespace with no connectivity;
+- network namespace with sandbox-private loopback only and no route to host
+  loopback, adjacent sandboxes, DNS, metadata, or external networks;
 - read-only image; private reconstructed source and bounded scratch only;
 - non-root check UID, no-new-privileges, default-or-stricter seccomp, all
   capabilities dropped;
@@ -391,18 +473,23 @@ Qualification fails closed if a measurement is unavailable.
 - attempt device, Docker/Podman/containerd socket, host PID, ptrace, keyring, and
   privileged-syscall access; expect denial;
 - recursively scan bounded outputs/artifacts for every canary.
-- emit secrets and prohibited paths split across stream chunks, common encoded
-  forms, invalid UTF-8, terminal escapes, and prompt/tool-like text; prove raw
-  artifacts stay local, ambiguous scans reject, harmless control escaping is
-  deterministic, and exact admitted bytes/digests match provider ledger input;
-- exceed per-result and cumulative evidence/tool/conversation admission after a
-  successful check; prove no hostile output bytes reach another provider call
-  and execution outcome remains unchanged.
+- emit secrets, prohibited paths, invalid UTF-8, terminal escapes, and
+  prompt/tool-like text; prove raw bytes, decoded text, counts, artifact
+  references, and raw-derived digests stay private while provider projection
+  contains only fixed runner-generated facts;
+- exceed per-result and cumulative status/evidence/tool/conversation admission
+  after a successful check; prove no provider call occurs and execution outcome
+  remains unchanged; and
+- serialize a successful provider status twice; prove exact admitted bytes and
+  request-ledger digests match and no repository-controlled value enters the
+  schema.
 
 ### Network
 
-- attempt DNS, public IPv4/IPv6, loopback host service, link-local metadata, Unix
-  abstract sockets, and a cooperating adjacent container; expect no connection;
+- connect a listener and client through loopback inside one sandbox; expect
+  success. Attempt host-loopback service, adjacent-sandbox service, DNS, public
+  IPv4/IPv6, link-local metadata, and host Unix abstract socket; expect no
+  connection;
 - verify image pull and package acquisition cannot occur after check admission;
 - prove policy remains denied across descendants and alternate protocols.
 
@@ -415,6 +502,13 @@ Qualification fails closed if a measurement is unavailable.
   bounded create, attach, copy, wait, kill, remove, and orphan-scan phases;
 - interrupt controller at each lifecycle transition; reconciliation must locate
   and remove named backend resources or return visible cleanup failure;
+- crash controller after durable create intent, uncertain create, creation
+  receipt, copy, start, terminal trigger, exit, cleanup start, and removal;
+  restart or external janitor must reconcile by exact lease identity within the
+  declared bound before new admission;
+- exercise expired lease, forged/unowned label, resource newer than ledger,
+  unavailable janitor, and exact-ID manual recovery; expect blocked admission,
+  no wildcard deletion, and durable audit events;
 - after forced termination, prove no container, process, mount, namespace,
   network endpoint, volume, or scratch artifact survives.
 
@@ -424,8 +518,16 @@ Qualification fails closed if a measurement is unavailable.
   output independently; verify exact terminal classification and retained caps;
 - distinguish configured assertion exit from tool crash, missing executable,
   invalid working directory, OOM, signal, timeout, and cancellation;
+- inject stream read/drain/hash, artifact write, event-store sync, backend
+  protocol, and reconciliation failures; verify `EXECUTOR_FAILURE`,
+  `NOT_OBSERVED`, no provider status, and no claim projection;
+- race timeout, output cap, cancellation, OOM, and resource receipts; verify
+  durable-event precedence and identity/causality checks for authoritative later
+  evidence;
 - run known regression BASE/HEAD, clean counterpart, both-fail control,
-  non-comparable new feature, flaky seeded check, and stale-result identity;
+  non-comparable new feature, single target, flaky seeded check, and stale-result
+  identity; prove complete ordered result binding and atomic comparison
+  projection;
 - verify author logs never acquire `RUNNER_OBSERVED` provenance and no
   non-assertion outcome projects to demonstrated defect.
 
@@ -503,10 +605,12 @@ Consequences for named checks:
   [tmpfs](https://docs.docker.com/engine/storage/tmpfs/).
 - gVisor requires Linux 5.6+ and supports x86_64/ARM64. It interposes a user-space
   kernel, supports Docker integration and rootless modes, depends on host
-  cgroups/network policy for resource/egress enforcement, and documents syscall
+  cgroups/network policy for resource/egress enforcement, preserves a
+  sandbox-private loopback under `--network=none`, and documents syscall
   compatibility gaps. [Installation](https://gvisor.dev/docs/user_guide/install/),
   [security model](https://gvisor.dev/docs/architecture_guide/security/),
   [rootless](https://gvisor.dev/docs/user_guide/rootless/),
+  [networking](https://gvisor.dev/docs/user_guide/networking/),
   [compatibility](https://gvisor.dev/docs/user_guide/compatibility/).
 - Podman on macOS requires a Linux VM; machine management is rootless. Apple
   `container` requires Apple silicon/macOS 26 and runs Linux containers as
