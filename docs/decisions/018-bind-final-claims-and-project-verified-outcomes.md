@@ -72,14 +72,29 @@ fields:
   expected result where applicable;
 - sorted exact frozen-evidence references containing snapshot side, path, and
   line or symbol anchor;
-- one normalized assertion; and
+- one normalized assertion and one exact correction when the claim can produce
+  a blocker or follow-up; and
 - runner-relevant effect data: implementation severity, standards enforcement,
   or the exact adverse rule state.
 
-`claimId` is `claim_` followed by the SHA-256 digest of the RFC 8785 canonical
-JSON for the strict, schema-versioned claim core plus snapshot digest and brief
-digest. Use shared canonical JSON, digest, prefixed-identifier, UTF-16 ordering,
-and snapshot-path primitives. Do not duplicate their validation.
+The identity preimage is an explicit strict contract, not an informal field
+concatenation:
+
+```text
+ClaimIdentityPreimageV1 {
+  schemaVersion: 1
+  type: "REVIEW_CLAIM_IDENTITY"
+  snapshotDigest
+  briefDigest
+  claimCore: ReviewClaimCoreV1
+}
+```
+
+`claimId` is `claim_` followed by the SHA-256 digest of this envelope's RFC
+8785 canonical JSON. Use shared canonical JSON, digest, prefixed-identifier,
+UTF-16 ordering, and snapshot-path primitives. Do not duplicate their
+validation. A future preimage change requires another envelope version and
+cannot reinterpret an existing claim ID.
 
 “Normalized” means the contract admits one canonical representation: text is
 trimmed, single-line, and retained exactly; set-like arrays are unique and
@@ -88,18 +103,22 @@ The runner rejects non-canonical input instead of silently rewriting it. It
 does not lowercase, stem, Unicode-normalize, or guess that two natural-language
 sentences are equivalent.
 
-Presentation fields, including title, impact explanation, and correction, do not
-participate in claim identity. A wording change cannot manufacture a material
-semantic transition. Conversely, changing an obligation, scenario, assertion,
-evidence anchor, severity/enforcement, or adverse standards state necessarily
-produces a different claim ID. Moving a premise between finding, uncertainty,
-and standards-status kinds also changes identity and requires fresh judgment.
+Presentation fields, including title and impact explanation, do not participate
+in claim identity. A wording change cannot manufacture a material semantic
+transition. Correction is excluded from presentation because runner publishes
+it as an action: changing it changes claim identity and requires fresh action
+judgment. Changing an obligation, scenario, assertion, evidence anchor,
+severity/enforcement, or adverse standards state likewise produces a different
+claim ID. Moving a premise between finding, uncertainty, and standards-status
+kinds also changes identity and requires fresh judgment.
 
 After preliminary validation, runner assembles the first claim set from every
 finding, evidence gap, limitation, and adverse standards rule state. Active
 preliminary verification must advance from V3 and judge that complete set; a
 `CONFLICT` or `UNASSESSED` rule state cannot gain carry-forward authority merely
-because current V3 treats it as a separate rule-assessment field.
+because current V3 treats it as a separate rule-assessment field. For each
+action-bearing preliminary violation, that verification also records the
+separate correction judgment required for later carry-forward.
 
 Each violation claim represents one root cause and may cite several obligations.
 A generic rule restatement belongs in the same claim's obligation set rather
@@ -107,9 +126,11 @@ than in another finding. The verification artifact may relate an item to an
 earlier item as `DUPLICATE_OF`; runner groups that relation into one projected
 finding. Claim sets are sorted by claim ID. Runner unions obligation and evidence
 references, selects strongest verified effect, then selects the lowest claim ID
-at that effect as representative for correction and presentation. Duplicate
-relations cannot point forward in that order, self-reference, or cross claim
-kinds.
+at that effect with a supported correction as representative. If no correction
+is supported, runner emits only a generic claim-ID workflow action and never a
+replacement code instruction. Duplicate relations cannot point forward in that
+target order, self-reference, or cross claim kinds; a target may instead name
+any claim in the separately digest-bound carried catalog.
 
 ### Treat source IDs as provenance, not continuity
 
@@ -118,8 +139,9 @@ one of these transitions:
 
 - `CONTINUED`: candidate repeats the exact claim ID. Existing fresh blind
   judgment carries forward.
-- `WITHDRAWN`: claim leaves user-visible output. No further semantic judgment is
-  needed to remove an adverse claim.
+- `WITHDRAWAL_PROPOSED`: candidate asks to remove an exact prior claim. A prior
+  `DEMONSTRATED` or `INCONCLUSIVE` effect carries until fresh post-author
+  verification returns `REJECTED` for that claim.
 - `NEW_OR_CHANGED`: final-only claim or different claim ID. Reusing a
   preliminary finding ID does not change this classification.
 
@@ -131,16 +153,21 @@ required. If they do not, identity proves continuity.
 A prior `NO_VIOLATION` cannot be resurrected under its old claim ID. A prior
 `INCONCLUSIVE` violation cannot remain a demonstrated finding; runner projects
 it as uncertainty unless a new or changed claim receives a fresh demonstrated
-judgment.
+judgment. Author explanation can challenge a carried claim, but cannot make it
+vanish: a proposed withdrawal or replacement submits the prior claim itself for
+fresh judgment. `DEMONSTRATED` retains its prior effect, `INCONCLUSIVE` retains
+its prior uncertainty effect, and only `REJECTED` permits withdrawal.
 
 ### Verify only new or materially changed final claims
 
 Persist the structurally and evidentially validated final candidate and claim
 set before any post-author verification. When `NEW_OR_CHANGED` adverse claims
-exist, make one fresh post-author verification call over:
+or `WITHDRAWAL_PROPOSED` transitions exist, make one fresh post-author
+verification call over:
 
 - canonical obligations and frozen evidence used by those claims;
 - exact claim cores, ordered without provider-facing IDs;
+- every carried eligible claim core as a read-only duplicate-comparison catalog;
 - only relevant author statements, explicitly labeled untrusted author
   evidence; and
 - trusted verifier policy, without implementation conversation or agent memory.
@@ -148,15 +175,24 @@ exist, make one fresh post-author verification call over:
 Original preliminary and preliminary-verification calls stay author-free. The
 post-author verifier does not receive the candidate verdict, summary, blockers,
 or prior model rationale. Runner binds ordered judgments to claim IDs and
-persists `FinalClaimVerificationV1` before projection. Every item receives
-`DEMONSTRATED`, `REJECTED`, or `INCONCLUSIVE`, plus an optional backward-only
-duplicate relation and a bounded rationale.
+persists `FinalClaimVerificationV1` before projection. Every target item receives
+`DEMONSTRATED`, `REJECTED`, or `INCONCLUSIVE`, a correction judgment of
+`SUPPORTED`, `REJECTED`, or `INCONCLUSIVE` when action-bearing text exists, plus
+an optional duplicate relation and bounded rationales.
+
+Carried catalog entries are comparison-only: verifier emits no new existence,
+effect, or correction judgment for them unless candidate separately proposes
+their withdrawal. A new or changed target may declare a catalog claim as its
+duplicate; runner can then merge it without letting the post-author call reopen
+the carried claim. Output scope and exact target count exclude catalog-only
+entries.
 
 Skip this call when all surviving claims are exact `CONTINUED` claims with
-carry-forward judgments and no unverified duplicate grouping or standards-state
-transition. An adverse-claim-free clean review therefore remains two provider
-calls. With preliminary adverse claims but no final semantic change, current
-three-call behavior remains sufficient.
+carry-forward existence, effect, and correction judgments and no unverified
+duplicate grouping or standards-state transition. A withdrawal always triggers
+the call. An adverse-claim-free clean review therefore remains two provider
+calls. With preliminary adverse claims but no final semantic or action change,
+current three-call behavior remains sufficient.
 
 The verifier policy must explicitly test declared input domains and claimed
 runtime behavior. The exact #171 positive-page fixture is a mandatory canary,
@@ -169,6 +205,13 @@ paid canary shows the false premise rejected without losing the true defect.
 
 Projection is a pure runner operation over valid artifacts:
 
+A proposed withdrawal is not itself a judgment. Prior `DEMONSTRATED` claims
+remain demonstrated and prior `INCONCLUSIVE` claims remain uncertainty unless
+fresh post-author verification returns `REJECTED`. A changed claim that names a
+prior source must pair its new claim with `WITHDRAWAL_PROPOSED`; otherwise old
+effect remains alongside new result, subject only to verified duplicate
+grouping.
+
 | Claim kind and judgment | User-visible projection | Outcome effect |
 | --- | --- | --- |
 | Violation, `DEMONSTRATED` | One finding per verified root group | P0/P1 or `REQUIRED` blocks; P2/P3 or `RECOMMENDED` is a follow-up |
@@ -180,10 +223,20 @@ Projection is a pure runner operation over valid artifacts:
 | Adverse standards state, `REJECTED` | Retain prior verified rule state | No new adverse effect |
 | Adverse standards state, `INCONCLUSIVE` | Retain prior adverse state, or project `UNASSESSED` if none exists | Blocks standards assessment |
 
+Claim and correction judgments project independently. Demonstrated violation
+survives even when its proposed correction is rejected or inconclusive. Runner
+publishes correction text only after `SUPPORTED`; otherwise it emits a bounded
+factual workflow action naming the claim ID and stating that verified correction
+is unavailable. A carried claim may reuse its exact correction only when active
+preliminary verification recorded `SUPPORTED`. Reworded or replacement
+correction changes claim identity and must receive a fresh correction judgment.
+
 For implementation mode, a demonstrated blocking violation yields
 `NOT_READY`, even when separate uncertainty remains visible. Without such a
 violation, blocking uncertainty yields `UNABLE_TO_VERIFY`. For standards mode,
-any conflict or unassessed required rule yields `UNABLE_TO_VERIFY`; otherwise a
+`UNASSESSED` for any selected rule blocks and yields `UNABLE_TO_VERIFY`, matching
+accepted current runner behavior for both `REQUIRED` and `RECOMMENDED` rules.
+Any selected-rule conflict also yields `UNABLE_TO_VERIFY`; otherwise a
 demonstrated `REQUIRED` violation yields `NOT_READY`. Demonstrated non-blocking
 work or non-blocking inconclusive verification yields
 `READY_WITH_FOLLOW_UPS`; an empty eligible set with complete runner coverage
@@ -259,12 +312,22 @@ transport retain current conservative charging rules.
 
 A failed final-claim verification never publishes or marks a successful report.
 Persisted candidate and completed earlier stages remain visible; terminal state
-is explicit failure or transport uncertainty. V2 resume may continue a definite
-retryable final or final-claim-verification failure only when snapshot, brief,
-author, candidate, claim set, configuration, schema, prompt, request, and ledger
-versions match exactly. Uncertain transport remains ineligible. V1 ledgers stay
-readable for diagnosis but cannot resume into V2 semantics; user starts a new
-review instead.
+is explicit failure or transport uncertainty. V2 uses separate resume
+predicates:
+
+- failed `FINAL` call resume requires exact snapshot, brief, author,
+  configuration, preliminary artifacts, schema, prompt, request, and ledger
+  versions. Candidate and claim-set artifacts must not be required because that
+  call failed before either could exist;
+- failed `FINAL_CLAIM_VERIFICATION` resume additionally requires the persisted
+  final-candidate and claim-set digests, exact target scope, comparison-catalog
+  digest, verification schema, prompt, and request identity; and
+- a locally failed projection after persisted verification makes no provider
+  call on resume and replays only when all input artifact digests and projection
+  policy version match.
+
+Uncertain transport remains ineligible. V1 ledgers stay readable for diagnosis
+but cannot resume into V2 semantics; user starts a new review instead.
 
 ## Alternatives considered
 
@@ -319,6 +382,9 @@ semantic promotion.
   duplicate recognition still depends on verifier judgment.
 - Typical clean reviews remain two calls. Worst-case reviews add one call and
   must reserve it before spending.
+- Author explanation cannot silently withdraw a demonstrated or inconclusive
+  blind claim, and unverified replacement correction text cannot become an
+  action.
 - New artifacts and run records create a deliberate resume boundary. Old
   artifacts remain readable, but an old run cannot resume under new semantics.
 - Stage B adopts bounds for its new prose. Full legacy prose migration remains
@@ -335,10 +401,13 @@ semantic promotion.
    transition, and verification contracts with generated schemas and
    compatibility readers.
 3. Add a pure projection module and provider-free tests for every table row,
-   duplicate grouping, runner summary, author-command provenance, and both
-   modes.
+   proposed withdrawals, correction judgments, carried-catalog duplicate
+   grouping, runner summary, author-command provenance, and both modes. Standards
+   tests must prove `UNASSESSED` blocks for selected `REQUIRED` and
+   `RECOMMENDED` rules, preserving current behavior.
 4. Add selective post-author orchestration, worst-case admission, V2 durable
-   events, failure paths, retry charging, and exact stage-specific resume.
+   events, failure paths, retry charging, and separate final-call,
+   final-claim-verification, and local-projection resume predicates.
 5. Version report rendering and CLI readers; retain explicit legacy read paths
    and reject cross-generation resume.
 6. Run `npm run schemas:write`, `npm run check`, and repository-context checks.
