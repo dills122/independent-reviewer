@@ -115,6 +115,91 @@ describe("evaluation matrix run accounting", () => {
     assert.throws(() => validateLiveEngineStateV1("live", true), /clean committed checkout/i);
   });
 
+  it("reads the current standards report contract", async () => {
+    const root = await mkdtemp(join(tmpdir(), "review-matrix-standards-v3-"));
+    const testCase = EVALUATION_CASES_V1.find(({ reviewMode }) => reviewMode === "standards");
+    assert.ok(testCase);
+    try {
+      const result = await executeEvaluationCaseV1(
+        {
+          testCase,
+          execution: "live",
+          runRoot: root,
+          configPath: "/unused/config.json",
+          configId: "config_test",
+          io: { stdout: () => undefined, stderr: () => undefined },
+        },
+        {
+          prepareCase: async (_testCase, caseRoot) => {
+            const outputPath = join(caseRoot, "packet");
+            await mkdir(join(outputPath, "review"), { recursive: true });
+            await writeFile(
+              join(outputPath, "review", "final.json"),
+              JSON.stringify({
+                schemaVersion: 3,
+                stage: "FINAL",
+                snapshotDigest: { algorithm: "SHA256", value: "a".repeat(64) },
+                briefDigest: { algorithm: "SHA256", value: "b".repeat(64) },
+                summary: "Selected standards are satisfied.",
+                findings: [],
+                preliminaryFindingDispositions: [],
+                preliminaryConcernDispositions: [],
+                authorClaims: [],
+                authorVerificationClaims: [],
+                changedPathCoverage: [
+                  {
+                    path: "code.ts",
+                    status: "INSPECTED",
+                    explanation: "Changed code was inspected.",
+                  },
+                ],
+                canonicalInputCoverage: [
+                  {
+                    canonicalInputId: "input_standard",
+                    status: "ASSESSED",
+                    explanation: "Selected standard was assessed.",
+                  },
+                ],
+                limitations: [],
+                verdict: "READY",
+                nextActions: { blockers: [], fastFollows: [] },
+                ruleAssessments: [
+                  {
+                    ruleId: "rule_names",
+                    status: "ASSESSED",
+                    conflictingRuleIds: [],
+                    explanation: "Naming rule is satisfied.",
+                  },
+                ],
+                mode: "STANDARDS",
+                authorContext: {
+                  status: "PROVIDED",
+                  digest: { algorithm: "SHA256", value: "c".repeat(64) },
+                  noteCode: null,
+                },
+              }),
+            );
+            return {
+              repositoryPath: join(caseRoot, "repo"),
+              controlPath: join(caseRoot, "control.json"),
+              outputPath,
+              cliArguments: [],
+            };
+          },
+          runCli: async () => 0,
+          readRunRecord: async () => [
+            { schemaVersion: 1, at, type: "RUN_COMPLETED", terminalState: "READY" },
+          ],
+        },
+      );
+
+      assert.equal(result.actualVerdict, "READY");
+      assert.equal(result.complete, true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("persists an incomplete result when one case fails before execution", async () => {
     const root = await mkdtemp(join(tmpdir(), "review-matrix-failure-"));
     const testCase = EVALUATION_CASES_V1[0];
