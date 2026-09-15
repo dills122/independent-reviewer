@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -14,6 +14,42 @@ import {
 } from "../../src/snapshot/git-command.js";
 
 const execFileAsync = promisify(execFile);
+
+const gitCommandModuleUrl = new URL("../../src/snapshot/git-command.js", import.meta.url).href;
+
+async function runWithFreshFakeGit<T>(
+  fakeGitProgram: string,
+  callerProgram: string,
+  extraEnvironment: NodeJS.ProcessEnv = {},
+  fakeGitRuntime: "node" | "shell" = "node",
+): Promise<T> {
+  const root = await mkdtemp(join(tmpdir(), "independent-reviewer-fake-git-"));
+  const fakeGitPath = join(root, "git");
+  const callerPath = join(root, "caller.mjs");
+  try {
+    const interpreter = fakeGitRuntime === "node" ? process.execPath : "/bin/sh";
+    await writeFile(fakeGitPath, `#!${interpreter}\n${fakeGitProgram}`, { mode: 0o700 });
+    await writeFile(
+      callerPath,
+      `import { runGit, runGitNulRecords, runGitStdoutPrefix } from ${JSON.stringify(gitCommandModuleUrl)};\n${callerProgram}`,
+    );
+    const { stdout } = await execFileAsync(process.execPath, [callerPath], {
+      cwd: root,
+      encoding: "utf8",
+      env: {
+        HOME: root,
+        PATH: root,
+        ...(process.env.SystemRoot === undefined ? {} : { SystemRoot: process.env.SystemRoot }),
+        ...(process.env.PATHEXT === undefined ? {} : { PATHEXT: process.env.PATHEXT }),
+        ...extraEnvironment,
+      },
+      timeout: 4_000,
+    });
+    return JSON.parse(stdout) as T;
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
 
 async function createRepository(): Promise<string> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-git-command-"));
@@ -118,5 +154,267 @@ describe("runGit", () => {
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }
+  });
+});
+
+describe("safe.directory preflight", {
+  skip:
+    process.platform === "win32"
+      ? "fresh fake Git executable requires POSIX shebang semantics"
+      : false,
+}, () => {
+  it("forwards complete configured entries from a fresh process", async () => {
+    const observed = await runWithFreshFakeGit<{
+      count: string;
+      keys: string[];
+      values: string[];
+    }>(
+      `
+if (process.argv[2] === "config") {
+  process.stdout.write("/trusted/one\\0*\\0");
+} else {
+  process.stdout.write(JSON.stringify({
+    count: process.env.GIT_CONFIG_COUNT,
+    keys: [process.env.GIT_CONFIG_KEY_0, process.env.GIT_CONFIG_KEY_1],
+    values: [process.env.GIT_CONFIG_VALUE_0, process.env.GIT_CONFIG_VALUE_1],
+  }));
+}
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 100);
+console.log(result.stdout.toString("utf8"));
+`,
+    );
+
+    assert.deepEqual(observed, {
+      count: "2",
+      keys: ["safe.directory", "safe.directory"],
+      values: ["/trusted/one", "*"],
+    });
+  });
+
+  it("keeps a newline-containing configured value as one exact record", async () => {
+    const observed = await runWithFreshFakeGit<{ count: string; values: (string | null)[] }>(
+      `
+if (process.argv[2] === "config") {
+  process.stdout.write(process.argv.includes("-z") ? "/trusted/one\\n*\\0" : "/trusted/one\\n*\\n");
+} else {
+  process.stdout.write(JSON.stringify({
+    count: process.env.GIT_CONFIG_COUNT,
+    values: [process.env.GIT_CONFIG_VALUE_0, process.env.GIT_CONFIG_VALUE_1],
+  }));
+}
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 500);
+console.log(result.stdout.toString("utf8"));
+`,
+    );
+
+    assert.deepEqual(observed, { count: "1", values: ["/trusted/one\n*", null] });
+  });
+
+  it("preserves an empty record that resets an earlier wildcard", async () => {
+    const observed = await runWithFreshFakeGit<{ count: string; values: string[] }>(
+      `
+if [ "$1" = "config" ]; then
+  printf '*\\0\\0/safe\\0'
+else
+  printf '{"count":"%s","values":["%s","%s","%s"]}' \\
+    "$GIT_CONFIG_COUNT" \\
+    "$GIT_CONFIG_VALUE_0" \\
+    "$GIT_CONFIG_VALUE_1" \\
+    "$GIT_CONFIG_VALUE_2"
+fi
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 500);
+console.log(result.stdout.toString("utf8"));
+`,
+      {},
+      "shell",
+    );
+
+    assert.deepEqual(observed, { count: "3", values: ["*", "", "/safe"] });
+  });
+
+  it("treats an unset key as an empty forwarding set", async () => {
+    const observed = await runWithFreshFakeGit<{ count: string }>(
+      `
+if (process.argv[2] === "config") {
+  process.exitCode = 1;
+} else {
+  process.stdout.write(JSON.stringify({ count: process.env.GIT_CONFIG_COUNT }));
+}
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 100);
+console.log(result.stdout.toString("utf8"));
+`,
+    );
+
+    assert.deepEqual(observed, { count: "0" });
+  });
+
+  it("discards output from a failed lookup", async () => {
+    const observed = await runWithFreshFakeGit<{ count: string }>(
+      `
+if (process.argv[2] === "config") {
+  process.stdout.write("/must-not-be-forwarded\\0");
+  process.exitCode = 2;
+} else {
+  process.stdout.write(JSON.stringify({ count: process.env.GIT_CONFIG_COUNT }));
+}
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 100);
+console.log(result.stdout.toString("utf8"));
+`,
+    );
+
+    assert.deepEqual(observed, { count: "0" });
+  });
+
+  it("discards an unterminated configuration record", async () => {
+    const observed = await runWithFreshFakeGit<{ count: string }>(
+      `
+if (process.argv[2] === "config") {
+  process.stdout.write("/incomplete/value");
+} else {
+  process.stdout.write(JSON.stringify({ count: process.env.GIT_CONFIG_COUNT }));
+}
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 500);
+console.log(result.stdout.toString("utf8"));
+`,
+    );
+
+    assert.deepEqual(observed, { count: "0" });
+  });
+
+  it("discards overflow and stops its producer before running Git", async () => {
+    const observed = await runWithFreshFakeGit<{ count: string; preflightClosed: boolean }>(
+      `
+import { readFileSync, writeFileSync } from "node:fs";
+if (process.argv[2] === "config") {
+  writeFileSync("preflight.pid", String(process.pid));
+  process.stdout.write("a".repeat(511) + "\\0" + "b".repeat(512) + "\\0");
+  setTimeout(() => {}, 30_000);
+} else {
+  const preflightPid = Number(readFileSync("preflight.pid", "utf8"));
+  let preflightClosed = false;
+  try {
+    process.kill(preflightPid, 0);
+  } catch {
+    preflightClosed = true;
+  }
+  process.stdout.write(JSON.stringify({ count: process.env.GIT_CONFIG_COUNT, preflightClosed }));
+}
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 100);
+console.log(result.stdout.toString("utf8"));
+`,
+    );
+
+    assert.deepEqual(observed, { count: "0", preflightClosed: true });
+  });
+
+  it("accepts the complete safe-directory output boundary", async () => {
+    const observed = await runWithFreshFakeGit<{ count: string; lengths: number[] }>(
+      `
+if (process.argv[2] === "config") {
+  process.stdout.write("a".repeat(511) + "\\0" + "b".repeat(511) + "\\0");
+} else {
+  process.stdout.write(JSON.stringify({
+    count: process.env.GIT_CONFIG_COUNT,
+    lengths: [process.env.GIT_CONFIG_VALUE_0?.length, process.env.GIT_CONFIG_VALUE_1?.length],
+  }));
+}
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 500);
+console.log(result.stdout.toString("utf8"));
+`,
+    );
+
+    assert.deepEqual(observed, { count: "2", lengths: [511, 511] });
+  });
+
+  it("rejects one configured value above its environment-entry bound", async () => {
+    const observed = await runWithFreshFakeGit<{ count: string }>(
+      `
+if (process.argv[2] === "config") {
+  process.stdout.write("a".repeat(513) + "\\0");
+} else {
+  process.stdout.write(JSON.stringify({ count: process.env.GIT_CONFIG_COUNT }));
+}
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 500);
+console.log(result.stdout.toString("utf8"));
+`,
+    );
+
+    assert.deepEqual(observed, { count: "0" });
+  });
+
+  it("accounts for inherited environment before forwarding configured entries", async () => {
+    const observed = await runWithFreshFakeGit<{ count: string }>(
+      `
+if (process.argv[2] === "config") {
+  process.stdout.write("/trusted/one\\0");
+} else {
+  process.stdout.write(JSON.stringify({ count: process.env.GIT_CONFIG_COUNT }));
+}
+`,
+      `
+const result = await runGit(process.cwd(), ["status"], [0], 500);
+console.log(result.stdout.toString("utf8"));
+`,
+      { TEMP: "x".repeat(4_000) },
+    );
+
+    assert.deepEqual(observed, { count: "0" });
+  });
+
+  it("bounds a shared stalled lookup for every Git wrapper", async () => {
+    const observed = await runWithFreshFakeGit<{
+      elapsedMs: number;
+      records: string[];
+      results: string[];
+    }>(
+      `
+import { readFileSync, writeFileSync } from "node:fs";
+if (process.argv[2] === "config") {
+  writeFileSync("preflight.pid", String(process.pid));
+  setTimeout(() => {}, 30_000);
+} else {
+  const preflightPid = Number(readFileSync("preflight.pid", "utf8"));
+  let preflightClosed = false;
+  try {
+    process.kill(preflightPid, 0);
+  } catch {
+    preflightClosed = true;
+  }
+  process.stdout.write(Buffer.from((preflightClosed ? "closed" : "alive!") + "\\0"));
+}
+`,
+      `
+const records = [];
+const startedAt = performance.now();
+const settled = await Promise.all([
+  runGit(process.cwd(), ["status"], [0], 500).then((result) => result.stdout.subarray(0, 6).toString("utf8")),
+  runGitNulRecords(process.cwd(), ["records"], (record) => records.push(record.toString("utf8")), 500).then(() => "records"),
+  runGitStdoutPrefix(process.cwd(), ["prefix"], 6, 500).then((result) => result.toString("utf8")),
+]);
+console.log(JSON.stringify({ elapsedMs: performance.now() - startedAt, records, results: settled }));
+`,
+    );
+
+    assert.ok(observed.elapsedMs < 2_500, `preflight took ${observed.elapsedMs} ms`);
+    assert.deepEqual(observed.records, ["closed"]);
+    assert.deepEqual(observed.results, ["closed", "records", "closed"]);
   });
 });
