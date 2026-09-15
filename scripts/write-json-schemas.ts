@@ -34,7 +34,9 @@ import { REVIEW_UNIT_PLAN_V1_JSON_SCHEMA } from "../src/contracts/review-unit-pl
 import { RUN_RECORD_EVENT_V1_JSON_SCHEMA } from "../src/contracts/run-record.js";
 import {
   RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+  RESOLVED_SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA,
   SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+  SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA,
 } from "../src/contracts/simple-review-settings.js";
 import { SNAPSHOT_MANIFEST_V1_JSON_SCHEMA } from "../src/contracts/snapshot-manifest.js";
 import {
@@ -98,9 +100,14 @@ const schemaArtifacts = [
   ["review-run-config-v3.schema.json", REVIEW_RUN_CONFIG_V3_JSON_SCHEMA],
   ["review-report-metadata-v1.schema.json", REVIEW_REPORT_METADATA_V1_JSON_SCHEMA],
   ["simple-review-settings-v1.schema.json", SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA],
+  ["simple-review-settings-v2.schema.json", SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA],
   [
     "resolved-simple-review-settings-v1.schema.json",
     RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+  ],
+  [
+    "resolved-simple-review-settings-v2.schema.json",
+    RESOLVED_SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA,
   ],
   ["inspection-report-v1.schema.json", INSPECTION_REPORT_V1_JSON_SCHEMA],
   ["snapshot-manifest-v1.schema.json", SNAPSHOT_MANIFEST_V1_JSON_SCHEMA],

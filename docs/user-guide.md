@@ -72,6 +72,10 @@ node dist/src/cli.js init \
 `<git-dir>/independent-reviewer/simple-settings.json` with private permissions.
 It refuses to overwrite an existing file. Inspect saved values and their source:
 
+New settings files use schema version 2. Historical schema-version-1 files are
+strictly decoded and translated in memory: `discoverRepositorySteering` maps to
+the truthful `useReviewerRules` setting. Reading does not rewrite local state.
+
 ```sh
 node dist/src/cli.js config show --repo /path/to/target-repository
 node dist/src/cli.js config show --repo /path/to/target-repository --resolved

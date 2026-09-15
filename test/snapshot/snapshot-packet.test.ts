@@ -14,10 +14,12 @@ import {
   captureReviewerRulesGuidanceV1,
   finalizeReviewContextMapV1,
   guidanceGraphDigestV1,
+  inspectSnapshotPacket,
   inspectSnapshotPacketV1,
   type ReviewContextMapIdentityInputV1,
   type ReviewContextMapV1,
   type ReviewRequestV1,
+  StandardsReviewRequestV2Schema,
   sha256Utf8,
   writeSnapshotPacketV1,
 } from "../../src/index.js";
@@ -280,6 +282,69 @@ describe("snapshot packet store", () => {
         (await readFile(join(packetPath, "review-context-map.json"), "utf8")).endsWith("\n"),
         true,
       );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("reads a historical standards packet whose author digest is bound by metadata schema 2", async () => {
+    const { repositoryPath, request } = await arrangeCapture();
+    const packetPath = join(repositoryPath, ".review-runs", "packet-historical-v2");
+    try {
+      const standardsRequest = StandardsReviewRequestV2Schema.parse({
+        ...request,
+        schemaVersion: 2,
+        mode: "STANDARDS",
+        canonicalInputs: {
+          standards: [
+            {
+              id: "input_standard",
+              kind: "PROJECT_GUIDANCE",
+              title: "Project standard",
+              content: JSON.stringify({
+                schemaVersion: 1,
+                name: "Project standard",
+                source: "test fixture",
+                rules: [
+                  {
+                    id: "rule_reviewed",
+                    text: "Review reviewed.ts.",
+                    enforcement: "REQUIRED",
+                    paths: ["**/*.ts"],
+                    exceptions: null,
+                  },
+                ],
+              }),
+              provenance: { type: "INLINE", label: "historical packet test" },
+            },
+          ],
+        },
+        authorPacket: {
+          schemaVersion: 2,
+          overview: "Historical author explanation.",
+          claimedVerification: [],
+        },
+      });
+      const captured = await captureGitSnapshotV1(standardsRequest);
+      await writeSnapshotPacketV1(packetPath, captured, standardsRequest);
+      const metadataPath = join(packetPath, "packet-metadata.json");
+      const current = JSON.parse(await readFile(metadataPath, "utf8"));
+      await writeFile(
+        metadataPath,
+        `${JSON.stringify({
+          schemaVersion: 2,
+          reviewConfigRef: current.reviewConfigRef,
+          authorDigest: current.authorDigest,
+        })}\n`,
+      );
+
+      const inspected = await inspectSnapshotPacket(packetPath);
+      assert.equal(inspected.authorPacket?.schemaVersion, 2);
+      assert.equal(
+        inspected.authorPacket?.schemaVersion === 2 ? inspected.authorPacket.overview : undefined,
+        "Historical author explanation.",
+      );
+      assert.equal(inspected.reviewConfigRef, request.reviewConfigRef);
     } finally {
       await rm(repositoryPath, { recursive: true, force: true });
     }

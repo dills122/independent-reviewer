@@ -6,8 +6,15 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import { runCliV1 } from "../src/cli.js";
+import { RunRecordEventV1Schema } from "../src/contracts/run-record.js";
+import {
+  preflightReview,
+  resumeFinalReview,
+  runTwoStageReview,
+} from "../src/orchestrator/two-stage-review.js";
 import { ProviderCallError, type ReviewProviderV1 } from "../src/provider/review-provider.js";
-import { inspectSnapshotPacket } from "../src/snapshot/snapshot-packet.js";
+import { captureGitSnapshotV1 } from "../src/snapshot/git-capture.js";
+import { inspectSnapshotPacket, writeSnapshotPacketV1 } from "../src/snapshot/snapshot-packet.js";
 
 const exec = promisify(execFile);
 const digest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
@@ -457,7 +464,7 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
     const simpleSettingsPath = join(await localReviewDirectory(f.repo), "simple-settings.json");
     const localSettings = JSON.parse(await readFile(simpleSettingsPath, "utf8"));
     assert.deepEqual(localSettings, {
-      schemaVersion: 1,
+      schemaVersion: 2,
       model: "openai/gpt-oss-120b",
       maxCostUsd: 0.05,
       requireAuthorExplanation: true,
@@ -1146,22 +1153,226 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    const released = events.find((event) => event.type === "AUTHOR_CONTEXT_RELEASED");
-    assert.ok(released);
-    released.authorContext.status = "PROVIDED";
-    await writeFile(runRecordPath, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
     const callsBeforeResume = providerCalls;
-    errors.length = 0;
-    assert.equal(
-      await runCliV1(
-        ["resume-final", "--packet", f.packet, "--repo", f.repo, "--config", f.configPath],
-        { stdout: () => undefined, stderr: (message) => errors.push(message) },
-        { readOpenRouterApiKey: () => "test", createProvider: () => provider },
-      ),
-      1,
+    const corruptions = [
+      (draft: typeof events) => {
+        const released = draft.find((event) => event.type === "AUTHOR_CONTEXT_RELEASED");
+        assert.ok(released);
+        released.authorContext.status = "PROVIDED";
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "AUTHOR_CONTEXT_RELEASED");
+        draft.splice(index, 0, structuredClone(draft[index]));
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "AUTHOR_CONTEXT_RELEASED");
+        draft.splice(index, 0, {
+          schemaVersion: 1,
+          at: draft[index].at,
+          type: "AUTHOR_DELIVERED",
+          authorPacketDigest: digest,
+        });
+      },
+      (draft: typeof events) => {
+        const index = draft.findIndex((event) => event.type === "AUTHOR_CONTEXT_RELEASED");
+        draft[index] = {
+          schemaVersion: 1,
+          at: draft[index].at,
+          type: "AUTHOR_DELIVERED",
+          authorPacketDigest: digest,
+        };
+      },
+      (draft: typeof events) => {
+        draft.splice(
+          draft.findIndex((event) => event.type === "AUTHOR_CONTEXT_RELEASED"),
+          1,
+        );
+      },
+      (draft: typeof events) => {
+        const [released] = draft.splice(
+          draft.findIndex((event) => event.type === "AUTHOR_CONTEXT_RELEASED"),
+          1,
+        );
+        assert.ok(released);
+        const finalStarted = draft.findIndex(
+          (event) => event.type === "CALL_STARTED" && event.stage === "FINAL",
+        );
+        draft.splice(finalStarted + 1, 0, released);
+      },
+    ];
+    for (const corrupt of corruptions) {
+      const corrupted = structuredClone(events);
+      corrupt(corrupted);
+      corrupted.forEach((event) => {
+        RunRecordEventV1Schema.parse(event);
+      });
+      await writeFile(
+        runRecordPath,
+        `${corrupted.map((event) => JSON.stringify(event)).join("\n")}\n`,
+      );
+      errors.length = 0;
+      assert.equal(
+        await runCliV1(
+          ["resume-final", "--packet", f.packet, "--repo", f.repo, "--config", f.configPath],
+          { stdout: () => undefined, stderr: (message) => errors.push(message) },
+          { readOpenRouterApiKey: () => "test", createProvider: () => provider },
+        ),
+        1,
+      );
+      assert.match(
+        errors.join("\n"),
+        /not eligible|persisted preliminary or author-stage identity is invalid/i,
+      );
+      assert.equal(providerCalls, callsBeforeResume);
+    }
+  } finally {
+    await rm(f.repo, { recursive: true, force: true });
+  }
+});
+
+test("historical metadata schema 2 remains readable through inspect, preflight, run and resume", async () => {
+  const f = await fixture();
+  let finalCalls = 0;
+  const provider: ReviewProviderV1 = {
+    auditRequest: () => ({
+      providerPolicyVersion: "historical-fixture-v1",
+      wireBodyDigest: digest,
+      wireBodyBytes: 10,
+      credentialFreeWireRequestDigest: digest,
+    }),
+    complete: async (providerRequest) => {
+      const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+      const common = {
+        snapshotDigest: brief.snapshotManifest.snapshotDigest,
+        briefDigest: brief.briefDigest,
+        summary: "Historical packet review.",
+        ruleAssessments: [
+          {
+            ruleId: "rule_names",
+            status: "ASSESSED",
+            conflictingRuleIds: [],
+            explanation: "Applied selected naming rule.",
+          },
+        ],
+      };
+      if (providerRequest.stage === "FINAL") {
+        finalCalls += 1;
+        if (finalCalls === 1) {
+          throw new ProviderCallError("PROVIDER_ERROR", "Rate limited.", {
+            diagnostic: {
+              httpStatus: 429,
+              providerErrorCode: "429",
+              providerMessage: "Rate limited",
+              errorType: "rate_limit_exceeded",
+              providerCode: null,
+              providerName: "test",
+              model: providerRequest.models[0] ?? null,
+              responseId: null,
+              retryAfter: "45",
+            },
+          });
+        }
+      }
+      const value =
+        providerRequest.stage === "PRELIMINARY"
+          ? {
+              ...common,
+              schemaVersion: 2,
+              stage: "PRELIMINARY",
+              inspectedPaths: ["code.ts"],
+              canonicalInputCoverage: [
+                {
+                  canonicalInputId: "input_standard",
+                  status: "ASSESSED",
+                  explanation: "Applied naming rule.",
+                },
+              ],
+              findings: [],
+              evidenceGaps: [],
+              limitations: [],
+              nextAction: "REQUEST_AUTHOR_PACKET",
+            }
+          : {
+              ...common,
+              schemaVersion: 3,
+              stage: "FINAL",
+              mode: "STANDARDS",
+              findings: [],
+              withdrawnPreliminaryFindings: [],
+              preliminaryConcernDispositions: [],
+              authorClaims: [],
+              authorVerificationClaims: [],
+              limitations: [],
+              verdict: "READY",
+              nextActions: { blockers: [], fastFollows: [] },
+            };
+      return {
+        value,
+        rawContent: JSON.stringify(value),
+        responseId: "historical-fixture",
+        model: providerRequest.models[0] as string,
+        provider: "test/fp4",
+        usage: { promptTokens: 100, completionTokens: 100, totalTokens: 200, cost: 0.00001 },
+      };
+    },
+  };
+
+  try {
+    const request = JSON.parse(await readFile(f.requestPath, "utf8"));
+    const config = JSON.parse(await readFile(f.configPath, "utf8"));
+    const captured = await captureGitSnapshotV1(request, {
+      excludedFileSystemPaths: [f.requestPath, f.configPath, f.packet],
+    });
+    await writeSnapshotPacketV1(f.packet, captured, request);
+    const metadataPath = join(f.packet, "packet-metadata.json");
+    const metadata = JSON.parse(await readFile(metadataPath, "utf8"));
+    await writeFile(
+      metadataPath,
+      `${JSON.stringify({
+        schemaVersion: 2,
+        reviewConfigRef: metadata.reviewConfigRef,
+        authorDigest: metadata.authorDigest,
+      })}\n`,
     );
-    assert.match(errors.join("\n"), /persisted preliminary or author-stage identity is invalid/i);
-    assert.equal(providerCalls, callsBeforeResume);
+
+    assert.equal((await inspectSnapshotPacket(f.packet)).authorPacket?.schemaVersion, 2);
+    await preflightReview(f.packet, config, f.repo);
+    await assert.rejects(
+      () => runTwoStageReview(f.packet, config, provider, f.repo),
+      /Rate limited/,
+    );
+    const runRecordPath = join(f.packet, "review", "run-record.jsonl");
+    const originalRecord = await readFile(runRecordPath, "utf8");
+    const wrongLifecycle = originalRecord
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const authorIndex = wrongLifecycle.findIndex((event) => event.type === "AUTHOR_DELIVERED");
+    const authorEvent = wrongLifecycle[authorIndex];
+    assert.ok(authorEvent);
+    wrongLifecycle[authorIndex] = RunRecordEventV1Schema.parse({
+      schemaVersion: 1,
+      at: authorEvent.at,
+      type: "AUTHOR_CONTEXT_RELEASED",
+      authorContext: {
+        schemaVersion: 1,
+        status: "PROVIDED",
+        digest: metadata.authorDigest,
+      },
+    });
+    await writeFile(
+      runRecordPath,
+      `${wrongLifecycle.map((event) => JSON.stringify(event)).join("\n")}\n`,
+    );
+    await assert.rejects(
+      () => resumeFinalReview(f.packet, config, provider, f.repo),
+      /author-stage identity is invalid/i,
+    );
+    assert.equal(finalCalls, 1);
+    await writeFile(runRecordPath, originalRecord);
+    const resumed = await resumeFinalReview(f.packet, config, provider, f.repo);
+    assert.equal(resumed.report.verdict, "READY");
+    assert.equal(finalCalls, 2);
   } finally {
     await rm(f.repo, { recursive: true, force: true });
   }

@@ -11,8 +11,8 @@ import {
   terminalText,
 } from "./cli/review-output.js";
 import {
-  readLocalSimpleReviewSettingsV1,
-  saveLocalSimpleReviewSettingsV1,
+  readLocalSimpleReviewSettingsV2,
+  saveLocalSimpleReviewSettingsV2,
 } from "./cli/simple-settings.js";
 import {
   assembleStandardsRequest,
@@ -23,10 +23,10 @@ import {
 } from "./cli/standards-input.js";
 import {
   type FinalReviewReportV1,
-  type ResolvedSimpleReviewSettingsV1,
+  type ResolvedSimpleReviewSettingsV2,
   type ReviewRunConfigV3,
   ReviewRunConfigV3Schema,
-  resolveSimpleReviewSettingsV1,
+  resolveSimpleReviewSettingsV2,
 } from "./contracts/index.js";
 import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
 import { jsonDocument } from "./contracts/json-document.js";
@@ -500,11 +500,11 @@ function friendlySettingsOverridesV1(options: SimpleSettingsCommandOptionsV1) {
 
 async function resolveSimpleSettingsForOptionsV1(
   options: SimpleSettingsCommandOptionsV1,
-): Promise<ResolvedSimpleReviewSettingsV1> {
+): Promise<ResolvedSimpleReviewSettingsV2> {
   const repository = await resolveRepositoryRootV1(options.repo ?? process.cwd());
   const maxCostUsd = maxCostOptionV1(options.maxCost);
-  return resolveSimpleReviewSettingsV1({
-    local: await readLocalSimpleReviewSettingsV1(repository),
+  return resolveSimpleReviewSettingsV2({
+    local: await readLocalSimpleReviewSettingsV2(repository),
     cli: {
       ...(options.model ? { model: options.model } : {}),
       ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
@@ -534,14 +534,14 @@ async function initializeReviewSettingsV1(options: InitCommandOptionsV1): Promis
 
   const repository = await resolveRepositoryRootV1(options.repo ?? process.cwd());
   const maxCostUsd = maxCostOptionV1(options.maxCost);
-  const resolved = resolveSimpleReviewSettingsV1({
+  const resolved = resolveSimpleReviewSettingsV2({
     cli: {
       ...(options.model ? { model: options.model } : {}),
       ...(maxCostUsd !== undefined ? { maxCostUsd } : {}),
       ...friendlySettingsOverridesV1(options),
     },
   });
-  return saveLocalSimpleReviewSettingsV1(repository, resolved.settings);
+  return saveLocalSimpleReviewSettingsV2(repository, resolved.settings);
 }
 
 async function showSimpleReviewConfigV1(
@@ -630,13 +630,13 @@ async function resolveLiveReviewContextV1(
 
 /** The repository's own preference for letting its committed rules steer a review. */
 async function repositoryUsesReviewerRulesV1(repositoryPath: string): Promise<boolean> {
-  const local = await readLocalSimpleReviewSettingsV1(repositoryPath);
+  const local = await readLocalSimpleReviewSettingsV2(repositoryPath);
   return local?.useReviewerRules ?? true;
 }
 
 async function friendlyReviewBehaviorV1(options: SimpleSettingsCommandOptionsV1) {
   const repository = await resolveRepositoryRootV1(options.repo ?? process.cwd());
-  const local = await readLocalSimpleReviewSettingsV1(repository);
+  const local = await readLocalSimpleReviewSettingsV2(repository);
   const cli = friendlySettingsOverridesV1(options);
   return {
     requireAuthorExplanation:

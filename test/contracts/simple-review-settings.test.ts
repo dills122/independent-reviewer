@@ -5,18 +5,21 @@ import { describe, it } from "node:test";
 
 import {
   RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
-  ResolvedSimpleReviewSettingsV1Schema,
-  resolveSimpleReviewSettingsV1,
+  RESOLVED_SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA,
+  ResolvedSimpleReviewSettingsV2Schema,
+  resolveSimpleReviewSettingsV2,
   SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+  SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA,
   SimpleReviewSettingsV1Schema,
+  SimpleReviewSettingsV2Schema,
   supportedReviewModelsV1,
 } from "../../src/index.js";
 
 describe("simple review settings", () => {
   it("resolves CLI values over local settings and engine defaults", () => {
-    const resolved = resolveSimpleReviewSettingsV1({
+    const resolved = resolveSimpleReviewSettingsV2({
       local: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         model: "openai/gpt-oss-120b",
         maxCostUsd: 0.25,
         requireAuthorExplanation: false,
@@ -29,7 +32,7 @@ describe("simple review settings", () => {
     });
 
     assert.deepEqual(resolved.settings, {
-      schemaVersion: 1,
+      schemaVersion: 2,
       model: "openai/gpt-oss-120b",
       maxCostUsd: 0.05,
       requireAuthorExplanation: true,
@@ -46,7 +49,7 @@ describe("simple review settings", () => {
   });
 
   it("uses safe engine defaults for optional behavior", () => {
-    const resolved = resolveSimpleReviewSettingsV1({
+    const resolved = resolveSimpleReviewSettingsV2({
       cli: { model: "openai/gpt-oss-120b", maxCostUsd: 0.05 },
     });
 
@@ -58,16 +61,16 @@ describe("simple review settings", () => {
 
   it("requires model and maximum cost from CLI or local settings", () => {
     assert.throws(
-      () => resolveSimpleReviewSettingsV1({ cli: { model: "openai/gpt-oss-120b" } }),
+      () => resolveSimpleReviewSettingsV2({ cli: { model: "openai/gpt-oss-120b" } }),
       /maxCostUsd/,
     );
-    assert.throws(() => resolveSimpleReviewSettingsV1({ cli: { maxCostUsd: 0.05 } }), /model/);
+    assert.throws(() => resolveSimpleReviewSettingsV2({ cli: { maxCostUsd: 0.05 } }), /model/);
   });
 
   it("rejects unsupported models instead of guessing runtime policy", () => {
     assert.throws(
       () =>
-        resolveSimpleReviewSettingsV1({
+        resolveSimpleReviewSettingsV2({
           cli: { model: "vendor/unknown", maxCostUsd: 0.05 },
         }),
       /Unsupported review model vendor\/unknown/,
@@ -82,7 +85,7 @@ describe("simple review settings", () => {
     const existing = JSON.parse(
       await readFile(resolve("examples", "review-config.gpt-oss-120b.json"), "utf8"),
     ) as Record<string, unknown>;
-    const resolved = resolveSimpleReviewSettingsV1({
+    const resolved = resolveSimpleReviewSettingsV2({
       cli: { model: "openai/gpt-oss-120b", maxCostUsd: 0.25 },
     });
 
@@ -100,20 +103,20 @@ describe("simple review settings", () => {
 
   it("produces stable identities and a valid resolved contract", () => {
     const input = { cli: { model: "openai/gpt-oss-120b", maxCostUsd: 0.05 } } as const;
-    const first = resolveSimpleReviewSettingsV1(input);
-    const second = resolveSimpleReviewSettingsV1(input);
+    const first = resolveSimpleReviewSettingsV2(input);
+    const second = resolveSimpleReviewSettingsV2(input);
 
     assert.deepEqual(first, second);
     assert.match(first.reviewRunConfig.configId, /^config_[a-f0-9]{64}$/);
-    assert.equal(SimpleReviewSettingsV1Schema.safeParse(first.settings).success, true);
-    assert.equal(ResolvedSimpleReviewSettingsV1Schema.safeParse(first).success, true);
+    assert.equal(SimpleReviewSettingsV2Schema.safeParse(first.settings).success, true);
+    assert.equal(ResolvedSimpleReviewSettingsV2Schema.safeParse(first).success, true);
   });
 
   it("changes resolved identity when a user-controlled setting changes", () => {
-    const low = resolveSimpleReviewSettingsV1({
+    const low = resolveSimpleReviewSettingsV2({
       cli: { model: "openai/gpt-oss-120b", maxCostUsd: 0.05 },
     });
-    const high = resolveSimpleReviewSettingsV1({
+    const high = resolveSimpleReviewSettingsV2({
       cli: { model: "openai/gpt-oss-120b", maxCostUsd: 0.1 },
     });
 
@@ -123,19 +126,19 @@ describe("simple review settings", () => {
   });
 
   it("rejects a self-consistent-looking resolved policy replacement", () => {
-    const resolved = resolveSimpleReviewSettingsV1({
+    const resolved = resolveSimpleReviewSettingsV2({
       cli: { model: "openai/gpt-oss-120b", maxCostUsd: 0.05 },
     });
     const replacement = structuredClone(resolved);
     replacement.reviewRunConfig.providerRouting.maxPrice.completion = 0.7;
 
-    assert.equal(ResolvedSimpleReviewSettingsV1Schema.safeParse(replacement).success, false);
+    assert.equal(ResolvedSimpleReviewSettingsV2Schema.safeParse(replacement).success, false);
   });
 
   it("rejects unknown settings fields", () => {
     assert.equal(
-      SimpleReviewSettingsV1Schema.safeParse({
-        schemaVersion: 1,
+      SimpleReviewSettingsV2Schema.safeParse({
+        schemaVersion: 2,
         model: "openai/gpt-oss-120b",
         maxCostUsd: 0.05,
         requireAuthorExplanation: true,
@@ -146,13 +149,41 @@ describe("simple review settings", () => {
     );
   });
 
-  it("matches the committed JSON Schema artifacts", async () => {
-    const [settingsSchema, resolvedSchema] = await Promise.all([
-      readFile(resolve("schemas", "simple-review-settings-v1.schema.json"), "utf8"),
-      readFile(resolve("schemas", "resolved-simple-review-settings-v1.schema.json"), "utf8"),
-    ]);
+  it("keeps settings v1 strict for historical reads and uses v2 for truthful writes", () => {
+    assert.equal(
+      SimpleReviewSettingsV1Schema.safeParse({
+        schemaVersion: 1,
+        model: "openai/gpt-oss-120b",
+        maxCostUsd: 0.05,
+        requireAuthorExplanation: true,
+        discoverRepositorySteering: false,
+      }).success,
+      true,
+    );
+    assert.equal(
+      SimpleReviewSettingsV1Schema.safeParse({
+        schemaVersion: 1,
+        model: "openai/gpt-oss-120b",
+        maxCostUsd: 0.05,
+        requireAuthorExplanation: true,
+        useReviewerRules: false,
+      }).success,
+      false,
+    );
+  });
 
-    assert.deepEqual(JSON.parse(settingsSchema), SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA);
-    assert.deepEqual(JSON.parse(resolvedSchema), RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA);
+  it("matches the committed JSON Schema artifacts", async () => {
+    const [settingsV1Schema, settingsV2Schema, resolvedV1Schema, resolvedV2Schema] =
+      await Promise.all([
+        readFile(resolve("schemas", "simple-review-settings-v1.schema.json"), "utf8"),
+        readFile(resolve("schemas", "simple-review-settings-v2.schema.json"), "utf8"),
+        readFile(resolve("schemas", "resolved-simple-review-settings-v1.schema.json"), "utf8"),
+        readFile(resolve("schemas", "resolved-simple-review-settings-v2.schema.json"), "utf8"),
+      ]);
+
+    assert.deepEqual(JSON.parse(settingsV1Schema), SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA);
+    assert.deepEqual(JSON.parse(settingsV2Schema), SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA);
+    assert.deepEqual(JSON.parse(resolvedV1Schema), RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA);
+    assert.deepEqual(JSON.parse(resolvedV2Schema), RESOLVED_SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA);
   });
 });

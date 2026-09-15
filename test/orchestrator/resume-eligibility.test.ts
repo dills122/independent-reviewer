@@ -319,6 +319,54 @@ describe("evaluateResumeShapeV1", () => {
     assert.deepEqual(refusalsOf(events), ["NO_AUTHOR_DELIVERED"]);
   });
 
+  it("refuses mixed or duplicate author lifecycle transitions", () => {
+    const mixed = eligibleEvents();
+    const authorIndex = mixed.findIndex((candidate) => candidate.type === "AUTHOR_DELIVERED");
+    mixed.splice(
+      authorIndex,
+      0,
+      event({
+        type: "AUTHOR_CONTEXT_RELEASED",
+        authorContext: { schemaVersion: 1, status: "DECLINED", digest },
+      }),
+    );
+    assert.deepEqual(refusalsOf(mixed), ["MULTIPLE_AUTHOR_LIFECYCLE_TRANSITIONS"]);
+
+    const duplicate = eligibleEvents();
+    duplicate.splice(
+      duplicate.findIndex((candidate) => candidate.type === "AUTHOR_DELIVERED"),
+      0,
+      event({ type: "AUTHOR_DELIVERED", authorPacketDigest: digest }),
+    );
+    assert.deepEqual(refusalsOf(duplicate), ["MULTIPLE_AUTHOR_LIFECYCLE_TRANSITIONS"]);
+  });
+
+  it("requires the sole author lifecycle transition after verification and before first final call", () => {
+    const tooEarly = eligibleEvents();
+    const [earlyAuthor] = tooEarly.splice(
+      tooEarly.findIndex((candidate) => candidate.type === "AUTHOR_DELIVERED"),
+      1,
+    );
+    assert.ok(earlyAuthor);
+    tooEarly.splice(3, 0, earlyAuthor);
+    assert.deepEqual(refusalsOf(tooEarly), ["AUTHOR_LIFECYCLE_OUT_OF_ORDER"]);
+
+    const tooLate = eligibleEvents();
+    const [lateAuthor] = tooLate.splice(
+      tooLate.findIndex((candidate) => candidate.type === "AUTHOR_DELIVERED"),
+      1,
+    );
+    assert.ok(lateAuthor);
+    tooLate.splice(
+      tooLate.findIndex(
+        (candidate) => candidate.type === "CALL_STARTED" && candidate.stage === "FINAL",
+      ) + 1,
+      0,
+      lateAuthor,
+    );
+    assert.deepEqual(refusalsOf(tooLate), ["AUTHOR_LIFECYCLE_OUT_OF_ORDER"]);
+  });
+
   it("reports every failing predicate rather than the first", () => {
     const refusals = refusalsOf([]);
 

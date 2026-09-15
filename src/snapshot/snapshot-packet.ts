@@ -671,7 +671,9 @@ export async function inspectSnapshotPacket(
     requestSchemaVersion === 2 &&
     (!authorPacket ||
       packetMetadata.schemaVersion === 1 ||
-      (packetMetadata.schemaVersion !== 3 && packetMetadata.schemaVersion !== 4) ||
+      (packetMetadata.schemaVersion !== 2 &&
+        packetMetadata.schemaVersion !== 3 &&
+        packetMetadata.schemaVersion !== 4) ||
       !packetMetadata.authorDigest ||
       sha256Utf8(jsonDocument(authorPacket)).value !== packetMetadata.authorDigest.value)
   )

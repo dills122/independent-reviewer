@@ -216,18 +216,26 @@ export type {
 export { RUN_RECORD_EVENT_V1_JSON_SCHEMA, RunRecordEventV1Schema } from "./run-record.js";
 export type {
   ResolvedSimpleReviewSettingsV1,
-  ResolveSimpleReviewSettingsInputV1,
+  ResolvedSimpleReviewSettingsV2,
+  ResolveSimpleReviewSettingsInputV2,
   SimpleReviewSettingsV1,
+  SimpleReviewSettingsV2,
 } from "./simple-review-settings.js";
 export {
   RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
+  RESOLVED_SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA,
   ResolvedSimpleReviewSettingsV1Schema,
-  resolveSimpleReviewSettingsV1,
+  ResolvedSimpleReviewSettingsV2Schema,
+  resolveSimpleReviewSettingsV2,
   SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
-  SimpleReviewSettingsOverridesV1Schema,
+  SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA,
+  SimpleReviewSettingsOverridesV2Schema,
+  SimpleReviewSettingsProvenanceV2Schema,
   SimpleReviewSettingsV1Schema,
+  SimpleReviewSettingsV2Schema,
   SupportedReviewModelV1Schema,
   supportedReviewModelsV1,
+  translateSimpleReviewSettingsV1ToV2,
 } from "./simple-review-settings.js";
 export type {
   DigestV1,

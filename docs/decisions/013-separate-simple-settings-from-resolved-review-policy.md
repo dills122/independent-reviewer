@@ -38,6 +38,12 @@ Explicit CLI values override local selections, which override versioned engine
 defaults. Credentials remain environment-only. Repository content cannot alter
 paid-call policy.
 
+Simple settings and their resolved form use version 2 for the truthful
+`useReviewerRules` name and matching provenance. The reader retains a strict,
+read-only version-1 decoder and explicitly translates
+`discoverRepositorySteering` to `useReviewerRules` in memory. `init` writes only
+version 2; reading historical settings never silently rewrites local state.
+
 The engine owns safe defaults for routing, privacy posture, token allocation,
 evidence limits, output limits, pacing, timeouts, retries, and repairs. Each
 supported model profile binds the metadata needed to resolve those defaults.

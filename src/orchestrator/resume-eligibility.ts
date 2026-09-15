@@ -56,6 +56,8 @@ export type ResumeRefusalV1 =
   | "NO_PRELIMINARY_PERSISTED"
   | "NO_FINDING_VERIFICATION_PERSISTED"
   | "NO_AUTHOR_DELIVERED"
+  | "MULTIPLE_AUTHOR_LIFECYCLE_TRANSITIONS"
+  | "AUTHOR_LIFECYCLE_OUT_OF_ORDER"
   | "NO_FINAL_CALL_STARTED"
   | "NO_FINAL_CALL_FAILED"
   | "CALL_ATTEMPTED_AFTER_FINAL_FAILURE"
@@ -109,9 +111,16 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
   const preliminarySucceeded = preliminarySucceededCalls.at(-1);
   const preliminaryPersisted = eventsOfType(events, "PRELIMINARY_PERSISTED")[0];
   const findingVerificationPersisted = eventsOfType(events, "FINDING_VERIFICATION_PERSISTED")[0];
-  const authorDelivered =
-    eventsOfType(events, "AUTHOR_DELIVERED")[0] ??
-    eventsOfType(events, "AUTHOR_CONTEXT_RELEASED")[0];
+  const authorLifecycleEvents = events.filter(
+    (
+      event,
+    ): event is
+      | RunRecordEventOfTypeV1<"AUTHOR_DELIVERED">
+      | RunRecordEventOfTypeV1<"AUTHOR_CONTEXT_RELEASED"> =>
+      event.type === "AUTHOR_DELIVERED" || event.type === "AUTHOR_CONTEXT_RELEASED",
+  );
+  const authorDelivered = authorLifecycleEvents[0];
+  const firstFinalStarted = startedCalls.find((event) => event.stage === "FINAL");
   const finalStarted = startedCalls.findLast((event) => event.stage === "FINAL");
   const failedCalls = eventsOfType(events, "CALL_FAILED");
   const finalFailed = failedCalls.at(-1)?.stage === "FINAL" ? failedCalls.at(-1) : undefined;
@@ -144,6 +153,17 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
   refuse("NO_PRELIMINARY_PERSISTED", preliminaryPersisted === undefined);
   refuse("NO_FINDING_VERIFICATION_PERSISTED", findingVerificationPersisted === undefined);
   refuse("NO_AUTHOR_DELIVERED", authorDelivered === undefined);
+  refuse("MULTIPLE_AUTHOR_LIFECYCLE_TRANSITIONS", authorLifecycleEvents.length > 1);
+  refuse(
+    "AUTHOR_LIFECYCLE_OUT_OF_ORDER",
+    authorDelivered !== undefined &&
+      findingVerificationPersisted !== undefined &&
+      firstFinalStarted !== undefined &&
+      !(
+        events.indexOf(findingVerificationPersisted) < events.indexOf(authorDelivered) &&
+        events.indexOf(authorDelivered) < events.indexOf(firstFinalStarted)
+      ),
+  );
   refuse("NO_FINAL_CALL_STARTED", finalStarted === undefined);
   refuse("NO_FINAL_CALL_FAILED", finalFailed === undefined);
   refuse(

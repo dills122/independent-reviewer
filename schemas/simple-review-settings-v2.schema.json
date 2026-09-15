@@ -1,12 +1,12 @@
 {
-  "$id": "urn:independent-reviewer:schema:simple-review-settings:v1",
+  "$id": "urn:independent-reviewer:schema:simple-review-settings:v2",
   "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
     "schemaVersion": {
       "type": "number",
-      "const": 1
+      "const": 2
     },
     "model": {
       "type": "string",
@@ -21,7 +21,7 @@
     "requireAuthorExplanation": {
       "type": "boolean"
     },
-    "discoverRepositorySteering": {
+    "useReviewerRules": {
       "type": "boolean"
     }
   },
@@ -30,7 +30,7 @@
     "model",
     "maxCostUsd",
     "requireAuthorExplanation",
-    "discoverRepositorySteering"
+    "useReviewerRules"
   ],
   "additionalProperties": false
 }
