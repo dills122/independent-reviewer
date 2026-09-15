@@ -15,6 +15,19 @@ import type {
 } from "./matrix-types.js";
 
 const exec = promisify(execFile);
+const FIXTURE_GIT_ENV = {
+  GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+  GIT_AUTHOR_EMAIL: "fixture@example.invalid",
+  GIT_AUTHOR_NAME: "Evaluation Fixture",
+  GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+  GIT_COMMITTER_EMAIL: "fixture@example.invalid",
+  GIT_COMMITTER_NAME: "Evaluation Fixture",
+  GIT_CONFIG_GLOBAL: devNull,
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_TERMINAL_PROMPT: "0",
+  LANG: "C",
+  LC_ALL: "C",
+} as const;
 
 function assertRepositoryPath(path: string): void {
   const normalized = normalize(path);
@@ -49,15 +62,21 @@ async function materializeFile(
 }
 
 async function git(repositoryPath: string, ...arguments_: string[]): Promise<void> {
-  await exec("git", ["-C", repositoryPath, ...arguments_], {
-    env: {
-      ...process.env,
-      GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
-      GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
-      GIT_CONFIG_GLOBAL: devNull,
-      GIT_CONFIG_NOSYSTEM: "1",
+  await exec(
+    "git",
+    [
+      "-c",
+      `core.hooksPath=${devNull}`,
+      "-c",
+      "commit.gpgsign=false",
+      "-C",
+      repositoryPath,
+      ...arguments_,
+    ],
+    {
+      env: FIXTURE_GIT_ENV,
     },
-  });
+  );
 }
 
 function assertOracleSeparated(testCase: EvaluationCaseV1): void {

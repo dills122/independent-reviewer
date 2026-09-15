@@ -76,4 +76,67 @@ describe("evaluation fixture reconstruction", () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it("produces the same commit while ignoring every ambient Git authority channel", async () => {
+    const root = await mkdtemp(join(tmpdir(), "review-evaluation-"));
+    const testCase = EVALUATION_CASES_V1.find(({ id }) => id === "case_017");
+    assert.ok(testCase);
+    const hostileGitDirectory = join(root, "hostile.git");
+    const hostileWorkTree = join(root, "hostile-worktree");
+    const hostileHooks = join(root, "hostile-hooks");
+    const keys = [
+      "GIT_AUTHOR_NAME",
+      "GIT_AUTHOR_EMAIL",
+      "GIT_COMMITTER_NAME",
+      "GIT_COMMITTER_EMAIL",
+      "GIT_DIR",
+      "GIT_WORK_TREE",
+      "GIT_CONFIG_COUNT",
+      "GIT_CONFIG_KEY_0",
+      "GIT_CONFIG_VALUE_0",
+      "GIT_CONFIG_KEY_1",
+      "GIT_CONFIG_VALUE_1",
+    ] as const;
+    const previous = new Map(keys.map((key) => [key, process.env[key]]));
+    try {
+      const baseline = await prepareEvaluationCaseV1(testCase, join(root, "baseline"));
+      const baselineCommit = (
+        await exec("git", ["-C", baseline.repositoryPath, "rev-parse", "main"])
+      ).stdout.trim();
+
+      await mkdir(hostileGitDirectory);
+      await mkdir(hostileWorkTree);
+      await mkdir(hostileHooks);
+      await writeFile(join(hostileHooks, "pre-commit"), "#!/bin/sh\nexit 91\n", { mode: 0o755 });
+      Object.assign(process.env, {
+        GIT_AUTHOR_NAME: "Ambient Author",
+        GIT_AUTHOR_EMAIL: "ambient-author@example.invalid",
+        GIT_COMMITTER_NAME: "Ambient Committer",
+        GIT_COMMITTER_EMAIL: "ambient-committer@example.invalid",
+        GIT_DIR: hostileGitDirectory,
+        GIT_WORK_TREE: hostileWorkTree,
+        GIT_CONFIG_COUNT: "2",
+        GIT_CONFIG_KEY_0: "core.hooksPath",
+        GIT_CONFIG_VALUE_0: hostileHooks,
+        GIT_CONFIG_KEY_1: "commit.gpgsign",
+        GIT_CONFIG_VALUE_1: "true",
+      });
+
+      const isolated = await prepareEvaluationCaseV1(testCase, join(root, "isolated"));
+      const isolatedCommit = (
+        await exec("git", ["-C", isolated.repositoryPath, "rev-parse", "main"], {
+          env: Object.fromEntries(
+            Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+          ),
+        })
+      ).stdout.trim();
+      assert.equal(isolatedCommit, baselineCommit);
+    } finally {
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });
