@@ -5,6 +5,13 @@
 Checkpoint A implemented on 2026-09-13. Broader final-only claim verification
 remains deferred and requires a separate decision before adding another call.
 
+Broader follow-up is now tracked by
+[#161](https://github.com/dills122/independent-reviewer/issues/161), Stage B of
+the [correctness delivery plan](2026-09-14-correctness-engineering-review-plan.md).
+It includes content-bound claim continuity, deterministic inconclusive handling,
+and review of every outcome-affecting category. Checkpoint A remains complete;
+no new runtime behavior is claimed here.
+
 ## Objective
 
 Close the observed preliminary concern category escape without adding another
