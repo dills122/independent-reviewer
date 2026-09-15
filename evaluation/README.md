@@ -70,11 +70,18 @@ owns reproducible selection, fixture construction, paid admission, and result ac
 
 ## Evaluator artifact contracts
 
-`artifact-contracts.ts` defines package-private v1 contracts for case manifests, family-preserving
-development/holdout splits, experiment manifests, terminal attempt records, finding adjudications,
-and score reports. Exact source, engine, split, and artifact digests bind comparisons to frozen
-inputs. Oracle inventory remains structurally separate from permitted reviewer inputs; zero-
-denominator metrics and unresolved adjudications stay explicitly unavailable or unresolved.
+`artifact-contracts.ts` defines package-private v1 validation and serialization contracts for case,
+split, experiment, attempt, adjudication, and score artifacts. `artifact-graph.ts` validates one
+fully supplied artifact graph against frozen case, split, experiment, source, engine, variant,
+repetition, claim, and raw-reference identities. Pair membership is explicit and complete; zero-
+denominator metrics, unresolved adjudications, terminal failures, and cost uncertainty remain
+visible.
 
-These contracts do not yet score matrix reports or change provider behavior. Finding matching,
-scorer execution, corpus split allocation, and matrix artifact integration remain later #160 work.
+`oracle-leak.ts` checks supplied reviewer messages, message metadata, references, and attachment
+bytes against evaluator-only roots, uncertainties, labels, artifact identities, and content. Caller
+must supply every message and attachment available to each reviewer stage; this module does not
+intercept provider traffic or discover omitted messages.
+
+These evaluator-only modules do not allocate corpus splits, execute scoring, collect runtime
+messages, integrate artifacts into matrix runs, call providers, or change product behavior. Those
+integration and execution steps remain later #160 work.

@@ -79,7 +79,7 @@ const OracleArtifactInventoryEntryV1Schema = z.strictObject({
   digest: DigestV1Schema,
 });
 
-const EvaluationSourceIdentityV1Schema = z.discriminatedUnion("kind", [
+export const EvaluationSourceIdentityV1Schema = z.discriminatedUnion("kind", [
   z.strictObject({
     identityVersion: z.literal(1),
     kind: z.literal("COMMIT_RANGE"),
@@ -106,7 +106,12 @@ const EvaluationCaseManifestBaseV1Schema = z.strictObject({
   corpusVersion: NonEmptyTextSchema,
   caseId: EvaluationCaseIdV1Schema,
   familyId: EvaluationFamilyIdV1Schema,
-  pairId: EvaluationPairIdV1Schema.nullable(),
+  pair: z
+    .strictObject({
+      pairId: EvaluationPairIdV1Schema,
+      role: z.enum(["DEFECT", "CLEAN"]),
+    })
+    .nullable(),
   reviewMode: z.enum(["REQUIREMENTS", "STANDARDS"]),
   source: EvaluationSourceIdentityV1Schema,
   obligations: z
@@ -300,23 +305,35 @@ export function validateEvaluationFamilySplitV1(
     caseById.delete(assignment.caseId);
   }
   if (caseById.size > 0) throw new TypeError("family split omits one or more cases");
-  const splitByPair = new Map<string, "DEVELOPMENT" | "HOLDOUT">();
+  const pairMembers = new Map<
+    string,
+    { splits: Set<"DEVELOPMENT" | "HOLDOUT">; roles: ("DEFECT" | "CLEAN")[] }
+  >();
   for (const caseManifest of cases) {
-    if (caseManifest.pairId === null) continue;
+    if (caseManifest.pair === null) continue;
     const assignment = assignmentByCaseId.get(caseManifest.caseId);
     if (!assignment) throw new TypeError(`family split omits case ${caseManifest.caseId}`);
-    const previous = splitByPair.get(caseManifest.pairId);
-    if (previous !== undefined && previous !== assignment.split) {
-      throw new TypeError(
-        `${caseManifest.pairId} cannot belong to both ${previous} and ${assignment.split}`,
-      );
+    const pair = pairMembers.get(caseManifest.pair.pairId) ?? { splits: new Set(), roles: [] };
+    pair.splits.add(assignment.split);
+    pair.roles.push(caseManifest.pair.role);
+    pairMembers.set(caseManifest.pair.pairId, pair);
+  }
+  for (const [pairId, pair] of pairMembers) {
+    if (pair.splits.size !== 1) throw new TypeError(`${pairId} cannot belong to both splits`);
+    if (pair.roles.length !== 2) {
+      throw new TypeError(`${pairId} must contain exactly two cases`);
     }
-    splitByPair.set(caseManifest.pairId, assignment.split);
+    if (
+      pair.roles.filter((role) => role === "DEFECT").length !== 1 ||
+      pair.roles.filter((role) => role === "CLEAN").length !== 1
+    ) {
+      throw new TypeError(`${pairId} must contain one DEFECT and one CLEAN case`);
+    }
   }
   return split;
 }
 
-const EngineIdentityV1Schema = z.strictObject({
+export const EvaluationEngineIdentityV1Schema = z.strictObject({
   commit: GitObjectIdV1Schema,
   sourceTreeDigest: DigestV1Schema,
   dirtyStateDigest: DigestV1Schema.nullable(),
@@ -330,7 +347,7 @@ export const EvaluationExperimentManifestV1Schema = z
     splitManifestDigest: DigestV1Schema,
     scorerVersion: NonEmptyTextSchema,
     scorerPolicyDigest: DigestV1Schema,
-    engine: EngineIdentityV1Schema,
+    engine: EvaluationEngineIdentityV1Schema,
     caseIds: z.array(EvaluationCaseIdV1Schema).min(1),
     variants: z
       .array(
@@ -392,11 +409,32 @@ export const EvaluationExperimentManifestV1Schema = z
     stopRules: [...manifest.stopRules].sort(compareUtf16),
   }));
 
-const EvaluationStageOutcomeV1Schema = z.strictObject({
-  stage: z.enum(["PRELIMINARY", "FINDING_VERIFICATION", "FINAL"]),
-  state: z.enum(["NOT_RUN", "SUCCEEDED", "FAILED"]),
-  artifactDigest: DigestV1Schema.nullable(),
-});
+const EvaluationStageNameV1Schema = z.enum(["PRELIMINARY", "FINDING_VERIFICATION", "FINAL"]);
+const STAGE_ORDER = ["PRELIMINARY", "FINDING_VERIFICATION", "FINAL"] as const;
+
+const EvaluationStageOutcomeV1Schema = z
+  .strictObject({
+    stage: z.enum(["PRELIMINARY", "FINDING_VERIFICATION", "FINAL"]),
+    state: z.enum(["SUCCEEDED", "FAILED"]),
+    artifactDigest: DigestV1Schema.nullable(),
+    elapsedMs: SafeNonnegativeIntegerSchema,
+  })
+  .superRefine((outcome, context) => {
+    if (outcome.state === "SUCCEEDED" && outcome.artifactDigest === null) {
+      context.addIssue({
+        code: "custom",
+        message: "succeeded stage requires artifact digest",
+        path: ["artifactDigest"],
+      });
+    }
+    if (outcome.state === "FAILED" && outcome.artifactDigest !== null) {
+      context.addIssue({
+        code: "custom",
+        message: "failed stage cannot have artifact digest",
+        path: ["artifactDigest"],
+      });
+    }
+  });
 
 const EvaluationTerminalOutcomeV1Schema = z.discriminatedUnion("kind", [
   z.strictObject({
@@ -428,6 +466,7 @@ export const EvaluationAttemptRecordV1Schema = z
     schemaVersion: z.literal(1),
     attemptId: EvaluationAttemptIdV1Schema,
     experimentId: EvaluationExperimentIdV1Schema,
+    experimentManifestDigest: DigestV1Schema,
     caseId: EvaluationCaseIdV1Schema,
     familyId: EvaluationFamilyIdV1Schema,
     split: z.enum(["DEVELOPMENT", "HOLDOUT"]),
@@ -440,13 +479,25 @@ export const EvaluationAttemptRecordV1Schema = z
     completedAt: z.iso.datetime(),
     elapsedMs: SafeNonnegativeIntegerSchema,
     stageOutcomes: z.array(EvaluationStageOutcomeV1Schema),
+    findingClaims: z.array(
+      z.strictObject({
+        findingReference: NonEmptyTextSchema,
+        claimDigest: DigestV1Schema,
+        emittedAtStage: EvaluationStageNameV1Schema,
+      }),
+    ),
     terminalOutcome: EvaluationTerminalOutcomeV1Schema,
     usage: z.strictObject({
       promptTokens: SafeNonnegativeIntegerSchema.nullable(),
       completionTokens: SafeNonnegativeIntegerSchema.nullable(),
       totalTokens: SafeNonnegativeIntegerSchema.nullable(),
       knownCostUsd: NonnegativeFiniteNumberSchema.nullable(),
-      unknownCostReservationUsd: NonnegativeFiniteNumberSchema,
+      providerAttempts: SafeNonnegativeIntegerSchema,
+      unknownCostAttempts: SafeNonnegativeIntegerSchema,
+      conservativeChargeUsd: NonnegativeFiniteNumberSchema,
+      admittedCeilingUsd: NonnegativeFiniteNumberSchema,
+      evidenceBytes: SafeNonnegativeIntegerSchema,
+      outputBytes: SafeNonnegativeIntegerSchema,
     }),
   })
   .superRefine((record, context) => {
@@ -456,12 +507,53 @@ export const EvaluationAttemptRecordV1Schema = z
       ["stageOutcomes"],
       "stage outcome",
     );
-    if (Date.parse(record.completedAt) < Date.parse(record.startedAt)) {
+    reportDuplicate(
+      record.findingClaims.map(({ findingReference }) => findingReference),
+      context,
+      ["findingClaims"],
+      "finding reference",
+    );
+    const measuredElapsedMs = Date.parse(record.completedAt) - Date.parse(record.startedAt);
+    if (measuredElapsedMs < 0) {
       context.addIssue({
         code: "custom",
         message: "completedAt must not precede startedAt",
         path: ["completedAt"],
       });
+    } else if (measuredElapsedMs !== record.elapsedMs) {
+      context.addIssue({
+        code: "custom",
+        message: "elapsedMs must equal timestamp difference",
+        path: ["elapsedMs"],
+      });
+    }
+    const stages = record.stageOutcomes.map(({ stage }) => stage);
+    if (stages.some((stage, index) => stage !== STAGE_ORDER[index])) {
+      context.addIssue({
+        code: "custom",
+        message: "stage outcomes must be an ordered execution prefix",
+        path: ["stageOutcomes"],
+      });
+    }
+    const failedIndex = record.stageOutcomes.findIndex(({ state }) => state === "FAILED");
+    if (failedIndex >= 0 && failedIndex !== record.stageOutcomes.length - 1) {
+      context.addIssue({
+        code: "custom",
+        message: "no stage may run after a failed stage",
+        path: ["stageOutcomes"],
+      });
+    }
+    const succeededStages = new Set(
+      record.stageOutcomes.filter(({ state }) => state === "SUCCEEDED").map(({ stage }) => stage),
+    );
+    for (const [index, claim] of record.findingClaims.entries()) {
+      if (!succeededStages.has(claim.emittedAtStage)) {
+        context.addIssue({
+          code: "custom",
+          message: "finding claim requires its stage to succeed",
+          path: ["findingClaims", index, "emittedAtStage"],
+        });
+      }
     }
     if (
       (record.terminalOutcome.kind === "DELIVERED" ||
@@ -473,6 +565,25 @@ export const EvaluationAttemptRecordV1Schema = z
         message: `${record.terminalOutcome.kind} requires a runtime run reference`,
         path: ["runtimeRunReference"],
       });
+    }
+    if (
+      record.terminalOutcome.kind === "DELIVERED" ||
+      record.terminalOutcome.kind === "SEMANTIC_ABSTENTION"
+    ) {
+      const finalStage = record.stageOutcomes[2];
+      if (record.stageOutcomes.length !== 3 || finalStage?.state !== "SUCCEEDED") {
+        context.addIssue({
+          code: "custom",
+          message: `${record.terminalOutcome.kind} requires every stage to succeed`,
+          path: ["stageOutcomes"],
+        });
+      } else if (finalStage.artifactDigest?.value !== record.terminalOutcome.reportDigest.value) {
+        context.addIssue({
+          code: "custom",
+          message: "final stage artifact digest must equal terminal report digest",
+          path: ["terminalOutcome", "reportDigest"],
+        });
+      }
     }
     if (record.terminalOutcome.kind === "PROVIDER_FAILURE") {
       const failureStage = record.terminalOutcome.stage;
@@ -487,11 +598,112 @@ export const EvaluationAttemptRecordV1Schema = z
         });
       }
     }
+    if (record.terminalOutcome.kind === "RUNNER_FAILURE") {
+      const failed = record.stageOutcomes.find(({ state }) => state === "FAILED");
+      if (record.terminalOutcome.stage === "PREPARATION" && record.stageOutcomes.length > 0) {
+        context.addIssue({
+          code: "custom",
+          message: "preparation failure cannot have stage outcomes",
+          path: ["stageOutcomes"],
+        });
+      } else if (
+        EvaluationStageNameV1Schema.safeParse(record.terminalOutcome.stage).success &&
+        failed?.stage !== record.terminalOutcome.stage
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "runner stage failure requires matching failed stage outcome",
+          path: ["stageOutcomes"],
+        });
+      } else if (
+        record.terminalOutcome.stage === "REPORT" &&
+        (record.stageOutcomes.length !== 3 ||
+          record.stageOutcomes.some(({ state }) => state !== "SUCCEEDED"))
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "report failure requires every reviewer stage to succeed",
+          path: ["stageOutcomes"],
+        });
+      }
+    }
+    if (
+      record.terminalOutcome.kind === "CANCELLED" &&
+      record.stageOutcomes.some(({ state }) => state === "FAILED")
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "cancelled attempt cannot disguise a stage failure",
+        path: ["terminalOutcome"],
+      });
+    }
+    if (record.terminalOutcome.kind === "CANCELLED" && record.stageOutcomes.length === 3) {
+      context.addIssue({
+        code: "custom",
+        message: "cancelled attempt cannot follow a completed final stage",
+        path: ["terminalOutcome"],
+      });
+    }
+    const tokenValues = [
+      record.usage.promptTokens,
+      record.usage.completionTokens,
+      record.usage.totalTokens,
+    ];
+    const knownTokenCount = tokenValues.filter((value) => value !== null).length;
+    if (knownTokenCount !== 0 && knownTokenCount !== tokenValues.length) {
+      context.addIssue({
+        code: "custom",
+        message: "token counts must be wholly known or wholly unavailable",
+        path: ["usage"],
+      });
+    } else if (
+      knownTokenCount === 3 &&
+      record.usage.totalTokens !==
+        (record.usage.promptTokens as number) + (record.usage.completionTokens as number)
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "total tokens must equal prompt plus completion tokens",
+        path: ["usage", "totalTokens"],
+      });
+    }
+    if (record.usage.unknownCostAttempts > record.usage.providerAttempts) {
+      context.addIssue({
+        code: "custom",
+        message: "unknown-cost attempts cannot exceed provider attempts",
+        path: ["usage", "unknownCostAttempts"],
+      });
+    }
+    const minimumProviderAttempts =
+      record.stageOutcomes.filter(({ state }) => state === "SUCCEEDED").length +
+      (record.terminalOutcome.kind === "PROVIDER_FAILURE" ? 1 : 0);
+    if (record.usage.providerAttempts < minimumProviderAttempts) {
+      context.addIssue({
+        code: "custom",
+        message: "provider attempt count cannot be lower than executed provider stages",
+        path: ["usage", "providerAttempts"],
+      });
+    }
+    if (record.usage.conservativeChargeUsd > record.usage.admittedCeilingUsd) {
+      context.addIssue({
+        code: "custom",
+        message: "conservative charge cannot exceed admitted ceiling",
+        path: ["usage", "conservativeChargeUsd"],
+      });
+    }
+    const stageElapsedMs = record.stageOutcomes.reduce((sum, { elapsedMs }) => sum + elapsedMs, 0);
+    if (stageElapsedMs > record.elapsedMs) {
+      context.addIssue({
+        code: "custom",
+        message: "stage elapsed time cannot exceed attempt elapsed time",
+        path: ["stageOutcomes"],
+      });
+    }
   })
   .transform((record) => ({
     ...record,
-    stageOutcomes: [...record.stageOutcomes].sort((left, right) =>
-      compareUtf16(left.stage, right.stage),
+    findingClaims: [...record.findingClaims].sort((left, right) =>
+      compareUtf16(left.findingReference, right.findingReference),
     ),
   }));
 
@@ -508,7 +720,10 @@ export const EvaluationAdjudicationRecordV1Schema = z
   .strictObject({
     schemaVersion: z.literal(1),
     adjudicationId: EvaluationAdjudicationIdV1Schema,
+    experimentId: EvaluationExperimentIdV1Schema,
+    experimentManifestDigest: DigestV1Schema,
     attemptId: EvaluationAttemptIdV1Schema,
+    caseId: EvaluationCaseIdV1Schema,
     findingReference: NonEmptyTextSchema,
     claimDigest: DigestV1Schema,
     label: AdjudicationLabelV1Schema,
@@ -520,12 +735,16 @@ export const EvaluationAdjudicationRecordV1Schema = z
       type: z.enum(["HUMAN", "MODEL_ASSISTED"]),
       identity: NonEmptyTextSchema,
     }),
+    promotionAuthority: z
+      .strictObject({ type: z.literal("HUMAN"), identity: NonEmptyTextSchema })
+      .nullable(),
     rationale: NonEmptyTextSchema,
     unresolvedDisagreement: NonEmptyTextSchema.nullable(),
     adjudicatedAt: z.iso.datetime(),
   })
   .superRefine((record, context) => {
     const requiresRoot = record.label === "MATCHED_DEFECT" || record.label === "DUPLICATE";
+    const supported = requiresRoot || record.label === "NOVEL_VALID_DEFECT";
     if (requiresRoot && record.matchedRootId === null) {
       context.addIssue({
         code: "custom",
@@ -554,6 +773,26 @@ export const EvaluationAdjudicationRecordV1Schema = z
         path: ["unresolvedDisagreement"],
       });
     }
+    if (supported && record.causalEvidence.length === 0) {
+      context.addIssue({
+        code: "custom",
+        message: `${record.label} requires causal evidence`,
+        path: ["causalEvidence"],
+      });
+    }
+    if (supported && record.promotionAuthority === null) {
+      context.addIssue({
+        code: "custom",
+        message: `${record.label} requires explicit human promotion authority`,
+        path: ["promotionAuthority"],
+      });
+    }
+    reportDuplicate(
+      record.causalEvidence.map(({ reference }) => reference),
+      context,
+      ["causalEvidence"],
+      "causal evidence reference",
+    );
   })
   .transform((record) => ({
     ...record,
@@ -582,6 +821,15 @@ const EvaluationMetricV1Schema = z
     numerator: SafeNonnegativeIntegerSchema,
     denominator: SafeNonnegativeIntegerSchema,
     value: z.number().finite().min(0).max(1).nullable(),
+    interval: z
+      .strictObject({
+        method: NonEmptyTextSchema,
+        confidenceLevel: z.number().finite().positive().max(1),
+        lower: z.number().finite().min(0).max(1),
+        upper: z.number().finite().min(0).max(1),
+        independentUnit: z.enum(["CASE", "FAMILY"]),
+      })
+      .nullable(),
   })
   .superRefine((metric, context) => {
     if (metric.numerator > metric.denominator) {
@@ -598,6 +846,13 @@ const EvaluationMetricV1Schema = z
         path: ["value"],
       });
     }
+    if (metric.denominator === 0 && metric.interval !== null) {
+      context.addIssue({
+        code: "custom",
+        message: "zero denominator interval must remain unavailable",
+        path: ["interval"],
+      });
+    }
     if (metric.denominator > 0) {
       const expected = metric.numerator / metric.denominator;
       if (metric.value === null || Math.abs(metric.value - expected) > Number.EPSILON * 4) {
@@ -607,23 +862,83 @@ const EvaluationMetricV1Schema = z
           path: ["value"],
         });
       }
+      if (metric.interval === null) {
+        context.addIssue({
+          code: "custom",
+          message: "available metric requires uncertainty interval",
+          path: ["interval"],
+        });
+      } else if (
+        metric.interval.lower > metric.interval.upper ||
+        (metric.value as number) < metric.interval.lower ||
+        (metric.value as number) > metric.interval.upper
+      ) {
+        context.addIssue({
+          code: "custom",
+          message: "metric interval must contain value",
+          path: ["interval"],
+        });
+      }
     }
   });
 
-const ScoreBreakdownV1Schema = z.strictObject({
-  identity: NonEmptyTextSchema,
-  metrics: z.array(EvaluationMetricV1Schema),
-});
+const ScoreMetricsV1Schema = z
+  .array(EvaluationMetricV1Schema)
+  .min(1)
+  .superRefine((metrics, context) => {
+    reportDuplicate(
+      metrics.map(({ metric }) => metric),
+      context,
+      [],
+      "metric",
+    );
+  });
+
+const DistributionV1Schema = z
+  .strictObject({
+    count: SafeNonnegativeIntegerSchema,
+    minimum: NonnegativeFiniteNumberSchema.nullable(),
+    median: NonnegativeFiniteNumberSchema.nullable(),
+    p95: NonnegativeFiniteNumberSchema.nullable(),
+    maximum: NonnegativeFiniteNumberSchema.nullable(),
+  })
+  .superRefine((distribution, context) => {
+    const values = [
+      distribution.minimum,
+      distribution.median,
+      distribution.p95,
+      distribution.maximum,
+    ];
+    if (distribution.count === 0 && values.some((value) => value !== null)) {
+      context.addIssue({
+        code: "custom",
+        message: "empty distribution values must remain unavailable",
+      });
+    }
+    if (distribution.count > 0 && values.some((value) => value === null)) {
+      context.addIssue({
+        code: "custom",
+        message: "nonempty distribution requires every summary value",
+      });
+    }
+    if (distribution.count > 0) {
+      const [minimum, median, p95, maximum] = values as [number, number, number, number];
+      if (minimum > median || median > p95 || p95 > maximum) {
+        context.addIssue({ code: "custom", message: "distribution summaries must be ordered" });
+      }
+    }
+  });
 
 export const EvaluationScoreReportV1Schema = z
   .strictObject({
     schemaVersion: z.literal(1),
     scoreId: EvaluationScoreIdV1Schema,
     experimentId: EvaluationExperimentIdV1Schema,
+    experimentManifestDigest: DigestV1Schema,
     scorerVersion: NonEmptyTextSchema,
     scorerPolicyDigest: DigestV1Schema,
     generatedAt: z.iso.datetime(),
-    metrics: z.array(EvaluationMetricV1Schema),
+    metrics: ScoreMetricsV1Schema,
     adjudicationCoverage: z.strictObject({
       totalClaims: SafeNonnegativeIntegerSchema,
       resolvedClaims: SafeNonnegativeIntegerSchema,
@@ -635,18 +950,98 @@ export const EvaluationScoreReportV1Schema = z
       deliveredReports: SafeNonnegativeIntegerSchema,
       missingReports: SafeNonnegativeIntegerSchema,
     }),
-    caseBreakdowns: z.array(ScoreBreakdownV1Schema),
-    familyBreakdowns: z.array(ScoreBreakdownV1Schema),
+    caseBreakdowns: z
+      .array(
+        z.strictObject({
+          caseId: EvaluationCaseIdV1Schema,
+          familyId: EvaluationFamilyIdV1Schema,
+          split: z.enum(["DEVELOPMENT", "HOLDOUT"]),
+          metrics: ScoreMetricsV1Schema,
+        }),
+      )
+      .min(1),
+    familyBreakdowns: z
+      .array(
+        z.strictObject({
+          familyId: EvaluationFamilyIdV1Schema,
+          split: z.enum(["DEVELOPMENT", "HOLDOUT"]),
+          metrics: ScoreMetricsV1Schema,
+        }),
+      )
+      .min(1),
     pairedDeltas: z.array(
       z.strictObject({
         pairId: EvaluationPairIdV1Schema,
+        baselineVariantId: EvaluationVariantIdV1Schema,
+        candidateVariantId: EvaluationVariantIdV1Schema,
         metric: EvaluationMetricNameV1Schema,
         baselineValue: z.number().finite().min(0).max(1).nullable(),
         candidateValue: z.number().finite().min(0).max(1).nullable(),
         delta: z.number().finite().min(-1).max(1).nullable(),
       }),
     ),
-    rawArtifactDigests: z.array(DigestV1Schema),
+    latency: z.strictObject({
+      perReviewMs: DistributionV1Schema,
+      perStageMs: z.strictObject({
+        preliminary: DistributionV1Schema,
+        findingVerification: DistributionV1Schema,
+        final: DistributionV1Schema,
+      }),
+    }),
+    resources: z.strictObject({
+      providerAttempts: SafeNonnegativeIntegerSchema,
+      evidenceBytes: SafeNonnegativeIntegerSchema,
+      outputBytes: SafeNonnegativeIntegerSchema,
+      execution: z.array(
+        z.strictObject({
+          name: NonEmptyTextSchema,
+          unit: NonEmptyTextSchema,
+          value: NonnegativeFiniteNumberSchema,
+        }),
+      ),
+    }),
+    cost: z.strictObject({
+      reportedCostUsd: NonnegativeFiniteNumberSchema,
+      unknownCostAttempts: SafeNonnegativeIntegerSchema,
+      conservativeChargeUsd: NonnegativeFiniteNumberSchema,
+      admittedCeilingUsd: NonnegativeFiniteNumberSchema,
+    }),
+    rawArtifactReferences: z
+      .array(
+        z.discriminatedUnion("type", [
+          z.strictObject({
+            type: z.literal("CASE"),
+            id: EvaluationCaseIdV1Schema,
+            reference: NonEmptyTextSchema,
+            digest: DigestV1Schema,
+          }),
+          z.strictObject({
+            type: z.literal("SPLIT"),
+            id: NonEmptyTextSchema,
+            reference: NonEmptyTextSchema,
+            digest: DigestV1Schema,
+          }),
+          z.strictObject({
+            type: z.literal("EXPERIMENT"),
+            id: EvaluationExperimentIdV1Schema,
+            reference: NonEmptyTextSchema,
+            digest: DigestV1Schema,
+          }),
+          z.strictObject({
+            type: z.literal("ATTEMPT"),
+            id: EvaluationAttemptIdV1Schema,
+            reference: NonEmptyTextSchema,
+            digest: DigestV1Schema,
+          }),
+          z.strictObject({
+            type: z.literal("ADJUDICATION"),
+            id: EvaluationAdjudicationIdV1Schema,
+            reference: NonEmptyTextSchema,
+            digest: DigestV1Schema,
+          }),
+        ]),
+      )
+      .min(1),
   })
   .superRefine((report, context) => {
     reportDuplicate(
@@ -655,6 +1050,17 @@ export const EvaluationScoreReportV1Schema = z
       ["metrics"],
       "metric",
     );
+    const requiredMetrics = EvaluationMetricNameV1Schema.options;
+    if (
+      report.metrics.length !== requiredMetrics.length ||
+      requiredMetrics.some((metric) => !report.metrics.some((entry) => entry.metric === metric))
+    ) {
+      context.addIssue({
+        code: "custom",
+        message: "score report requires every protocol metric",
+        path: ["metrics"],
+      });
+    }
     const coverage = report.adjudicationCoverage;
     if (coverage.resolvedClaims + coverage.unresolvedClaims !== coverage.totalClaims) {
       context.addIssue({
@@ -676,6 +1082,24 @@ export const EvaluationScoreReportV1Schema = z
       ["adjudicationCoverage", "unresolvedAdjudicationIds"],
       "unresolved adjudication ID",
     );
+    reportDuplicate(
+      report.caseBreakdowns.map(({ caseId }) => caseId),
+      context,
+      ["caseBreakdowns"],
+      "case breakdown",
+    );
+    reportDuplicate(
+      report.familyBreakdowns.map(({ familyId }) => familyId),
+      context,
+      ["familyBreakdowns"],
+      "family breakdown",
+    );
+    reportDuplicate(
+      report.rawArtifactReferences.map(({ type, id }) => `${type}:${id}`),
+      context,
+      ["rawArtifactReferences"],
+      "raw artifact reference",
+    );
     if (
       report.missingness.deliveredReports + report.missingness.missingReports !==
       report.missingness.startedAttempts
@@ -687,6 +1111,13 @@ export const EvaluationScoreReportV1Schema = z
       });
     }
     for (const [index, delta] of report.pairedDeltas.entries()) {
+      if (delta.baselineVariantId === delta.candidateVariantId) {
+        context.addIssue({
+          code: "custom",
+          message: "paired delta variants must differ",
+          path: ["pairedDeltas", index],
+        });
+      }
       const unavailable = delta.baselineValue === null || delta.candidateValue === null;
       if (unavailable && delta.delta !== null) {
         context.addIssue({
@@ -705,6 +1136,20 @@ export const EvaluationScoreReportV1Schema = z
         }
       }
     }
+    if (report.cost.unknownCostAttempts > report.resources.providerAttempts) {
+      context.addIssue({
+        code: "custom",
+        message: "unknown-cost attempts cannot exceed provider attempts",
+        path: ["cost", "unknownCostAttempts"],
+      });
+    }
+    if (report.cost.conservativeChargeUsd > report.cost.admittedCeilingUsd) {
+      context.addIssue({
+        code: "custom",
+        message: "conservative charge cannot exceed admitted ceiling",
+        path: ["cost", "conservativeChargeUsd"],
+      });
+    }
   })
   .transform((report) => ({
     ...report,
@@ -716,16 +1161,16 @@ export const EvaluationScoreReportV1Schema = z
       ),
     },
     caseBreakdowns: [...report.caseBreakdowns].sort((left, right) =>
-      compareUtf16(left.identity, right.identity),
+      compareUtf16(left.caseId, right.caseId),
     ),
     familyBreakdowns: [...report.familyBreakdowns].sort((left, right) =>
-      compareUtf16(left.identity, right.identity),
+      compareUtf16(left.familyId, right.familyId),
     ),
     pairedDeltas: [...report.pairedDeltas].sort((left, right) =>
-      compareByFields(left, right, ["pairId", "metric"]),
+      compareByFields(left, right, ["pairId", "baselineVariantId", "candidateVariantId", "metric"]),
     ),
-    rawArtifactDigests: [...report.rawArtifactDigests].sort((left, right) =>
-      compareUtf16(left.value, right.value),
+    rawArtifactReferences: [...report.rawArtifactReferences].sort((left, right) =>
+      compareByFields(left, right, ["type", "id", "reference"]),
     ),
   }));
 
