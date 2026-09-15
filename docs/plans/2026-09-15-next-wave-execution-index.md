@@ -34,6 +34,10 @@ This wave is complete when:
 
 - First 20-case paid sample completed: 19 valid reports and 18 expected verdicts.
   It is a canary result, not a scored or repeated quality baseline.
+- A paid four-case smoke checkpoint at `447a954` completed one case before
+  transient DeepInfra 429 failures. The separately authorized failed-case retry
+  completed 3/3, leaving all four observed verdicts matched. See the
+  [paid smoke checkpoint](../validation/2026-09-15-paid-smoke-checkpoint.md).
 - [#171](https://github.com/dills122/independent-reviewer/issues/171) is a false
   P1 blocker on an out-of-domain, factually incorrect scenario.
 - [#168](https://github.com/dills122/independent-reviewer/issues/168) tracks
