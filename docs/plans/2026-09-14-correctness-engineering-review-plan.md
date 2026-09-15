@@ -160,6 +160,15 @@ Compare current windows, declarations, and targeted access on identical cases.
 Track quality, bytes, calls, and missing-evidence rates. Stop expansion that
 adds distraction without improving relevant evidence access.
 
+The [reviewd source study](../research/2026-09-15-reviewd-implementation-study.md)
+shows a concrete exploration workflow: diff, changed file, then related caller.
+Qualify that sequence using frozen evidence, with paired cases where the relevant
+caller is unchanged, the branch advances after capture, and HEAD guidance conflicts
+with BASE. Record requested, returned, and actually transmitted evidence separately;
+a prompt asking the model to explore is not a coverage receipt. Commit messages and
+reverted approaches must not enter blind evidence as author justification; any
+future history input requires labeled post-blind provenance and a contract decision.
+
 ## Stage C2 — reverse references and semantic adapters
 
 Spike a deterministic reverse-reference baseline before committing to an indexer.
@@ -195,6 +204,14 @@ Results distinguish assertion failure, setup failure, timeout, cancellation,
 unsupported environment, and not run. Ordinary exit zero does not prove an
 arbitrary semantic claim. A check's assertion and valid input domain need a
 trustworthy oracle; generated assertions need independent review.
+
+Reviewd's timeout and test-provenance paths add concrete qualification cases:
+start deadlines before any blocking setup/stdin/stdout operation; bound both output
+streams; exercise a silent child, stalled pipe, output flood, ignored termination,
+and surviving descendants. A timeout option applied after reading stdout does not
+bound execution. Model-reported `tests_passed` cannot become runner evidence. Do not
+auto-accept CLI trust or expose host credentials to check processes. Reuse #116 for
+process-wrapper choices and #169 for the separate current Git-config preflight gap.
 
 For regressions, execute identical checks/environment against BASE and HEAD
 when meaningful. A new feature may lack comparable BASE execution. A flaky
