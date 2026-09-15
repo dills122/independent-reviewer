@@ -69,8 +69,31 @@ function assertDistribution(
 
 type MetricName = (typeof EvaluationMetricNameV1Schema.options)[number];
 type MetricCount = { metric: MetricName; numerator: number; denominator: number };
+type ClaimKind = "DEFECT" | "UNCERTAINTY" | "RECOMMENDATION";
+type AdjudicationLabel = ReturnType<typeof EvaluationAdjudicationRecordV1Schema.parse>["label"];
 
-function metricCountsForAttempt(
+const ADJUDICATION_LABELS_BY_CLAIM_KIND: Readonly<
+  Record<ClaimKind, ReadonlySet<AdjudicationLabel>>
+> = {
+  DEFECT: new Set([
+    "MATCHED_DEFECT",
+    "NOVEL_VALID_DEFECT",
+    "INVALID_DEFECT",
+    "UNRESOLVED",
+    "DUPLICATE",
+  ]),
+  UNCERTAINTY: new Set(["SUPPORTED_UNCERTAINTY", "UNRESOLVED"]),
+  RECOMMENDATION: new Set(["USEFUL_RECOMMENDATION", "INVALID_RECOMMENDATION", "UNRESOLVED"]),
+};
+
+export function isEvaluationAdjudicationLabelAllowedV1(
+  claimKind: ClaimKind,
+  label: AdjudicationLabel,
+): boolean {
+  return ADJUDICATION_LABELS_BY_CLAIM_KIND[claimKind].has(label);
+}
+
+export function deriveEvaluationAttemptMetricCountsV1(
   attempt: ReturnType<typeof EvaluationAttemptRecordV1Schema.parse>,
   caseManifest: ReturnType<typeof EvaluationCaseManifestV1Schema.parse>,
   adjudications: readonly ReturnType<typeof EvaluationAdjudicationRecordV1Schema.parse>[],
@@ -91,7 +114,7 @@ function metricCountsForAttempt(
     caseManifest.oracleInventory.expectedRoots.map(({ rootId }) => rootId),
   );
   const matchedFinalRoots = new Set(
-    finalAdjudications.flatMap(({ label, matchedRootId }) =>
+    finalDefects.flatMap(({ label, matchedRootId }) =>
       label === "MATCHED_DEFECT" && matchedRootId !== null ? [matchedRootId] : [],
     ),
   );
@@ -107,22 +130,42 @@ function metricCountsForAttempt(
     caseManifest.oracleInventory.expectedUncertainties.map(({ uncertaintyId }) => uncertaintyId),
   );
   const matchedUncertainties = new Set(
-    finalAdjudications.flatMap(({ label, matchedUncertaintyId }) =>
-      label === "SUPPORTED_UNCERTAINTY" && matchedUncertaintyId !== null
-        ? [matchedUncertaintyId]
-        : [],
-    ),
+    finalAdjudications
+      .filter(
+        ({ findingReference }) =>
+          claimByReference.get(findingReference)?.claimKind === "UNCERTAINTY",
+      )
+      .flatMap(({ label, matchedUncertaintyId }) =>
+        label === "SUPPORTED_UNCERTAINTY" && matchedUncertaintyId !== null
+          ? [matchedUncertaintyId]
+          : [],
+      ),
   );
+  const preliminaryDefects = adjudications.filter(({ findingReference }) => {
+    const claim = claimByReference.get(findingReference);
+    return claim?.emittedAtStage === "PRELIMINARY" && claim.claimKind === "DEFECT";
+  });
   const preliminaryRoots = new Set(
-    adjudications.flatMap(({ findingReference, label, matchedRootId }) =>
-      claimByReference.get(findingReference)?.emittedAtStage === "PRELIMINARY" &&
-      label === "MATCHED_DEFECT" &&
-      matchedRootId !== null
-        ? [matchedRootId]
-        : [],
+    preliminaryDefects.flatMap(({ label, matchedRootId }) =>
+      label === "MATCHED_DEFECT" && matchedRootId !== null ? [matchedRootId] : [],
     ),
   );
   const retainedRoots = [...preliminaryRoots].filter((rootId) => matchedFinalRoots.has(rootId));
+  const preliminaryFalseRoots = new Set(
+    preliminaryDefects.flatMap(({ findingReference, label }) => {
+      const digest = claimByReference.get(findingReference)?.claimDigest.value;
+      return label === "INVALID_DEFECT" && digest !== undefined ? [digest] : [];
+    }),
+  );
+  const finalDefectDigests = new Set(
+    finalDefects.flatMap(({ findingReference }) => {
+      const digest = claimByReference.get(findingReference)?.claimDigest.value;
+      return digest === undefined ? [] : [digest];
+    }),
+  );
+  const removedFalseRoots = [...preliminaryFalseRoots].filter(
+    (digest) => !finalDefectDigests.has(digest),
+  );
   const expectedRootCount = expectedRoots.size;
   return [
     {
@@ -173,8 +216,8 @@ function metricCountsForAttempt(
     { metric: "DELIVERY_RATE", numerator: completed ? 1 : 0, denominator: 1 },
     {
       metric: "STAGE_RETENTION_RATE",
-      numerator: retainedRoots.length,
-      denominator: preliminaryRoots.size,
+      numerator: retainedRoots.length + removedFalseRoots.length,
+      denominator: preliminaryRoots.size + preliminaryFalseRoots.size,
     },
   ];
 }
@@ -325,6 +368,11 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
       ({ findingReference }) => findingReference === adjudication.findingReference,
     );
     if (!claim) throw new TypeError("adjudication contains unknown finding claim");
+    if (!isEvaluationAdjudicationLabelAllowedV1(claim.claimKind, adjudication.label)) {
+      throw new TypeError(
+        `claim kind ${claim.claimKind} cannot use adjudication label ${adjudication.label}`,
+      );
+    }
     assertEqual(
       adjudication.claimDigest.value,
       claim.claimDigest.value,
@@ -404,23 +452,33 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     const attemptAdjudications = adjudications.filter(
       ({ attemptId }) => attemptId === attempt.attemptId,
     );
-    const creditedRoots = new Set<string>();
+    const claimByReference = new Map(
+      attempt.findingClaims.map((claim) => [claim.findingReference, claim]),
+    );
+    const creditedFinalRoots = new Set<string>();
     for (const adjudication of attemptAdjudications) {
-      if (adjudication.label === "MATCHED_DEFECT" && adjudication.matchedRootId !== null) {
-        if (creditedRoots.has(adjudication.matchedRootId)) {
-          throw new TypeError("known root cannot receive more than one recall credit per attempt");
+      if (
+        claimByReference.get(adjudication.findingReference)?.emittedAtStage === "FINAL" &&
+        adjudication.label === "MATCHED_DEFECT" &&
+        adjudication.matchedRootId !== null
+      ) {
+        if (creditedFinalRoots.has(adjudication.matchedRootId)) {
+          throw new TypeError(
+            "known root cannot receive more than one final recall credit per attempt",
+          );
         }
-        creditedRoots.add(adjudication.matchedRootId);
+        creditedFinalRoots.add(adjudication.matchedRootId);
       }
     }
     for (const adjudication of attemptAdjudications) {
       if (
+        claimByReference.get(adjudication.findingReference)?.emittedAtStage === "FINAL" &&
         adjudication.label === "DUPLICATE" &&
         adjudication.matchedRootId !== null &&
-        !creditedRoots.has(adjudication.matchedRootId)
+        !creditedFinalRoots.has(adjudication.matchedRootId)
       ) {
         throw new TypeError(
-          "duplicate adjudication must reference a credited root in same attempt",
+          "final duplicate adjudication must reference a credited final root in same attempt",
         );
       }
     }
@@ -513,11 +571,16 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     );
     const caseManifest = caseById.get(attempt.caseId);
     if (!caseManifest) throw new TypeError("attempt evidence case is unavailable");
-    const contribution = metricCountsForAttempt(attempt, caseManifest, attemptAdjudications);
+    const contribution = deriveEvaluationAttemptMetricCountsV1(
+      attempt,
+      caseManifest,
+      attemptAdjudications,
+    );
     contributionByAttempt.set(attempt.attemptId, contribution);
     assertMetricCounts(evidence.metrics, contribution, `attempt ${attempt.attemptId}`);
     const expectedResources = {
       providerAttempts: attempt.usage.providerAttempts,
+      knownCostAttempts: attempt.usage.knownCostAttempts,
       evidenceBytes: attempt.usage.evidenceBytes,
       outputBytes: attempt.usage.outputBytes,
       reportedCostUsd: attempt.usage.knownCostUsd ?? 0,
@@ -555,6 +618,11 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     score.cost.reportedCostUsd,
     attempts.reduce((sum, attempt) => sum + (attempt.usage.knownCostUsd ?? 0), 0),
     "score reported cost does not match attempts",
+  );
+  assertEqual(
+    score.cost.knownCostAttempts,
+    attempts.reduce((sum, attempt) => sum + attempt.usage.knownCostAttempts, 0),
+    "score known-cost total does not match attempts",
   );
   assertEqual(
     score.cost.unknownCostAttempts,

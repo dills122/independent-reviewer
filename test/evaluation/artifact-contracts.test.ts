@@ -184,7 +184,9 @@ describe("evaluation artifact contracts", () => {
           providerCall: true,
         },
       ],
-      findingClaims: [],
+      findingClaims: base.findingClaims.filter(
+        ({ emittedAtStage }) => emittedAtStage === "PRELIMINARY",
+      ),
       terminalOutcome: {
         kind: "PROVIDER_FAILURE",
         stage: "FINDING_VERIFICATION",
@@ -227,7 +229,57 @@ describe("evaluation artifact contracts", () => {
     attempt.findingClaims = [];
     first(attempt.stageOutcomes.slice(1, 2)).providerCall = false;
     attempt.usage.providerAttempts = 2;
+    attempt.usage.knownCostAttempts = 2;
     assert.doesNotThrow(() => EvaluationAttemptRecordV1Schema.parse(attempt));
+
+    const preliminaryLocal = structuredClone(attempt);
+    first(preliminaryLocal.stageOutcomes).providerCall = false;
+    assert.throws(
+      () => EvaluationAttemptRecordV1Schema.parse(preliminaryLocal),
+      /preliminary.*provider-backed/i,
+    );
+
+    const finalLocal = structuredClone(attempt);
+    first(finalLocal.stageOutcomes.slice(2)).providerCall = false;
+    assert.throws(
+      () => EvaluationAttemptRecordV1Schema.parse(finalLocal),
+      /final.*provider-backed/i,
+    );
+
+    const adverseLocal = structuredClone(attempt);
+    adverseLocal.findingClaims = [
+      {
+        findingReference: "finding_preliminary",
+        claimDigest: sha("d"),
+        emittedAtStage: "PRELIMINARY",
+        claimKind: "DEFECT",
+      },
+    ];
+    assert.throws(
+      () => EvaluationAttemptRecordV1Schema.parse(adverseLocal),
+      /verification.*provider-backed.*adverse/i,
+    );
+  });
+
+  it("reconciles known and unknown provider-attempt costs exactly", () => {
+    const partiallyKnown = structuredClone(first(makeEvaluationGraph().attempts));
+    partiallyKnown.usage.knownCostAttempts -= 1;
+    partiallyKnown.usage.unknownCostAttempts += 1;
+    assert.doesNotThrow(() => EvaluationAttemptRecordV1Schema.parse(partiallyKnown));
+
+    const attempt = structuredClone(first(makeEvaluationGraph().attempts));
+    attempt.usage.knownCostAttempts -= 1;
+    assert.throws(
+      () => EvaluationAttemptRecordV1Schema.parse(attempt),
+      /known.*unknown.*provider attempts/i,
+    );
+
+    const missingKnownCost = structuredClone(first(makeEvaluationGraph().attempts));
+    Object.assign(missingKnownCost.usage, { knownCostUsd: null });
+    assert.throws(
+      () => EvaluationAttemptRecordV1Schema.parse(missingKnownCost),
+      /known-cost attempts require reported cost/i,
+    );
   });
 
   it("requires causal evidence and human promotion authority for supported labels", () => {
@@ -258,6 +310,17 @@ describe("evaluation artifact contracts", () => {
     assert.throws(
       () => EvaluationScoreReportV1Schema.parse({ ...score, caseBreakdowns: [] }),
       /too_small|at least one/i,
+    );
+    assert.throws(
+      () =>
+        EvaluationScoreReportV1Schema.parse({
+          ...score,
+          resources: {
+            ...score.resources,
+            execution: [{ name: "cpu", unit: "ms", value: 1 }],
+          },
+        }),
+      /execution resources.*unavailable/i,
     );
     assert.throws(
       () =>

@@ -63,12 +63,44 @@ function contains(haystacks: readonly string[], needle: string): boolean {
 
 function encodedForms(value: string): string[] {
   const bytes = Buffer.from(value, "utf8");
-  return [value, bytes.toString("base64"), bytes.toString("hex"), canonicalizeJson(value)];
+  const hex = bytes.toString("hex");
+  return [value, bytes.toString("base64"), hex, hex.toUpperCase(), canonicalizeJson(value)];
+}
+
+function decodeBase64Fragment(value: string): Buffer | null {
+  if (
+    value.length === 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)
+  ) {
+    return null;
+  }
+  return Buffer.from(value, "base64");
+}
+
+function containsSeparatelyEncodedFragments(
+  orderedValues: readonly string[],
+  target: Uint8Array,
+): boolean {
+  if (target.byteLength === 0) return false;
+  let decodedRun: Buffer[] = [];
+  const targetBytes = Buffer.from(target);
+  for (const value of orderedValues) {
+    const decoded = decodeBase64Fragment(value);
+    if (decoded === null) {
+      decodedRun = [];
+      continue;
+    }
+    decodedRun.push(decoded);
+    if (Buffer.concat(decodedRun).includes(targetBytes)) return true;
+  }
+  return false;
 }
 
 export function assertNoEvaluationOracleLeakV1(input: EvaluationOracleLeakInputV1): void {
   const artifactContents: string[] = [];
+  const artifactContentBytes: Buffer[] = [];
   const artifactIdentifiers: string[] = [];
+  const artifactIdentifierBytes: Buffer[] = [];
   const artifactDigests = new Set<string>();
   for (const artifact of input.oracle.artifacts) {
     if (artifact.reference.trim().length === 0)
@@ -82,6 +114,11 @@ export function assertNoEvaluationOracleLeakV1(input: EvaluationOracleLeakInputV
     }
     artifactDigests.add(declared.value);
     artifactIdentifiers.push(...encodedForms(artifact.reference), ...encodedForms(declared.value));
+    artifactIdentifierBytes.push(
+      Buffer.from(artifact.reference, "utf8"),
+      Buffer.from(declared.value, "utf8"),
+    );
+    if (artifact.bytes.byteLength > 0) artifactContentBytes.push(Buffer.from(artifact.bytes));
     const decoded = Buffer.from(artifact.bytes).toString("utf8");
     if (decoded.length > 0) artifactContents.push(...encodedForms(decoded));
   }
@@ -100,23 +137,42 @@ export function assertNoEvaluationOracleLeakV1(input: EvaluationOracleLeakInputV
     const joinedChannels = [keys.join(""), values.join(""), [...keys, ...values].join("")];
     const scanChannels = [...strings, ...joinedChannels];
     if (message.bytes !== undefined) {
-      const digest = sha256BytesDigestV1(Buffer.from(message.bytes));
+      const messageBytes = Buffer.from(message.bytes);
+      scanChannels.push(messageBytes.toString("utf8"));
+      const digest = sha256BytesDigestV1(messageBytes);
       if (artifactDigests.has(digest.value)) {
         throw new TypeError(
           `oracle artifact entered ${message.stage} message as ${message.reference}`,
         );
       }
+      if (artifactContentBytes.some((oracleBytes) => messageBytes.includes(oracleBytes))) {
+        throw new TypeError(
+          `oracle artifact entered ${message.stage} message as ${message.reference}`,
+        );
+      }
     }
-    if (artifactContents.some((oracleContent) => contains(scanChannels, oracleContent))) {
+    if (
+      artifactContents.some((oracleContent) => contains(scanChannels, oracleContent)) ||
+      artifactContentBytes.some((oracleBytes) =>
+        containsSeparatelyEncodedFragments(values, oracleBytes),
+      )
+    ) {
       throw new TypeError(`oracle content entered ${message.stage} message`);
     }
-    if (artifactIdentifiers.some((identifier) => contains(scanChannels, identifier))) {
+    if (
+      artifactIdentifiers.some((identifier) => contains(scanChannels, identifier)) ||
+      artifactIdentifierBytes.some((identifier) =>
+        containsSeparatelyEncodedFragments(values, identifier),
+      )
+    ) {
       throw new TypeError(`oracle artifact identity entered ${message.stage} message`);
     }
     for (const root of input.oracle.expectedRoots) {
       if (
         encodedForms(root.rootId).some((form) => contains(scanChannels, form)) ||
-        encodedForms(root.description).some((form) => contains(scanChannels, form))
+        encodedForms(root.description).some((form) => contains(scanChannels, form)) ||
+        containsSeparatelyEncodedFragments(values, Buffer.from(root.rootId, "utf8")) ||
+        containsSeparatelyEncodedFragments(values, Buffer.from(root.description, "utf8"))
       ) {
         throw new TypeError(`oracle root entered ${message.stage} message`);
       }
@@ -124,13 +180,21 @@ export function assertNoEvaluationOracleLeakV1(input: EvaluationOracleLeakInputV
     for (const uncertainty of input.oracle.expectedUncertainties) {
       if (
         encodedForms(uncertainty.uncertaintyId).some((form) => contains(scanChannels, form)) ||
-        encodedForms(uncertainty.description).some((form) => contains(scanChannels, form))
+        encodedForms(uncertainty.description).some((form) => contains(scanChannels, form)) ||
+        containsSeparatelyEncodedFragments(
+          values,
+          Buffer.from(uncertainty.uncertaintyId, "utf8"),
+        ) ||
+        containsSeparatelyEncodedFragments(values, Buffer.from(uncertainty.description, "utf8"))
       ) {
         throw new TypeError(`oracle uncertainty entered ${message.stage} message`);
       }
     }
     for (const label of input.oracle.forbiddenLabels) {
-      if (encodedForms(label).some((form) => contains(scanChannels, form))) {
+      if (
+        encodedForms(label).some((form) => contains(scanChannels, form)) ||
+        containsSeparatelyEncodedFragments(values, Buffer.from(label, "utf8"))
+      ) {
         throw new TypeError(`forbidden evaluator label entered ${message.stage} message`);
       }
     }

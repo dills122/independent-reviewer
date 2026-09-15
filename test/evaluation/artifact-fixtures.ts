@@ -106,13 +106,17 @@ const attemptCounts = (defect: boolean): Count[] => [
   },
   { metric: "ADJUDICATED_DEFECT_PRECISION", numerator: defect ? 1 : 0, denominator: 1 },
   { metric: "CONSERVATIVE_PRECISION_BOUND", numerator: defect ? 1 : 0, denominator: 1 },
-  { metric: "UNIQUE_ACTION_YIELD", numerator: defect ? 1 : 0, denominator: 1 },
+  { metric: "UNIQUE_ACTION_YIELD", numerator: defect ? 1 : 0, denominator: defect ? 2 : 1 },
   { metric: "CLEAN_FALSE_POSITIVE_RATE", numerator: defect ? 0 : 1, denominator: defect ? 0 : 1 },
   { metric: "FALSE_ABSTENTION_RATE", numerator: 0, denominator: 1 },
   { metric: "CORRECT_UNCERTAINTY_RATE", numerator: 0, denominator: 0 },
-  { metric: "DUPLICATE_RATE", numerator: 0, denominator: 1 },
+  { metric: "DUPLICATE_RATE", numerator: defect ? 1 : 0, denominator: defect ? 2 : 1 },
   { metric: "DELIVERY_RATE", numerator: 1, denominator: 1 },
-  { metric: "STAGE_RETENTION_RATE", numerator: 0, denominator: 0 },
+  {
+    metric: "STAGE_RETENTION_RATE",
+    numerator: defect ? 2 : 0,
+    denominator: defect ? 2 : 0,
+  },
 ];
 const addCounts = (groups: readonly Count[][]): Count[] =>
   metricNames.map((metric) => ({
@@ -189,6 +193,7 @@ export function makeEvaluationGraph() {
   );
   const attempts = cases.flatMap((caseManifest) =>
     experiment.variants.map((variant, index) => {
+      const defect = caseManifest.pair.role === "DEFECT";
       const suffix = `${caseManifest.caseId}_${index + 1}`;
       const reportDigest = sha(index === 0 ? "7" : "8");
       return {
@@ -223,7 +228,7 @@ export function makeEvaluationGraph() {
             state: "SUCCEEDED",
             artifactDigest: sha("a"),
             elapsedMs: 300,
-            providerCall: true,
+            providerCall: defect,
           },
           {
             stage: "FINAL",
@@ -233,14 +238,41 @@ export function makeEvaluationGraph() {
             providerCall: true,
           },
         ],
-        findingClaims: [
-          {
-            findingReference: `finding_${suffix}`,
-            claimDigest: sha(index === 0 ? "b" : "c"),
-            emittedAtStage: "FINAL",
-            claimKind: "DEFECT",
-          },
-        ],
+        findingClaims: defect
+          ? [
+              {
+                findingReference: `finding_preliminary_true_${suffix}`,
+                claimDigest: sha("d"),
+                emittedAtStage: "PRELIMINARY",
+                claimKind: "DEFECT",
+              },
+              {
+                findingReference: `finding_preliminary_false_${suffix}`,
+                claimDigest: sha("e"),
+                emittedAtStage: "PRELIMINARY",
+                claimKind: "DEFECT",
+              },
+              {
+                findingReference: `finding_${suffix}`,
+                claimDigest: sha(index === 0 ? "b" : "c"),
+                emittedAtStage: "FINAL",
+                claimKind: "DEFECT",
+              },
+              {
+                findingReference: `finding_duplicate_${suffix}`,
+                claimDigest: sha("f"),
+                emittedAtStage: "FINAL",
+                claimKind: "DEFECT",
+              },
+            ]
+          : [
+              {
+                findingReference: `finding_${suffix}`,
+                claimDigest: sha(index === 0 ? "b" : "c"),
+                emittedAtStage: "FINAL",
+                claimKind: "DEFECT",
+              },
+            ],
         terminalOutcome: {
           kind: "DELIVERED",
           reportReference: `.review-runs/${suffix}/report.json`,
@@ -252,7 +284,8 @@ export function makeEvaluationGraph() {
           completionTokens: 5,
           totalTokens: 15,
           knownCostUsd: 0.01,
-          providerAttempts: 3,
+          providerAttempts: defect ? 3 : 2,
+          knownCostAttempts: defect ? 3 : 2,
           unknownCostAttempts: 0,
           conservativeChargeUsd: 0.01,
           admittedCeilingUsd: 0.02,
@@ -262,43 +295,50 @@ export function makeEvaluationGraph() {
       };
     }),
   );
-  const adjudications = attempts.map((attempt, index) => {
+  const adjudications = attempts.flatMap((attempt, attemptIndex) => {
     const defect = attempt.caseId === "case_defect";
-    const claim = attempt.findingClaims[0];
-    if (claim === undefined) throw new TypeError("fixture attempt must contain one claim");
     const caseManifest = cases.find(({ caseId }) => caseId === attempt.caseId);
     if (caseManifest === undefined) throw new TypeError("fixture attempt case must exist");
     const sourceInput = caseManifest.reviewerInputInventory.find(
       ({ role }) => role === "SOURCE_CHANGE",
     );
     if (sourceInput === undefined) throw new TypeError("fixture case needs source input");
-    return {
-      schemaVersion: 1,
-      adjudicationId: `adjudication_${index + 1}`,
-      experimentId: experiment.experimentId,
-      experimentManifestDigest,
-      attemptId: attempt.attemptId,
-      caseId: attempt.caseId,
-      findingReference: claim.findingReference,
-      claimDigest: claim.claimDigest,
-      label: defect ? "MATCHED_DEFECT" : "INVALID_DEFECT",
-      matchedRootId: defect ? "root_double_conversion" : null,
-      causalEvidence: defect
-        ? [{ source: "CASE_INPUT", reference: sourceInput.reference, digest: sourceInput.digest }]
-        : [],
-      matchedUncertaintyId: null,
-      severityCalibration: defect
-        ? { expected: "BLOCKING", observed: "BLOCKING" }
-        : { expected: "NOT_APPLICABLE", observed: "BLOCKING" },
-      enforcementClassification: null,
-      adjudicator: { type: "MODEL_ASSISTED", identity: "judge-v1" },
-      promotionAuthority: defect ? { type: "HUMAN", identity: "reviewer@example.invalid" } : null,
-      rationale: defect
-        ? "Reachable wrong conversion with causal source evidence."
-        : "Scenario is not present.",
-      unresolvedDisagreement: null,
-      adjudicatedAt: "2026-09-15T12:05:00.000Z",
-    };
+    return attempt.findingClaims.map((claim, claimIndex) => {
+      const preliminaryTrue = claim.findingReference.includes("preliminary_true");
+      const duplicate = claim.findingReference.includes("duplicate");
+      const supported =
+        defect && (preliminaryTrue || duplicate || claim.emittedAtStage === "FINAL");
+      const label = supported ? (duplicate ? "DUPLICATE" : "MATCHED_DEFECT") : "INVALID_DEFECT";
+      return {
+        schemaVersion: 1,
+        adjudicationId: `adjudication_${attemptIndex + 1}_${claimIndex + 1}`,
+        experimentId: experiment.experimentId,
+        experimentManifestDigest,
+        attemptId: attempt.attemptId,
+        caseId: attempt.caseId,
+        findingReference: claim.findingReference,
+        claimDigest: claim.claimDigest,
+        label,
+        matchedRootId: supported ? "root_double_conversion" : null,
+        causalEvidence: supported
+          ? [{ source: "CASE_INPUT", reference: sourceInput.reference, digest: sourceInput.digest }]
+          : [],
+        matchedUncertaintyId: null,
+        severityCalibration: supported
+          ? { expected: "BLOCKING", observed: "BLOCKING" }
+          : { expected: "NOT_APPLICABLE", observed: "BLOCKING" },
+        enforcementClassification: null,
+        adjudicator: { type: "MODEL_ASSISTED", identity: "judge-v1" },
+        promotionAuthority: supported
+          ? { type: "HUMAN", identity: "reviewer@example.invalid" }
+          : null,
+        rationale: supported
+          ? "Reachable wrong conversion with causal source evidence."
+          : "Scenario is not present.",
+        unresolvedDisagreement: null,
+        adjudicatedAt: "2026-09-15T12:05:00.000Z",
+      };
+    });
   });
   const rawArtifactReferences = [
     ...cases.map((value) => ({
@@ -344,8 +384,8 @@ export function makeEvaluationGraph() {
       addCounts(attempts.map((attempt) => attemptCounts(attempt.caseId === "case_defect"))),
     ),
     adjudicationCoverage: {
-      totalClaims: 4,
-      resolvedClaims: 4,
+      totalClaims: 10,
+      resolvedClaims: 10,
       unresolvedClaims: 0,
       unresolvedAdjudicationIds: [],
     },
@@ -380,6 +420,7 @@ export function makeEvaluationGraph() {
       metrics: attemptCounts(attempt.caseId === "case_defect"),
       resources: {
         providerAttempts: attempt.usage.providerAttempts,
+        knownCostAttempts: attempt.usage.knownCostAttempts,
         evidenceBytes: attempt.usage.evidenceBytes,
         outputBytes: attempt.usage.outputBytes,
         reportedCostUsd: attempt.usage.knownCostUsd ?? 0,
@@ -389,11 +430,11 @@ export function makeEvaluationGraph() {
       },
     })),
     severityCalibration: {
-      eligibleAdjudications: 4,
-      classifiedAdjudications: 4,
-      exact: 2,
+      eligibleAdjudications: 10,
+      classifiedAdjudications: 10,
+      exact: 6,
       underclassified: 0,
-      overclassified: 2,
+      overclassified: 4,
       unavailableAdjudicationIds: [],
     },
     enforcementConfusion: {
@@ -428,9 +469,10 @@ export function makeEvaluationGraph() {
         final: distribution(400),
       },
     },
-    resources: { providerAttempts: 12, evidenceBytes: 400, outputBytes: 200, execution: [] },
+    resources: { providerAttempts: 10, evidenceBytes: 400, outputBytes: 200, execution: [] },
     cost: {
       reportedCostUsd: 0.04,
+      knownCostAttempts: 10,
       unknownCostAttempts: 0,
       conservativeChargeUsd: 0.04,
       admittedCeilingUsd: 0.08,

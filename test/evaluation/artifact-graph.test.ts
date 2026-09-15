@@ -4,8 +4,14 @@ import { describe, it } from "node:test";
 import {
   digestEvaluationArtifactV1,
   EvaluationAdjudicationRecordV1Schema,
+  EvaluationAttemptRecordV1Schema,
+  EvaluationCaseManifestV1Schema,
 } from "../../evaluation/artifact-contracts.js";
-import { validateEvaluationArtifactGraphV1 } from "../../evaluation/artifact-graph.js";
+import {
+  deriveEvaluationAttemptMetricCountsV1,
+  isEvaluationAdjudicationLabelAllowedV1,
+  validateEvaluationArtifactGraphV1,
+} from "../../evaluation/artifact-graph.js";
 import { makeEvaluationGraph, sha } from "./artifact-fixtures.js";
 
 function first<T>(values: readonly T[]): T {
@@ -91,6 +97,115 @@ describe("evaluation artifact graph", () => {
     );
   });
 
+  it("enforces claim-kind labels and explicit recommendation validity", () => {
+    assert.equal(isEvaluationAdjudicationLabelAllowedV1("DEFECT", "MATCHED_DEFECT"), true);
+    assert.equal(
+      isEvaluationAdjudicationLabelAllowedV1("UNCERTAINTY", "SUPPORTED_UNCERTAINTY"),
+      true,
+    );
+    assert.equal(
+      isEvaluationAdjudicationLabelAllowedV1("RECOMMENDATION", "USEFUL_RECOMMENDATION"),
+      true,
+    );
+    assert.equal(
+      isEvaluationAdjudicationLabelAllowedV1("RECOMMENDATION", "INVALID_RECOMMENDATION"),
+      true,
+    );
+    assert.equal(isEvaluationAdjudicationLabelAllowedV1("UNCERTAINTY", "MATCHED_DEFECT"), false);
+    assert.equal(isEvaluationAdjudicationLabelAllowedV1("RECOMMENDATION", "INVALID_DEFECT"), false);
+
+    const wrongKind = makeEvaluationGraph();
+    const adjudication = first(wrongKind.adjudications);
+    adjudication.label = "USEFUL_RECOMMENDATION";
+    adjudication.matchedRootId = null;
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(wrongKind),
+      /claim kind DEFECT cannot use adjudication label USEFUL_RECOMMENDATION/i,
+    );
+
+    const recommendation = {
+      ...adjudication,
+      label: "USEFUL_RECOMMENDATION",
+      matchedRootId: null,
+      matchedUncertaintyId: null,
+    };
+    assert.equal(
+      EvaluationAdjudicationRecordV1Schema.parse(recommendation).label,
+      "USEFUL_RECOMMENDATION",
+    );
+    assert.equal(
+      EvaluationAdjudicationRecordV1Schema.parse({
+        ...recommendation,
+        label: "INVALID_RECOMMENDATION",
+        causalEvidence: [],
+        promotionAuthority: null,
+      }).label,
+      "INVALID_RECOMMENDATION",
+    );
+  });
+
+  it("scores true-root retention and false-root removal across stages", () => {
+    const graph = makeEvaluationGraph();
+    const attempt = first(graph.attempts.filter(({ caseId }) => caseId === "case_defect"));
+    const caseManifest = first(graph.cases.filter(({ caseId }) => caseId === attempt.caseId));
+    const attemptAdjudications = graph.adjudications.filter(
+      ({ attemptId }) => attemptId === attempt.attemptId,
+    );
+    const retained = deriveEvaluationAttemptMetricCountsV1(
+      EvaluationAttemptRecordV1Schema.parse(attempt),
+      EvaluationCaseManifestV1Schema.parse(caseManifest),
+      attemptAdjudications.map((value) => EvaluationAdjudicationRecordV1Schema.parse(value)),
+    ).find(({ metric }) => metric === "STAGE_RETENTION_RATE");
+    assert.deepEqual(retained, {
+      metric: "STAGE_RETENTION_RATE",
+      numerator: 2,
+      denominator: 2,
+    });
+
+    const preliminaryFalse = first(
+      attemptAdjudications.filter(({ label }) => label === "INVALID_DEFECT"),
+    );
+    const falseClaim = first(
+      attempt.findingClaims.filter(
+        ({ findingReference }) => findingReference === preliminaryFalse.findingReference,
+      ),
+    );
+    const persistedAttempt = structuredClone(attempt);
+    persistedAttempt.findingClaims.push({
+      ...falseClaim,
+      findingReference: `${falseClaim.findingReference}_final`,
+      emittedAtStage: "FINAL",
+    });
+    const persistedFalse = {
+      ...preliminaryFalse,
+      adjudicationId: "adjudication_persisted_false",
+      findingReference: `${falseClaim.findingReference}_final`,
+      adjudicatedAt: "2026-09-15T12:06:00.000Z",
+    };
+    const notRemoved = deriveEvaluationAttemptMetricCountsV1(
+      EvaluationAttemptRecordV1Schema.parse(persistedAttempt),
+      EvaluationCaseManifestV1Schema.parse(caseManifest),
+      [...attemptAdjudications, persistedFalse].map((value) =>
+        EvaluationAdjudicationRecordV1Schema.parse(value),
+      ),
+    ).find(({ metric }) => metric === "STAGE_RETENTION_RATE");
+    assert.deepEqual(notRemoved, {
+      metric: "STAGE_RETENTION_RATE",
+      numerator: 1,
+      denominator: 2,
+    });
+
+    const doubleCredit = makeEvaluationGraph();
+    const duplicate = first(
+      doubleCredit.adjudications.filter(({ label }) => label === "DUPLICATE"),
+    );
+    duplicate.label = "MATCHED_DEFECT";
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(doubleCredit),
+      /more than one final recall credit/i,
+    );
+  });
+
   it("requires score breakdown and typed raw-reference coverage for exact graph", () => {
     const missingCase = makeEvaluationGraph();
     missingCase.score.caseBreakdowns.pop();
@@ -149,6 +264,7 @@ describe("evaluation artifact graph", () => {
 
     const aggregateResource = makeEvaluationGraph();
     aggregateResource.score.resources.providerAttempts += 1;
+    aggregateResource.score.cost.knownCostAttempts += 1;
     assert.throws(
       () => validateEvaluationArtifactGraphV1(aggregateResource),
       /provider-attempt total does not match/i,
@@ -157,8 +273,8 @@ describe("evaluation artifact graph", () => {
 
   it("recomputes severity calibration and enforcement confusion", () => {
     const severity = makeEvaluationGraph();
-    severity.score.severityCalibration.exact = 1;
-    severity.score.severityCalibration.overclassified = 3;
+    severity.score.severityCalibration.exact = 5;
+    severity.score.severityCalibration.overclassified = 5;
     assert.throws(
       () => validateEvaluationArtifactGraphV1(severity),
       /severity calibration does not match/i,

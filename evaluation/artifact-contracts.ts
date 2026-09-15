@@ -576,6 +576,7 @@ export const EvaluationAttemptRecordV1Schema = z
       totalTokens: SafeNonnegativeIntegerSchema.nullable(),
       knownCostUsd: NonnegativeFiniteNumberSchema.nullable(),
       providerAttempts: SafeNonnegativeIntegerSchema,
+      knownCostAttempts: SafeNonnegativeIntegerSchema,
       unknownCostAttempts: SafeNonnegativeIntegerSchema,
       conservativeChargeUsd: NonnegativeFiniteNumberSchema,
       admittedCeilingUsd: NonnegativeFiniteNumberSchema,
@@ -636,6 +637,29 @@ export const EvaluationAttemptRecordV1Schema = z
           message: "finding claim requires its stage to succeed",
           path: ["findingClaims", index, "emittedAtStage"],
         });
+      }
+    }
+    for (const [index, outcome] of record.stageOutcomes.entries()) {
+      if ((outcome.stage === "PRELIMINARY" || outcome.stage === "FINAL") && !outcome.providerCall) {
+        context.addIssue({
+          code: "custom",
+          message: `${outcome.stage.toLowerCase()} stage must be provider-backed`,
+          path: ["stageOutcomes", index, "providerCall"],
+        });
+      }
+      if (outcome.stage === "FINDING_VERIFICATION") {
+        const hasPreliminaryAdverseClaim = record.findingClaims.some(
+          ({ emittedAtStage }) => emittedAtStage === "PRELIMINARY",
+        );
+        if (outcome.providerCall !== hasPreliminaryAdverseClaim) {
+          context.addIssue({
+            code: "custom",
+            message: hasPreliminaryAdverseClaim
+              ? "finding verification must be provider-backed when preliminary adverse claims exist"
+              : "finding verification must be local when no preliminary adverse claims exist",
+            path: ["stageOutcomes", index, "providerCall"],
+          });
+        }
       }
     }
     if (
@@ -758,11 +782,28 @@ export const EvaluationAttemptRecordV1Schema = z
         path: ["usage", "totalTokens"],
       });
     }
-    if (record.usage.unknownCostAttempts > record.usage.providerAttempts) {
+    if (
+      record.usage.knownCostAttempts + record.usage.unknownCostAttempts !==
+      record.usage.providerAttempts
+    ) {
       context.addIssue({
         code: "custom",
-        message: "unknown-cost attempts cannot exceed provider attempts",
-        path: ["usage", "unknownCostAttempts"],
+        message: "known and unknown cost attempts must equal provider attempts",
+        path: ["usage"],
+      });
+    }
+    if (record.usage.knownCostAttempts > 0 && record.usage.knownCostUsd === null) {
+      context.addIssue({
+        code: "custom",
+        message: "known-cost attempts require reported cost",
+        path: ["usage", "knownCostUsd"],
+      });
+    }
+    if (record.usage.knownCostAttempts === 0 && record.usage.knownCostUsd !== null) {
+      context.addIssue({
+        code: "custom",
+        message: "reported cost requires at least one known-cost attempt",
+        path: ["usage", "knownCostUsd"],
       });
     }
     const minimumProviderAttempts = record.stageOutcomes.filter(
@@ -803,7 +844,8 @@ const AdjudicationLabelV1Schema = z.enum([
   "NOVEL_VALID_DEFECT",
   "INVALID_DEFECT",
   "UNRESOLVED",
-  "RECOMMENDATION",
+  "USEFUL_RECOMMENDATION",
+  "INVALID_RECOMMENDATION",
   "DUPLICATE",
   "SUPPORTED_UNCERTAINTY",
 ]);
@@ -863,7 +905,8 @@ export const EvaluationAdjudicationRecordV1Schema = z
     const supported =
       requiresRoot ||
       record.label === "NOVEL_VALID_DEFECT" ||
-      record.label === "SUPPORTED_UNCERTAINTY";
+      record.label === "SUPPORTED_UNCERTAINTY" ||
+      record.label === "USEFUL_RECOMMENDATION";
     if (requiresRoot && record.matchedRootId === null) {
       context.addIssue({
         code: "custom",
@@ -1015,6 +1058,7 @@ const ScoreMetricsV1Schema = z
 
 const AttemptScoreResourcesV1Schema = z.strictObject({
   providerAttempts: SafeNonnegativeIntegerSchema,
+  knownCostAttempts: SafeNonnegativeIntegerSchema,
   evidenceBytes: SafeNonnegativeIntegerSchema,
   outputBytes: SafeNonnegativeIntegerSchema,
   reportedCostUsd: NonnegativeFiniteNumberSchema,
@@ -1159,16 +1203,19 @@ export const EvaluationScoreReportV1Schema = z
       providerAttempts: SafeNonnegativeIntegerSchema,
       evidenceBytes: SafeNonnegativeIntegerSchema,
       outputBytes: SafeNonnegativeIntegerSchema,
-      execution: z.array(
-        z.strictObject({
-          name: NonEmptyTextSchema,
-          unit: NonEmptyTextSchema,
-          value: NonnegativeFiniteNumberSchema,
-        }),
-      ),
+      execution: z
+        .array(
+          z.strictObject({
+            name: NonEmptyTextSchema,
+            unit: NonEmptyTextSchema,
+            value: NonnegativeFiniteNumberSchema,
+          }),
+        )
+        .length(0, "execution resources remain unavailable without digest-bound evidence"),
     }),
     cost: z.strictObject({
       reportedCostUsd: NonnegativeFiniteNumberSchema,
+      knownCostAttempts: SafeNonnegativeIntegerSchema,
       unknownCostAttempts: SafeNonnegativeIntegerSchema,
       conservativeChargeUsd: NonnegativeFiniteNumberSchema,
       admittedCeilingUsd: NonnegativeFiniteNumberSchema,
@@ -1388,11 +1435,14 @@ export const EvaluationScoreReportV1Schema = z
         }
       }
     }
-    if (report.cost.unknownCostAttempts > report.resources.providerAttempts) {
+    if (
+      report.cost.knownCostAttempts + report.cost.unknownCostAttempts !==
+      report.resources.providerAttempts
+    ) {
       context.addIssue({
         code: "custom",
-        message: "unknown-cost attempts cannot exceed provider attempts",
-        path: ["cost", "unknownCostAttempts"],
+        message: "known and unknown cost attempts must equal provider attempts",
+        path: ["cost"],
       });
     }
     if (report.cost.conservativeChargeUsd > report.cost.admittedCeilingUsd) {

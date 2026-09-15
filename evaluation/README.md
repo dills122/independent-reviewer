@@ -77,13 +77,19 @@ repetition, claim, and raw-reference identities. Experiment manifests predeclare
 baseline/candidate pair-comparison membership. Graph validation recomputes attempt, case, family,
 and aggregate counts, paired deltas, resources, latency, cost, severity calibration, and enforcement
 confusion from retained attempt/adjudication evidence. Pair membership is explicit and complete;
-local logical stages remain distinct from provider calls; zero-denominator metrics, unresolved
-adjudications, terminal failures, and cost uncertainty remain visible.
+preliminary and final stages are provider-backed while eligible no-adverse-claim verification stays
+local. Known-cost and unknown-cost attempt counts reconcile to every provider attempt. Stage
+retention credits both retained true roots and removed false roots without double-crediting final
+duplicates. Defect, uncertainty, and useful/invalid recommendation labels remain claim-kind scoped.
+Zero-denominator metrics, unresolved adjudications, terminal failures, and cost uncertainty remain
+visible. Execution-resource summaries remain empty until a later contract can bind them to retained
+attempt evidence.
 
 `oracle-leak.ts` checks supplied reviewer messages, message metadata, references, and attachment
 bytes against evaluator-only roots, uncertainties, labels, artifact identities, and content. Caller
 must supply every message and attachment available to each reviewer stage. Checks cover canonical
-serialized messages, fragmented metadata values, and raw/base64/hex forms without concatenating
+serialized messages, raw oracle subsequences inside attachment streams, ordered independently
+base64-encoded metadata fragments, and case-insensitive hexadecimal forms without concatenating
 across messages. This module does not intercept provider traffic or discover omitted messages.
 
 These evaluator-only modules do not allocate corpus splits, execute scoring, collect runtime

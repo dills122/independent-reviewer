@@ -64,6 +64,45 @@ describe("evaluation oracle leak checking", () => {
         }),
       /oracle artifact.*PRELIMINARY/i,
     );
+
+    assert.throws(
+      () =>
+        assertNoEvaluationOracleLeakV1({
+          oracle,
+          messages: [
+            {
+              stage: "TOOL_RESULT",
+              reference: "evidence/bundle.bin",
+              content: "attachment with a copied hidden fixture",
+              bytes: Buffer.concat([
+                Buffer.from("benign-prefix\0", "utf8"),
+                hiddenBytes,
+                Buffer.from("\0benign-suffix", "utf8"),
+              ]),
+            },
+          ],
+        }),
+      /oracle artifact.*TOOL_RESULT/i,
+    );
+
+    assert.throws(
+      () =>
+        assertNoEvaluationOracleLeakV1({
+          oracle,
+          messages: [
+            {
+              stage: "FINAL",
+              reference: "evidence/notes.bin",
+              content: "binary attachment",
+              bytes: Buffer.from(
+                "benign-prefix\0Checkout converts cents a second time.\0benign-suffix",
+                "utf8",
+              ),
+            },
+          ],
+        }),
+      /oracle root.*FINAL/i,
+    );
   });
 
   it("detects copied oracle content embedded in reconciliation metadata", () => {
@@ -162,6 +201,38 @@ describe("evaluation oracle leak checking", () => {
         }),
       /oracle content.*TOOL_RESULT/i,
     );
+
+    const firstFragment = hiddenBytes.subarray(0, 17).toString("base64");
+    const secondFragment = hiddenBytes.subarray(17).toString("base64");
+    assert.throws(
+      () =>
+        assertNoEvaluationOracleLeakV1({
+          oracle,
+          messages: [
+            {
+              stage: "TOOL_RESULT",
+              reference: "metadata.json",
+              content: { a: firstFragment, b: secondFragment },
+            },
+          ],
+        }),
+      /oracle content.*TOOL_RESULT/i,
+    );
+
+    assert.throws(
+      () =>
+        assertNoEvaluationOracleLeakV1({
+          oracle,
+          messages: [
+            {
+              stage: "FINAL_REPAIR",
+              reference: "metadata.json",
+              content: { encoded: hiddenBytes.toString("hex").toUpperCase() },
+            },
+          ],
+        }),
+      /oracle content.*FINAL_REPAIR/i,
+    );
   });
 
   it("does not join reordered or interrupted benign fragments into a leak", () => {
@@ -176,6 +247,23 @@ describe("evaluation oracle leak checking", () => {
               a: "a second time.",
               b: "Independent evaluator note.",
               c: "Checkout converts cents ",
+            },
+          },
+        ],
+      }),
+    );
+
+    assert.doesNotThrow(() =>
+      assertNoEvaluationOracleLeakV1({
+        oracle,
+        messages: [
+          {
+            stage: "TOOL_RESULT",
+            reference: "metadata.json",
+            content: {
+              a: hiddenBytes.subarray(17).toString("base64"),
+              b: "not an encoded oracle fragment",
+              c: hiddenBytes.subarray(0, 17).toString("base64"),
             },
           },
         ],
