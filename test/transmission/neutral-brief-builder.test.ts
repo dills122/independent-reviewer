@@ -303,11 +303,20 @@ describe("buildReviewBrief diff evidence", () => {
       brief.guidanceGraph.graphId.slice("guidance_".length),
     );
     const presentation = JSON.parse(brief.guidancePresentation);
-    assert.equal(presentation.schemaVersion, 1);
+    assert.equal(presentation.schemaVersion, 2);
     assert.equal(presentation.sources.length, 1);
     assert.equal(presentation.sources[0].path, ".independent-reviewer/rules.md");
     assert.equal(presentation.sources[0].semanticTier, "REVIEWER_SPECIFIC");
     assert.equal(presentation.sources[0].content, rules);
+    assert.deepEqual(presentation.sources[0].directRecognitionGroups, [
+      {
+        familyId: "INDEPENDENT_REVIEWER",
+        sourceKind: "REVIEWER_RULES",
+        nativeOrder: 0,
+        discoveredPath: ".independent-reviewer/rules.md",
+        applicableTargetIndexes: [0, 1],
+      },
+    ]);
     assert.deepEqual(presentation.sources[0].sourceRange, {
       coordinateUnit: "UTF16_CODE_UNIT",
       startOffset: 0,

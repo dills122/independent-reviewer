@@ -123,6 +123,22 @@ and reviewer-specific rules render last. Stable peer order never grants semantic
 priority. This prevents filesystem, adapter, or graph traversal order from
 changing provenance, prompt bytes, artifact digests, or resume identity.
 
+New briefs emit `GuidancePromptPresentationV2`. Each source lists every
+applicable target exactly once, then `directRecognitionGroups` and
+`inboundImportGroups` preserve exact graph provenance through zero-based indexes
+into that source-local target list. Direct groups collapse identical family,
+source-kind, native-order, and discovered-path fields; import groups retain
+occurrence identity, syntax kind, importer identity, requested specifier, source
+range, and every edge identity. Validation rejects duplicate or out-of-range
+indexes, uncovered targets, invalid family/kind or semantic-tier pairings,
+conflicting cross-source target metadata, unknown importers, reused
+occurrence/edge identities, and aggregate cap drift.
+Each occurrence's targets must equal complete same-family importer
+applicability, and every pair must trace to direct provenance, so missing edges,
+forged propagation, and detached import cycles fail.
+Persisted V1 presentations remain readable, but prompt policy version 18 prevents
+an in-flight V1 run from resuming under V2 wire semantics.
+
 Markdown documents remain opaque guidance. The runner records source path,
 BASE digest, applicable target roles/sides, source family, and prompt precedence. It
 may record source positions for citations, but it does not infer enforcement,

@@ -11,7 +11,7 @@ of documentation/qualification (#149). Canonical scope and acceptance remain in
 | FO-3A | #148 | Gemini and Kiro BASE guidance adapters, imports, ignore semantics, and focused fixtures | guidance-gemini-kiro worker | Frozen `GuidanceGraphV1`; existing discovery helpers | Normative family-table selection, exclusion, import, cap, secret, and permutation fixtures pass | Complete; merged in #156 |
 | FO-3B | #148 | Copilot and Cursor BASE guidance adapters, imports, and focused fixtures | guidance-copilot-cursor worker | Frozen `GuidanceGraphV1`; existing discovery helpers | Normative family-table selection, exclusion, import, cap, secret, overlap, and permutation fixtures pass | Complete; merged in #156 |
 | FO-3I | #148 | Register adapters in canonical repository capture and prove shared-node merge | lead | FO-3A, FO-3B | Combined discovery corpus passes; multi-family content renders once with full provenance | Complete; merged in #156 after review remediation |
-| FO-4A | #101 | Compact prompt presentation provenance and add explicit envelope-byte regression ceilings | lead | Frozen graph identity; no graph-contract weakening | 13- and 121-target fixtures substantially reduce bytes; target IDs occur once per source presentation | Pending; first implementation rejected in fresh review |
+| FO-4A | #101 | Compact prompt presentation provenance and add explicit envelope-byte regression ceilings | lead | Frozen graph identity; no graph-contract weakening | 13- and 121-target fixtures substantially reduce bytes; target IDs occur once per source presentation | Ready for review; V2 retains indexed direct/import provenance and V1 read compatibility |
 | FO-5A | #130 | Let Commander own grammar, required values, duplicate handling, and typed command options | cli-commander worker | Existing Commander dependency admission | Existing command grammar, help, exit codes, stdout, and stderr parity tests pass | Complete; merged in #154 |
 | FO-5B | #103 | Implement author-setting controls and friendly input lifecycle | unassigned | FO-4 trust/budget checkpoint, FO-5A | Every simple setting changes behavior; author default/opt-out/isolation/resume fixtures pass | Pending |
 | FO-6 | #149 | Update short-flow docs and provider-free multilingual qualification | lead | FO-3I, FO-4A, FO-5B | Schema generation, full repository check, context gate, and provider-free E2E matrix pass | In progress; public-doc refresh and paid multi-harness matrix complete; no-author path remains blocked by FO-5B |
@@ -56,10 +56,14 @@ occurrences, edges, diagnostics, normalized paths, import specifiers, source
 bytes, Gemini basenames and settings, vendor frontmatter, conditional patterns,
 brace groups/products, compiled alternatives, and symlink chains.
 
-## Fresh-review blockers
+## FO-4A verification
 
-- FO-4A needs a versioned compact presentation that retains exact
-  family-to-target mapping and measures complete provider-message wire deltas.
+V2 reconstructs exact family-to-target and import-edge-to-target mappings from
+source-local indexes. The 42-byte reviewer-rules regression covers 13 and 121
+targets with presentation ceilings of 3,200 and 20,000 bytes and complete
+provider-message wire-delta ceilings of 5,000 and 30,000 bytes. Every target ID
+occurs once per source presentation. V1 remains readable; old in-flight V1 runs
+fail the explicit prompt-protocol compatibility gate before provider access.
 
 ## Slice 3 review-loop outcome
 

@@ -256,9 +256,14 @@ after instance 3, so no unsupported fourth review is claimed.
       peer harness families retain equal semantic authority.
 - [x] Canonical presentation sorts by semantic tier, direct/import-only origin
       rank, complete canonical direct-recognition vector, resolved path, and
-      source identity. Each direct recognition binds `familyId`, `sourceKind`,
-      `nativeOrder`, `applicableTargetId`, and `discoveredPath`; records and
-      vectors follow ADR-014's exact integer/UTF-16 comparison.
+      source identity. V2 lists each source's applicable targets in canonical
+      graph order exactly once. Direct groups retain `familyId`, `sourceKind`,
+      `nativeOrder`, and `discoveredPath`, sort by family/order/path/kind, and
+      map exact targets through increasing source-local indexes. Inbound groups
+      retain occurrence, syntax, importer, specifier, range, and edge identities;
+      groups sort by family/importer/range/specifier/occurrence and edges by
+      target index then edge ID. Persisted V1 remains readable, while prompt
+      policy v18 rejects resuming an in-flight V1 run under V2 wire semantics.
 - [x] Strict `GuidanceGraphV1` serialization binds snapshot digest and BASE,
       stores exact relocation-aware targets plus sorted unique
       nodes, occurrences, edges, diagnostics, and every sorted unique node-local

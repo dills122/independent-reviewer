@@ -3,7 +3,7 @@ import * as z from "zod";
 import { computeCanonicalInputDigestV1 } from "./canonical-input-identity.js";
 import { sha256Utf8 } from "./canonical-json.js";
 import {
-  CanonicalGuidancePresentationV1Schema,
+  CanonicalGuidancePresentationSchema,
   GuidanceGraphBindingV1Schema,
 } from "./guidance-presentation.js";
 import { STRUCTURAL_JSON_SCHEMA_COMMENT_V1 } from "./json-schema-contract.js";
@@ -368,7 +368,7 @@ export const StandardsReviewBriefV3Schema = z
     canonicalInputs: StandardsCanonicalInputsV2Schema,
     referenceEvidence: z.array(ReferenceEvidenceV2Schema),
     guidanceGraph: GuidanceGraphBindingV1Schema,
-    guidancePresentation: CanonicalGuidancePresentationV1Schema,
+    guidancePresentation: CanonicalGuidancePresentationSchema,
   })
   .superRefine((brief, context) => {
     const { guidanceGraph: _binding, guidancePresentation: _presentation, ...common } = brief;

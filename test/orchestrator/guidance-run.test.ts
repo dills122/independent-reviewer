@@ -8,11 +8,13 @@ import { promisify } from "node:util";
 
 import {
   buildGuidanceGraphV1,
+  buildReviewBrief,
   captureGitSnapshotV1,
   captureRepositoryGuidanceV1,
   captureReviewerRulesGuidanceV1,
   guidanceGraphDigestV1,
   ProviderCallError,
+  preflightReview,
   type ReviewProviderV1,
   type ReviewRunConfigV3,
   resumeFinalReview,
@@ -31,6 +33,8 @@ async function git(repositoryPath: string, ...args: string[]): Promise<void> {
 async function arrangeGuidancePacket(
   rules?: string,
   withImport = false,
+  targetCount = 1,
+  withRichProvenance = false,
 ): Promise<{
   repositoryPath: string;
   packetPath: string;
@@ -53,12 +57,30 @@ async function arrangeGuidancePacket(
     );
     await writeFile(join(repositoryPath, "docs", "expected.md"), "# Expected guidance\n");
     await writeFile(join(repositoryPath, "docs", "attacker.md"), "# Redirected guidance\n");
+    if (withRichProvenance) {
+      await mkdir(join(repositoryPath, ".github"), { recursive: true });
+      await writeFile(
+        join(repositoryPath, ".github", "copilot-instructions.md"),
+        "# Copilot guidance\n",
+      );
+      await writeFile(
+        join(repositoryPath, ".kiro", "steering", "scoped.md"),
+        "---\ninclusion: fileMatch\nfileMatchPattern: reviewed-001.ts\n---\n# Scoped guidance\n",
+      );
+    }
   }
-  await writeFile(join(repositoryPath, "reviewed.ts"), "export const value = 1;\n");
+  const targetPaths = Array.from({ length: targetCount }, (_, index) =>
+    targetCount === 1 ? "reviewed.ts" : `reviewed-${String(index + 1).padStart(3, "0")}.ts`,
+  );
+  await Promise.all(
+    targetPaths.map((path) => writeFile(join(repositoryPath, path), "export const value = 1;\n")),
+  );
   await git(repositoryPath, "add", ".");
   await git(repositoryPath, "commit", "-m", "initial");
   await git(repositoryPath, "switch", "-c", "feature/guidance");
-  await writeFile(join(repositoryPath, "reviewed.ts"), "export const value = 2;\n");
+  await Promise.all(
+    targetPaths.map((path) => writeFile(join(repositoryPath, path), "export const value = 2;\n")),
+  );
 
   const profile = {
     schemaVersion: 1,
@@ -186,6 +208,186 @@ const config: ReviewRunConfigV3 = {
   },
 };
 
+test("compacts reviewer-rule provenance across small and large target sets", async () => {
+  const rules = "# Reviewer rules\n\nPrefer small functions.\n";
+  assert.equal(Buffer.byteLength(rules, "utf8"), 42);
+  const cases = [
+    { targetCount: 13, presentationCeiling: 3_200, wireCeiling: 5_000 },
+    { targetCount: 121, presentationCeiling: 20_000, wireCeiling: 30_000 },
+  ] as const;
+
+  for (const testCase of cases) {
+    const { repositoryPath, packetPath } = await arrangeGuidancePacket(
+      rules,
+      false,
+      testCase.targetCount,
+    );
+    try {
+      const brief = await buildReviewBrief(packetPath, 128_000);
+      assert.equal(brief.schemaVersion, 3);
+      if (brief.schemaVersion !== 3) throw new Error("Expected guidance-capable standards brief.");
+      const presentationText = brief.guidancePresentation;
+      const presentation = JSON.parse(presentationText);
+      assert.equal(presentation.schemaVersion, 2);
+      assert.equal(presentation.sources.length, 1);
+      const [source] = presentation.sources;
+      assert.equal(source.applicableTargets.length, testCase.targetCount);
+      assert.equal(source.directRecognitionGroups.length, 1);
+      assert.deepEqual(
+        source.directRecognitionGroups[0].applicableTargetIndexes,
+        Array.from({ length: testCase.targetCount }, (_, index) => index),
+      );
+      for (const { targetId } of source.applicableTargets) {
+        assert.equal(presentationText.split(targetId).length - 1, 1);
+      }
+      assert.ok(
+        Buffer.byteLength(presentationText, "utf8") <= testCase.presentationCeiling,
+        `${testCase.targetCount}-target presentation exceeded ${testCase.presentationCeiling} bytes`,
+      );
+
+      const admission = await preflightReview(packetPath, {
+        ...config,
+        budgets: {
+          ...config.budgets,
+          maxInitialEvidenceBytes: 128_000,
+          maxConversationBytes: 600_000,
+          maxTotalTokens: 1_000_000,
+        },
+      });
+      assert.ok(admission.guidanceAdmission);
+      const wireBytesByStage = admission.guidanceAdmission.wireBytesByStage;
+      assert.deepEqual(Object.keys(wireBytesByStage).sort(), [
+        "final",
+        "findingVerification",
+        "preliminary",
+      ]);
+      for (const wireBytes of Object.values(wireBytesByStage)) {
+        assert.equal(Number.isSafeInteger(wireBytes), true);
+        assert.ok(wireBytes >= Buffer.byteLength(presentationText, "utf8"));
+        assert.ok(
+          wireBytes <= testCase.wireCeiling,
+          `${testCase.targetCount}-target provider-message delta ${wireBytes} exceeded ${testCase.wireCeiling} bytes`,
+        );
+      }
+      assert.equal(wireBytesByStage.preliminary, wireBytesByStage.final);
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  }
+});
+
+test("preserves exact direct and imported provenance through compact target indexes", async () => {
+  const { repositoryPath, packetPath } = await arrangeGuidancePacket(undefined, true, 3, true);
+  try {
+    const graph = JSON.parse(await readFile(join(packetPath, "guidance-graph.json"), "utf8"));
+    const brief = await buildReviewBrief(packetPath, 128_000, repositoryPath);
+    assert.equal(brief.schemaVersion, 3);
+    if (brief.schemaVersion !== 3) throw new Error("Expected guidance-capable standards brief.");
+    const presentation = JSON.parse(brief.guidancePresentation);
+
+    const expectedDirect = graph.nodes
+      .flatMap((node: { sourceId: string; directRecognitions: Record<string, unknown>[] }) =>
+        node.directRecognitions.map((recognition) => ({ sourceId: node.sourceId, ...recognition })),
+      )
+      .map((entry: unknown) => JSON.stringify(entry))
+      .sort();
+    const presentedDirect = presentation.sources
+      .flatMap(
+        (source: {
+          sourceId: string;
+          applicableTargets: { targetId: string }[];
+          directRecognitionGroups: {
+            familyId: string;
+            sourceKind: string;
+            nativeOrder: number;
+            discoveredPath: string;
+            applicableTargetIndexes: number[];
+          }[];
+        }) =>
+          source.directRecognitionGroups.flatMap((group) =>
+            group.applicableTargetIndexes.map((targetIndex) => ({
+              sourceId: source.sourceId,
+              familyId: group.familyId,
+              sourceKind: group.sourceKind,
+              nativeOrder: group.nativeOrder,
+              applicableTargetId: source.applicableTargets[targetIndex]?.targetId,
+              discoveredPath: group.discoveredPath,
+            })),
+          ),
+      )
+      .map((entry: unknown) => JSON.stringify(entry))
+      .sort();
+    assert.deepEqual(presentedDirect, expectedDirect);
+    assert.ok(new Set(presentedDirect.map((entry: string) => JSON.parse(entry).familyId)).size > 1);
+
+    const occurrences = new Map(
+      graph.occurrences.map((occurrence: { occurrenceId: string }) => [
+        occurrence.occurrenceId,
+        occurrence,
+      ]),
+    );
+    const expectedImports = graph.edges
+      .map(
+        (edge: {
+          edgeId: string;
+          occurrenceId: string;
+          importedSourceId: string;
+          applicableTargetId: string;
+        }) => ({
+          importedSourceId: edge.importedSourceId,
+          edgeId: edge.edgeId,
+          ...(occurrences.get(edge.occurrenceId) as Record<string, unknown>),
+          applicableTargetId: edge.applicableTargetId,
+        }),
+      )
+      .map((entry: unknown) => JSON.stringify(entry))
+      .sort();
+    const presentedImports = presentation.sources
+      .flatMap(
+        (source: {
+          sourceId: string;
+          applicableTargets: { targetId: string }[];
+          inboundImportGroups: {
+            occurrenceId: string;
+            familyId: string;
+            syntaxKind: string;
+            importerSourceId: string;
+            requestedSpecifier: string;
+            startUtf16: number;
+            endUtf16: number;
+            edges: { edgeId: string; applicableTargetIndex: number }[];
+          }[];
+        }) =>
+          source.inboundImportGroups.flatMap((group) =>
+            group.edges.map((edge) => ({
+              importedSourceId: source.sourceId,
+              edgeId: edge.edgeId,
+              occurrenceId: group.occurrenceId,
+              familyId: group.familyId,
+              syntaxKind: group.syntaxKind,
+              importerSourceId: group.importerSourceId,
+              requestedSpecifier: group.requestedSpecifier,
+              startUtf16: group.startUtf16,
+              endUtf16: group.endUtf16,
+              applicableTargetId: source.applicableTargets[edge.applicableTargetIndex]?.targetId,
+            })),
+          ),
+      )
+      .map((entry: unknown) => JSON.stringify(entry))
+      .sort();
+    assert.deepEqual(presentedImports, expectedImports);
+    assert.ok(presentedImports.length > 0);
+    for (const source of presentation.sources) {
+      const sourceText = JSON.stringify(source);
+      for (const { targetId } of source.applicableTargets) {
+        assert.equal(sourceText.split(targetId).length - 1, 1);
+      }
+    }
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
 function preliminaryFor(request: Parameters<ReviewProviderV1["complete"]>[0]) {
   const brief = JSON.parse(request.messages[1]?.content ?? "{}");
   return {
@@ -295,6 +497,22 @@ test("final resume rejects a replaced import before any resumed call", async () 
       () => runTwoStageReview(packetPath, config, initialProvider, repositoryPath),
       /rate limit/i,
     );
+    const runRecordPath = join(packetPath, "review", "run-record.jsonl");
+    const currentRunRecord = await readFile(runRecordPath, "utf8");
+    assert.match(currentRunRecord, /"promptVersion":"standards-review-v18"/);
+    await writeFile(
+      runRecordPath,
+      currentRunRecord.replace(
+        '"promptVersion":"standards-review-v18"',
+        '"promptVersion":"standards-review-v17"',
+      ),
+    );
+    await assert.rejects(
+      () => resumeFinalReview(packetPath, config, resumedProvider, repositoryPath),
+      /incompatible final response protocol/i,
+    );
+    assert.equal(resumedCalls, 0);
+    await writeFile(runRecordPath, currentRunRecord);
     await redirectPersistedImport(packetPath);
     await assert.rejects(
       () => resumeFinalReview(packetPath, config, resumedProvider, repositoryPath),
@@ -390,16 +608,16 @@ test("guidance-capable run binds prompt identity and withholds author context", 
       .split("\n")
       .map((line) => JSON.parse(line));
     const started = events.find((event) => event.type === "RUN_STARTED");
-    assert.equal(started.promptVersion, "standards-review-v17");
+    assert.equal(started.promptVersion, "standards-review-v18");
     assert.equal(started.guidanceGraphDigest.value.length, 64);
     assert.equal(events.find((event) => event.type === "GUIDANCE_ADMISSION")?.status, "ACCEPTED");
     assert.equal(
       events.find((event) => event.type === "CALL_STARTED")?.promptVersion,
-      "standards-review-v17",
+      "standards-review-v18",
     );
     const reportMetadata = JSON.parse(await readFile(result.reportMetadataPath, "utf8"));
     assert.deepEqual(reportMetadata.guidanceGraphDigest, started.guidanceGraphDigest);
-    assert.equal(reportMetadata.promptVersion, "standards-review-v17");
+    assert.equal(reportMetadata.promptVersion, "standards-review-v18");
     assert.equal(reportMetadata.preliminarySchema, "standards_preliminary_v2");
     assert.equal(reportMetadata.finalSchema, "standards_candidate_v3");
     assert.deepEqual(

@@ -14,7 +14,7 @@ import {
   selectedReferences,
   selectedRules,
 } from "../contracts/standards-review.js";
-import { renderGuidancePromptPresentationV1 } from "../guidance/presentation.js";
+import { renderGuidancePromptPresentationV2 } from "../guidance/presentation.js";
 import { inspectSnapshotPacket, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
 import { renderUnifiedDiff } from "./unified-diff.js";
 
@@ -144,7 +144,7 @@ export async function buildReviewBrief(
     throw new Error("Guidance-capable briefs require standards review mode.");
   }
   const guidancePresentation = packet.guidanceGraph
-    ? await renderGuidancePromptPresentationV1(packetPath, packet.guidanceGraph)
+    ? await renderGuidancePromptPresentationV2(packetPath, packet.guidanceGraph)
     : undefined;
   const canonicalInputIds = canonicalInputList(packet.canonicalInputs).map((input) => input.id);
   const standardsRules =
