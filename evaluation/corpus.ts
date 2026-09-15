@@ -283,6 +283,28 @@ function runtimeForCase(caseId: string): {
   };
 }
 
+function patchLines(content: string): string[] {
+  const withoutFinalNewline = content.endsWith("\n") ? content.slice(0, -1) : content;
+  return withoutFinalNewline.length === 0 ? [] : withoutFinalNewline.split("\n");
+}
+
+function goldFixForCase(testCase: (typeof EVALUATION_CASES_V1)[number]): string {
+  return testCase.repository.files
+    .filter(({ base, head }) => base !== head)
+    .map((file) => {
+      const before = patchLines(file.head ?? "");
+      const after = patchLines(file.base ?? "");
+      return [
+        `--- ${file.head === undefined ? "/dev/null" : `a/${file.path}`}`,
+        `+++ ${file.base === undefined ? "/dev/null" : `b/${file.path}`}`,
+        `@@ -${before.length === 0 ? 0 : 1},${before.length} +${after.length === 0 ? 0 : 1},${after.length} @@`,
+        ...before.map((line) => `-${line}`),
+        ...after.map((line) => `+${line}`),
+      ].join("\n");
+    })
+    .join("\n");
+}
+
 function definitionForCase(
   testCase: (typeof EVALUATION_CASES_V1)[number],
 ): EvaluationCorpusCaseDefinitionV1 {
@@ -339,9 +361,7 @@ function definitionForCase(
           ? null
           : {
               reference: patchReference,
-              content: `Evaluator correction for ${testCase.id}:\n${roots
-                .map(({ description }) => `- ${description}`)
-                .join("\n")}\n`,
+              content: goldFixForCase(testCase),
             },
     },
   };

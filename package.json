@@ -71,6 +71,7 @@
     "matrix:dry": "npm run build && node dist/evaluation/run-matrix.js dry",
     "matrix:list": "npm run build && node dist/evaluation/run-matrix.js list",
     "matrix:live": "npm run build && node dist/evaluation/run-matrix.js live",
+    "matrix:reconstruct-corpus": "npm run build && node dist/evaluation/reconstruct-corpus.js",
     "repo:context": "python3 -B scripts/check-ai-context.py --ci",
     "schemas:write": "npm run build && node dist/scripts/write-json-schemas.js",
     "test": "npm run build && node --test \"dist/test/**/*.test.js\"",

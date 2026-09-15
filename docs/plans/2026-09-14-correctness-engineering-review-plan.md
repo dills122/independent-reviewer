@@ -68,10 +68,12 @@ flowchart LR
 4. Freeze a bounded development/holdout corpus and one baseline configuration.
    Paid sampling is a separate explicitly authorized experiment.
 
-Progress: increment 1 now has a package-private 20-case synthetic corpus, clean-checkout fixture
+Progress: increments 1 and 2 now have a package-private 30-case synthetic corpus, clean-checkout fixture
 reconstruction, fixed `smoke`/`standard`/`full` suites, group and exact-case selection, and bounded
-live-run admission. Run artifacts preserve terminal state and cost uncertainty. Increment 2 remains
-open: corpus/split contracts, holdout allocation, and finding-level scoring are not implemented.
+live-run admission. Run artifacts preserve terminal state and cost uncertainty. Versioned case
+manifests, whole-family development/holdout allocation, provenance, runtime identity, and
+evaluator-only assertions and corrections reconstruct outside reviewer repositories. Finding-level
+scoring remains open.
 One separately authorized paid full-matrix sample completed, but remains unscored and unrepeated.
 See the [matrix operator guide](../../evaluation/README.md).
 

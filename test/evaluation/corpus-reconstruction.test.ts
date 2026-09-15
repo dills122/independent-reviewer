@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { promisify } from "node:util";
 
 import {
   digestEvaluationArtifactV1,
@@ -16,12 +18,14 @@ import {
 } from "../../evaluation/corpus-reconstruction.js";
 import { EVALUATION_CASES_V1 } from "../../evaluation/matrix-selection.js";
 
+const exec = promisify(execFile);
+
 describe("evaluation corpus reconstruction", () => {
   it("reconstructs one case with stable source and manifest identities", async () => {
     const temporaryRoot = await mkdtemp(join(tmpdir(), "evaluation-corpus-"));
     try {
-      const testCase = EVALUATION_CASES_V1.find(({ id }) => id === "case_017");
-      const definition = EVALUATION_CORPUS_V1.cases.find(({ caseId }) => caseId === "case_017");
+      const testCase = EVALUATION_CASES_V1.find(({ id }) => id === "case_018");
+      const definition = EVALUATION_CORPUS_V1.cases.find(({ caseId }) => caseId === "case_018");
       assert.ok(testCase);
       assert.ok(definition);
 
@@ -41,7 +45,7 @@ describe("evaluation corpus reconstruction", () => {
         digestEvaluationArtifactV1(EvaluationCaseManifestV1Schema, first.manifest).value,
         digestEvaluationArtifactV1(EvaluationCaseManifestV1Schema, second.manifest).value,
       );
-      assert.equal(first.manifest.source.repository, "synthetic://case_017");
+      assert.equal(first.manifest.source.repository, "synthetic://case_018");
       assert.match(first.manifest.source.baseCommit, /^[0-9a-f]{40}$/);
       assert.ok(
         first.manifest.reviewerInputInventory.every(
@@ -50,6 +54,24 @@ describe("evaluation corpus reconstruction", () => {
       );
       assert.doesNotMatch(first.oracleDirectory, new RegExp(`${testCase.id}/repo`));
       assert.match(await readFile(first.manifestPath, "utf8"), /"schemaVersion": 1/);
+      await assert.doesNotReject(() =>
+        exec("git", [
+          "-C",
+          first.prepared.repositoryPath,
+          "apply",
+          "--check",
+          join(first.oracleDirectory, "correction.patch"),
+        ]),
+      );
+      await assert.rejects(
+        () =>
+          reconstructEvaluationCorpusCaseV1(
+            testCase,
+            { ...definition, familyId: "family_wrong" },
+            join(temporaryRoot, "mismatched"),
+          ),
+        /definition does not match/i,
+      );
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });
     }

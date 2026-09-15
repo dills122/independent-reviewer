@@ -108,7 +108,11 @@ export async function reconstructEvaluationCorpusCaseV1(
 ): Promise<ReconstructedEvaluationCorpusCaseV1> {
   const corpus = validateEvaluationCorpusDefinitionV1(EVALUATION_CORPUS_V1);
   const definition = corpus.cases.find(({ caseId }) => caseId === rawDefinition.caseId);
-  if (!definition || definition.caseId !== testCase.id) {
+  if (
+    !definition ||
+    definition.caseId !== testCase.id ||
+    jsonDocument(definition) !== jsonDocument(rawDefinition)
+  ) {
     throw new Error(`Corpus definition does not match reconstructable case ${testCase.id}.`);
   }
 
@@ -187,17 +191,18 @@ export async function reconstructEvaluationCorpusV1(
       ),
     );
   }
+  const manifestByCaseId = new Map(cases.map(({ manifest }) => [manifest.caseId, manifest]));
 
   const split = validateEvaluationFamilySplitV1(
     {
       schemaVersion: 1,
       corpusVersion: corpus.corpusVersion,
       splitVersion: corpus.splitVersion,
-      assignments: corpus.cases.map((definition, index) => ({
+      assignments: corpus.cases.map((definition) => ({
         caseId: definition.caseId,
         caseManifestDigest: digestEvaluationArtifactV1(
           EvaluationCaseManifestV1Schema,
-          cases[index]?.manifest,
+          manifestByCaseId.get(definition.caseId),
         ),
         familyId: definition.familyId,
         split: definition.split,

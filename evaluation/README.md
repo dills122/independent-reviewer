@@ -10,7 +10,7 @@ without provider calls; live runs compare validated final reports with hidden ex
 | --- | ---: | --- | ---: |
 | `smoke` | 4 | Fast health check across both review modes | $0.08 |
 | `standard` | 8 | Default provider-free change check and recommended paid regression run | $0.16 |
-| `full` | 20 | Broad requirements, standards, adversarial, cross-file, and multilingual coverage | $0.40 |
+| `full` | 30 | Broad paired requirements, standards, adversarial, cross-file, and multilingual coverage | $0.60 |
 
 Ceilings use the committed configuration's $0.02 per-case limit. Provider-reported charges are
 usually lower, but admission always reserves the full ceiling. Both `matrix:dry` and `matrix:live`
@@ -52,6 +52,27 @@ Each run writes an immutable manifest, per-case result, and aggregate summary un
 attempts remain separate; retry reservations are recorded as conservative charges, not claimed as
 provider bills.
 
+## Reconstruct evaluator corpus
+
+Reconstruct all 30 cases, validated case manifests, evaluator-only oracle artifacts, and complete
+family split manifest into a new explicit directory without calling a provider:
+
+```sh
+npm run matrix:reconstruct-corpus -- --output /tmp/independent-reviewer-corpus-v1
+```
+
+Output directory must not already exist. Each reconstructed repository contains reviewer-visible
+inputs only. Sibling `evaluator/` directories retain hidden assertion records, correction artifacts,
+and case manifests; top-level `evaluator/family-split-manifest.json` binds every case-manifest digest.
+Git author and committer metadata are fixed so identical clean checkouts produce identical BASE
+commit and case-manifest identities.
+
+Corpus v1 contains 12 defect/clean pairs and six controls. Eight pairs are development data and four
+are holdout data. Whole families stay in one split. Every case records source and license provenance,
+an explicit unqualified runtime identity, obligations, label completeness, and expected roots or
+uncertainties. Oracle assertions are evaluator evidence, not qualified executable checks; isolated
+execution remains deferred to Stage D.
+
 ## Corpus rules
 
 - Keep case IDs opaque. Put defect labels and expected root causes only in evaluator-owned oracle
@@ -64,9 +85,10 @@ provider bills.
 - Run `npm run matrix:dry -- --suite full --run-label <label>` before paying for new or changed
   cases.
 
-Corpus expansion and scored quality gates continue under
-[GitHub issue #160](https://github.com/dills122/independent-reviewer/issues/160). This first slice
-owns reproducible selection, fixture construction, paid admission, and result accounting.
+Scored quality gates continue under
+[GitHub issue #160](https://github.com/dills122/independent-reviewer/issues/160). Current slices own
+reproducible selection, fixture construction, family splits, evaluator-only oracles, paid admission,
+and result accounting.
 
 ## Evaluator artifact contracts
 

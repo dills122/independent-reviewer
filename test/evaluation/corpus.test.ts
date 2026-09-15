@@ -64,6 +64,10 @@ describe("evaluation corpus definition", () => {
       }
       if (entry.expectedRoots.length > 0)
         assert.ok(entry.evaluatorOnly.fixingPatch?.content.length);
+      if (entry.expectedRoots.length > 0) {
+        assert.match(entry.evaluatorOnly.fixingPatch?.content ?? "", /^--- a\//m);
+        assert.match(entry.evaluatorOnly.fixingPatch?.content ?? "", /^@@ -\d+,\d+ \+\d+,\d+ @@$/m);
+      }
       if (entry.pair?.role === "CLEAN") {
         assert.equal(entry.expectedRoots.length, 0);
       }
