@@ -79,17 +79,19 @@ node dist/src/cli.js config show --repo /path/to/target-repository --resolved
 
 The resolved view exposes the complete runtime policy and stable digests, but no
 credentials. `--model` and `--max-cost` can override saved values for one
-`review`, `resume-final`, or `config show` command. Do not combine these flags
-with `--config`.
+`review`, `resume-final`, or `config show` command. `--author-required` /
+`--no-author` and `--reviewer-rules` / `--no-reviewer-rules` override their
+matching simple settings for `review` or `config show`. Do not combine model or
+cost overrides with `--config`.
 
 The simple flow automatically captures BASE-owned
 `.independent-reviewer/rules.md` when present. It also discovers Codex
 `AGENTS.md`/`AGENTS.override.md` from repository root through each changed
 file's parent, with one file selected per directory and override precedence.
 Claude, Gemini, Kiro, Copilot, and Cursor repository conventions are also
-discovered automatically. Interactive author input remains planned, so pass
-`--standards` and `--author` to each simple-settings review until that workflow
-ships:
+discovered automatically. Pass `--standards` and either `--author` or explicit
+`--no-author` to each simple-settings review; interactive author input remains
+planned:
 
 ```sh
 node dist/src/cli.js review \
@@ -268,11 +270,19 @@ Check transaction boundaries and the behavior when the claim already exists.
 
 Plain Markdown is converted to overview schema v2 with no claimed verification.
 Use a JSON author packet only when commands and outcomes must enter the explicit
-claim ledger. Structured shapes are defined in
-[`standards-review-request-v2.schema.json`](../schemas/standards-review-request-v2.schema.json).
+claim ledger. Its shape remains author packet v2; new friendly requests bind it
+inside
+[`standards-review-request-v3.schema.json`](../schemas/standards-review-request-v3.schema.json).
 
 Author input is frozen before the blind call but withheld from both blind review
 and fresh finding verification. It is delivered only during final reconciliation.
+Author input is required by default. `--no-author` records a digest-bound
+`DECLINED` state, warns before a paid review, stays hidden during blind and
+verification stages, and releases only that marker to final reconciliation.
+The report records `AUTHOR_CONTEXT_DECLINED` with empty author-claim ledgers;
+declining author context is a note, not a limitation or verdict by itself. New
+friendly requests use
+[`standards-review-request-v3.schema.json`](../schemas/standards-review-request-v3.schema.json).
 
 ## 5. Advanced saved settings
 
@@ -294,8 +304,8 @@ Git-resolved settings location. Settings are not committed, and `init` refuses
 to overwrite an existing file. Edit that file deliberately or override any saved
 path with the corresponding command flag.
 
-You can skip `init` by passing `--config`, `--standards`, and `--author` on every
-standards-mode `review` command.
+You can skip `init` by passing `--config`, `--standards`, and either `--author`
+or explicit `--no-author` on every standards-mode `review` command.
 
 ## 6. Run dry-run
 
@@ -445,10 +455,11 @@ node dist/src/cli.js inspect --packet /path/to/packet --repo /path/to/target-rep
 node dist/src/cli.js inspect --packet /path/to/packet --repo /path/to/target-repository --json
 ```
 
-`inspect` reports whether an author packet exists, never its content. `--repo`
-defaults to current directory. Packets containing imported repository guidance
-require a checkout containing frozen BASE commit so inspection can re-resolve
-each import before accepting persisted destination.
+`inspect` reports provided or declined author-context state and digest, plus
+whether an author packet exists, never its content. `--repo` defaults to current
+directory. Packets containing imported repository guidance require a checkout
+containing frozen BASE commit so inspection can re-resolve each import before
+accepting persisted destination.
 
 ## Final-stage retry
 

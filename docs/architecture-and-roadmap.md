@@ -512,7 +512,7 @@ Current command surface:
 ```text
 independent-reviewer init [--repo <path>] (--model <id> --max-cost <usd> | --config <path> ...)
 independent-reviewer config show [--repo <path>] [--resolved]
-independent-reviewer review (--repo <path> --standards <path> --author <path> | --request <path> --config <path>)
+independent-reviewer review (--repo <path> --standards <path> (--author <path> | --no-author) | --request <path> --config <path>)
 independent-reviewer prepare --request <path> --output <path>
 independent-reviewer inspect --packet <path> [--repo <path>] [--json]
 independent-reviewer resume-final --packet <path> [--repo <path>] (--model <id> --max-cost <usd> | --config <path>)

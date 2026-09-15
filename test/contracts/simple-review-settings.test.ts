@@ -20,7 +20,7 @@ describe("simple review settings", () => {
         model: "openai/gpt-oss-120b",
         maxCostUsd: 0.25,
         requireAuthorExplanation: false,
-        discoverRepositorySteering: false,
+        useReviewerRules: false,
       },
       cli: {
         maxCostUsd: 0.05,
@@ -33,13 +33,13 @@ describe("simple review settings", () => {
       model: "openai/gpt-oss-120b",
       maxCostUsd: 0.05,
       requireAuthorExplanation: true,
-      discoverRepositorySteering: false,
+      useReviewerRules: false,
     });
     assert.deepEqual(resolved.provenance, {
       model: "LOCAL",
       maxCostUsd: "CLI",
       requireAuthorExplanation: "CLI",
-      discoverRepositorySteering: "LOCAL",
+      useReviewerRules: "LOCAL",
     });
     assert.equal(resolved.reviewRunConfig.model, "openai/gpt-oss-120b");
     assert.equal(resolved.reviewRunConfig.budgets.maxTotalCostUsd, 0.05);
@@ -51,9 +51,9 @@ describe("simple review settings", () => {
     });
 
     assert.equal(resolved.settings.requireAuthorExplanation, true);
-    assert.equal(resolved.settings.discoverRepositorySteering, true);
+    assert.equal(resolved.settings.useReviewerRules, true);
     assert.equal(resolved.provenance.requireAuthorExplanation, "ENGINE_DEFAULT");
-    assert.equal(resolved.provenance.discoverRepositorySteering, "ENGINE_DEFAULT");
+    assert.equal(resolved.provenance.useReviewerRules, "ENGINE_DEFAULT");
   });
 
   it("requires model and maximum cost from CLI or local settings", () => {
@@ -139,7 +139,7 @@ describe("simple review settings", () => {
         model: "openai/gpt-oss-120b",
         maxCostUsd: 0.05,
         requireAuthorExplanation: true,
-        discoverRepositorySteering: true,
+        useReviewerRules: true,
         unsafeRoutingOverride: true,
       }).success,
       false,

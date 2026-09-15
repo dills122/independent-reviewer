@@ -373,7 +373,10 @@ for (const scenario of [
         const author = JSON.parse(await readFile(authorPath, "utf8"));
         author.overview = "Tampered";
         await writeFile(authorPath, JSON.stringify(author));
-        await assert.rejects(inspectSnapshotPacket(f.packet), /Author overview digest/);
+        await assert.rejects(
+          inspectSnapshotPacket(f.packet),
+          /author(?: overview|-context) digest/i,
+        );
       }
     } finally {
       await rm(f.repo, { recursive: true, force: true });
@@ -458,7 +461,7 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
       model: "openai/gpt-oss-120b",
       maxCostUsd: 0.05,
       requireAuthorExplanation: true,
-      discoverRepositorySteering: true,
+      useReviewerRules: true,
     });
     assert.equal(
       await runCliV1(
@@ -475,6 +478,27 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
     assert.match(output.join("\n"), /"model": "openai\/gpt-oss-120b"/);
     assert.match(output.join("\n"), /"model": "LOCAL"/);
     assert.doesNotMatch(output.join("\n"), /OPENROUTER_API_KEY/);
+
+    output.length = 0;
+    assert.equal(
+      await runCliV1(
+        ["config", "show", "--repo", f.repo, "--no-author", "--no-reviewer-rules"],
+        io,
+      ),
+      0,
+    );
+    assert.match(output.join("\n"), /"requireAuthorExplanation": false/);
+    assert.match(output.join("\n"), /"useReviewerRules": false/);
+    assert.match(output.join("\n"), /"requireAuthorExplanation": "CLI"/);
+    assert.match(output.join("\n"), /"useReviewerRules": "CLI"/);
+    assert.equal(
+      await runCliV1(
+        ["config", "show", "--repo", f.repo, "--reviewer-rules", "--no-reviewer-rules"],
+        io,
+      ),
+      1,
+    );
+    assert.match(errors.at(-1) ?? "", /either --reviewer-rules or --no-reviewer-rules/);
 
     output.length = 0;
     assert.equal(await runCliV1(["config", "show", "--repo", f.repo, "--resolved"], io), 0);
@@ -515,7 +539,11 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
 
     await writeFile(
       simpleSettingsPath,
-      JSON.stringify({ ...localSettings, discoverRepositorySteering: false }),
+      JSON.stringify({
+        ...localSettings,
+        requireAuthorExplanation: false,
+        useReviewerRules: false,
+      }),
     );
     output.length = 0;
     assert.equal(
@@ -538,6 +566,137 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
       errors.join("\n"),
     );
     assert.doesNotMatch(output.join("\n"), /Reviewer guidance:/);
+
+    output.length = 0;
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          profilePath,
+          "--reviewer-rules",
+          "--no-author",
+          "--dry-run",
+        ],
+        io,
+      ),
+      0,
+      errors.join("\n"),
+    );
+    assert.match(output.join("\n"), /Reviewer guidance: \d+ content bytes \(ACCEPTED\)/);
+    assert.match(output.join("\n"), /Author explanation: explicitly declined/);
+
+    errors.length = 0;
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          profilePath,
+          "--author-required",
+          "--dry-run",
+        ],
+        io,
+      ),
+      1,
+    );
+    assert.match(errors.at(-1) ?? "", /Author explanation is required/);
+  } finally {
+    await rm(f.repo, { recursive: true, force: true });
+  }
+});
+
+test("author explanation is required by default and explicit opt-out creates a bound declined request", async () => {
+  const f = await fixture();
+  const output: string[] = [];
+  const errors: string[] = [];
+  const io = {
+    stdout: (message: string) => output.push(message),
+    stderr: (message: string) => errors.push(message),
+  };
+  try {
+    const { assembleStandardsRequest } = await import("../src/cli/standards-input.js");
+    const request = JSON.parse(await readFile(f.requestPath, "utf8"));
+    const profilePath = join(f.repo, "standards.json");
+    await writeFile(profilePath, request.canonicalInputs.standards[0].content);
+
+    await assert.rejects(
+      assembleStandardsRequest({
+        repo: f.repo,
+        config: f.configPath,
+        standards: profilePath,
+      }),
+      /Author explanation is required/,
+    );
+
+    const declined = await assembleStandardsRequest({
+      repo: f.repo,
+      config: f.configPath,
+      standards: profilePath,
+      noAuthor: true,
+    });
+    assert.equal(declined.request.schemaVersion, 3);
+    assert.equal(declined.request.authorContext.status, "DECLINED");
+    assert.equal("authorPacket" in declined.request, false);
+
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          profilePath,
+          "--config",
+          f.configPath,
+          "--no-author",
+          "--dry-run",
+        ],
+        io,
+        {
+          readOpenRouterApiKey: () => {
+            throw new Error("declined dry-run read credential");
+          },
+          createProvider: () => {
+            throw new Error("declined dry-run created provider");
+          },
+        },
+      ),
+      0,
+      errors.join("\n"),
+    );
+    assert.match(output.join("\n"), /Author explanation: explicitly declined/);
+
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          profilePath,
+          "--author",
+          request.authorPacket.overview,
+          "--no-author",
+          "--dry-run",
+        ],
+        io,
+      ),
+      1,
+    );
+    assert.match(errors.at(-1) ?? "", /either --author or --no-author/);
   } finally {
     await rm(f.repo, { recursive: true, force: true });
   }
@@ -699,6 +858,62 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
     assert.deepEqual(metadata.guidanceGraphDigest, inspected.guidanceGraphDigest);
     assert.equal(metadata.promptVersion, "standards-review-v18");
     assert.match(output.join("\n"), /Standards satisfied/);
+
+    const firstRunCallCount = requests.length;
+    const declinedPacket = join(f.repo, ".review-runs", "declined");
+    assert.equal(
+      await runCliV1(
+        [
+          "review",
+          "--repo",
+          f.repo,
+          "--base",
+          "main",
+          "--standards",
+          profilePath,
+          "--no-author",
+          "--new-flow",
+          "--output",
+          declinedPacket,
+        ],
+        io,
+        {
+          readOpenRouterApiKey: () => "test-key",
+          createProvider: () => provider,
+        },
+      ),
+      0,
+      errors.join("\n"),
+    );
+    const declinedRequests = requests.slice(firstRunCallCount);
+    assert.doesNotMatch(JSON.stringify(declinedRequests[0]?.messages), /DECLINED|AUTHOR_CONTEXT/);
+    assert.match(JSON.stringify(declinedRequests.at(-1)?.messages), /AUTHOR_CONTEXT_RELEASED/);
+    assert.match(JSON.stringify(declinedRequests.at(-1)?.messages), /DECLINED/);
+    const declinedReport = JSON.parse(
+      await readFile(join(declinedPacket, "review", "final.json"), "utf8"),
+    );
+    assert.equal(declinedReport.schemaVersion, 3);
+    assert.deepEqual(declinedReport.authorContext, {
+      status: "DECLINED",
+      digest: declinedReport.authorContext.digest,
+      noteCode: "AUTHOR_CONTEXT_DECLINED",
+    });
+    assert.deepEqual(declinedReport.authorClaims, []);
+    assert.deepEqual(declinedReport.authorVerificationClaims, []);
+    assert.deepEqual(declinedReport.limitations, []);
+    assert.equal(declinedReport.verdict, "READY");
+    assert.match(errors.join("\n"), /Warning: author explanation explicitly declined/);
+    assert.match(
+      await readFile(join(declinedPacket, "review", "report.md"), "utf8"),
+      /No author claims were evaluated/,
+    );
+    assert.match(
+      await readFile(join(declinedPacket, "review", "run-record.jsonl"), "utf8"),
+      /AUTHOR_CONTEXT_RELEASED/,
+    );
+    const declinedInspected = await inspectSnapshotPacket(declinedPacket);
+    assert.equal(declinedInspected.authorContext?.status, "DECLINED");
+    assert.equal(declinedInspected.authorPacket, undefined);
   } finally {
     await rm(f.repo, { recursive: true, force: true });
   }
@@ -823,13 +1038,14 @@ test("saved settings never overwrite silently and direct inputs enforce three ex
   }
 });
 
-test("a rate-limited final stage offers the resume that revalidates it", async () => {
+test("a rate-limited declined-author final stage offers resume and rejects a silent author flip", async () => {
   // Regression for #121. The offer was gated on an exact eight-element event-type sequence that
   // omitted FINDING_VERIFICATION_PERSISTED, which every run emits, so the comparison could never
   // hold. A user whose final call was rate limited -- with a paid preliminary already saved --
   // was told the opposite: that no final-only resume remained.
   const f = await fixture();
   const errors: string[] = [];
+  let providerCalls = 0;
   const provider: ReviewProviderV1 = {
     auditRequest: () => ({
       providerPolicyVersion: "test-provider-v1",
@@ -838,6 +1054,7 @@ test("a rate-limited final stage offers the resume that revalidates it", async (
       credentialFreeWireRequestDigest: digest,
     }),
     complete: async (request) => {
+      providerCalls += 1;
       if (request.stage !== "PRELIMINARY") {
         throw new ProviderCallError("PROVIDER_ERROR", "Rate limited.", {
           diagnostic: {
@@ -895,8 +1112,24 @@ test("a rate-limited final stage offers the resume that revalidates it", async (
   };
 
   try {
+    const request = JSON.parse(await readFile(f.requestPath, "utf8"));
+    const profilePath = join(f.repo, "standards.json");
+    await writeFile(profilePath, request.canonicalInputs.standards[0].content);
     const exit = await runCliV1(
-      ["review", "--request", f.requestPath, "--config", f.configPath, "--output", f.packet],
+      [
+        "review",
+        "--repo",
+        f.repo,
+        "--base",
+        "main",
+        "--standards",
+        profilePath,
+        "--no-author",
+        "--config",
+        f.configPath,
+        "--output",
+        f.packet,
+      ],
       { stdout: () => undefined, stderr: (message) => errors.push(message) },
       { readOpenRouterApiKey: () => "test", createProvider: () => provider },
     );
@@ -907,6 +1140,28 @@ test("a rate-limited final stage offers the resume that revalidates it", async (
     assert.match(stderr, /resume-final --packet/, stderr);
     assert.doesNotMatch(stderr, /has no remaining final-only resume/);
     assert.match(stderr, /Initial assessment is saved/, stderr);
+
+    const runRecordPath = join(f.packet, "review", "run-record.jsonl");
+    const events = (await readFile(runRecordPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const released = events.find((event) => event.type === "AUTHOR_CONTEXT_RELEASED");
+    assert.ok(released);
+    released.authorContext.status = "PROVIDED";
+    await writeFile(runRecordPath, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`);
+    const callsBeforeResume = providerCalls;
+    errors.length = 0;
+    assert.equal(
+      await runCliV1(
+        ["resume-final", "--packet", f.packet, "--repo", f.repo, "--config", f.configPath],
+        { stdout: () => undefined, stderr: (message) => errors.push(message) },
+        { readOpenRouterApiKey: () => "test", createProvider: () => provider },
+      ),
+      1,
+    );
+    assert.match(errors.join("\n"), /persisted preliminary or author-stage identity is invalid/i);
+    assert.equal(providerCalls, callsBeforeResume);
   } finally {
     await rm(f.repo, { recursive: true, force: true });
   }

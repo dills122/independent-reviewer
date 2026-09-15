@@ -141,6 +141,20 @@ describe("evaluateResumeShapeV1", () => {
     assert.equal(result.shape.findingVerificationSucceededCalls.length, 1);
   });
 
+  it("admits explicit declined author-context release without treating it as missing", () => {
+    const events = eligibleEvents();
+    const index = events.findIndex((candidate) => candidate.type === "AUTHOR_DELIVERED");
+    events[index] = event({
+      type: "AUTHOR_CONTEXT_RELEASED",
+      authorContext: { schemaVersion: 1, status: "DECLINED", digest },
+    });
+
+    const result = evaluateResumeShapeV1(events);
+    assert.equal(result.eligible, true);
+    assert.ok(result.eligible);
+    assert.equal(result.shape.authorDelivered.type, "AUTHOR_CONTEXT_RELEASED");
+  });
+
   it("admits a run whose preliminary needed one output repair", () => {
     const events = eligibleEvents();
     events.splice(3, 0, callStarted("PRELIMINARY", 2), callSucceeded("PRELIMINARY", 2));

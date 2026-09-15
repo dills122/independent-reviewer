@@ -108,9 +108,11 @@ export {
   INSPECTION_REPORT_V1_JSON_SCHEMA,
   InspectionReportV1Schema,
   StandardsInspectionReportV2Schema,
+  StandardsInspectionReportV3Schema,
 } from "./inspection-report.js";
 export {
   jsonDocument,
+  jsonDocumentDigestV1,
   sha256BytesDigestV1,
   sha256BytesHex,
 } from "./json-document.js";

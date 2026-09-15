@@ -1,19 +1,25 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
+import { StandardsInspectionReportV3Schema } from "../../src/contracts/inspection-report.js";
 import {
   StandardsReviewBriefV2Schema,
   StandardsReviewBriefV3Schema,
 } from "../../src/contracts/neutral-review-brief.js";
 import { ReviewRequestV1Schema } from "../../src/contracts/review-request.js";
+import { STANDARDS_REPORT_V3_JSON_SCHEMA } from "../../src/contracts/standards-results.js";
 import {
   contractJsonSchema,
+  declinedAuthorContextV1,
+  providedAuthorContextV1,
   STANDARDS_PROFILE_V2_JSON_SCHEMA,
+  STANDARDS_REVIEW_REQUEST_V3_JSON_SCHEMA,
   StandardsCanonicalInputsV2Schema,
   StandardsProfileSchema,
   StandardsProfileV1Schema,
   StandardsProfileV2Schema,
   StandardsReviewRequestV2Schema,
+  StandardsReviewRequestV3Schema,
 } from "../../src/contracts/standards-review.js";
 
 export const profile = {
@@ -64,6 +70,50 @@ test("standards request needs code, standards and author input, not a business p
     false,
   );
   assert.equal(ReviewRequestV1Schema.safeParse(legacy).success, true);
+});
+
+test("friendly standards request binds provided or explicitly declined author context", async () => {
+  const legacy = JSON.parse(await readFile("test/fixtures/review-request.valid.json", "utf8"));
+  const authorPacket = {
+    schemaVersion: 2 as const,
+    overview: "Author explains the layering decision.",
+    claimedVerification: [],
+  };
+  const { authorPacket: _legacyAuthorPacket, ...legacyWithoutAuthor } = legacy;
+  const base = {
+    ...legacyWithoutAuthor,
+    schemaVersion: 3 as const,
+    mode: "STANDARDS" as const,
+    canonicalInputs: {
+      standards: [
+        {
+          id: "input_standards",
+          kind: "PROJECT_GUIDANCE" as const,
+          title: profile.name,
+          content: JSON.stringify(profile),
+          provenance: { type: "INLINE" as const, label: "Selected project rules" },
+        },
+      ],
+    },
+  };
+
+  const provided = {
+    ...base,
+    authorContext: providedAuthorContextV1(authorPacket),
+    authorPacket,
+  };
+  assert.equal(StandardsReviewRequestV3Schema.parse(provided).authorContext.status, "PROVIDED");
+  assert.equal(
+    StandardsReviewRequestV3Schema.safeParse({ ...provided, authorPacket: undefined }).success,
+    false,
+  );
+
+  const declined = { ...base, authorContext: declinedAuthorContextV1() };
+  assert.equal(StandardsReviewRequestV3Schema.parse(declined).authorContext.status, "DECLINED");
+  assert.equal(
+    StandardsReviewRequestV3Schema.safeParse({ ...declined, authorPacket }).success,
+    false,
+  );
 });
 
 test("selected standards reject duplicate rule identities and empty applicability", () => {
@@ -218,5 +268,17 @@ test("standards profile and brief v2 match committed JSON Schemas", async () => 
   assert.deepEqual(
     JSON.parse(await readFile("schemas/standards-review-brief-v3.schema.json", "utf8")),
     contractJsonSchema(StandardsReviewBriefV3Schema, "standards-review-brief:v3"),
+  );
+  assert.deepEqual(
+    JSON.parse(await readFile("schemas/standards-review-request-v3.schema.json", "utf8")),
+    STANDARDS_REVIEW_REQUEST_V3_JSON_SCHEMA,
+  );
+  assert.deepEqual(
+    JSON.parse(await readFile("schemas/standards-report-v3.schema.json", "utf8")),
+    STANDARDS_REPORT_V3_JSON_SCHEMA,
+  );
+  assert.deepEqual(
+    JSON.parse(await readFile("schemas/standards-inspection-report-v3.schema.json", "utf8")),
+    contractJsonSchema(StandardsInspectionReportV3Schema, "standards-inspection-report:v3"),
   );
 });

@@ -31,7 +31,7 @@ settings contain:
 - selected supported model profile;
 - maximum cost per review;
 - whether author explanation is required, defaulting to `true`; and
-- whether repository steering discovery is enabled, defaulting to `true`.
+- whether BASE-owned reviewer rules are used, defaulting to `true`.
 
 `init` stores these selections in Git-local state outside the reviewed tree.
 Explicit CLI values override local selections, which override versioned engine
@@ -73,10 +73,11 @@ formal `limitation`: author absence alone neither blocks `READY` nor forces
 `UNABLE_TO_VERIFY`. Findings, coverage, unresolved preliminary concerns, and
 formal limitations continue to determine the verdict.
 
-Resume requires matching request, packet, prompt, result, and run-record
-versions plus the same author status and digest. Existing request versions keep
-their current behavior. Old and new lifecycle artifacts cannot be mixed or
-silently upgraded. Detailed evidence and lifecycle rationale are retained in
+Friendly requests use version 3 and packet metadata versions 5/6. Resume
+requires matching request, packet, prompt, result, and run-record versions plus
+the same author status and digest. Existing request versions keep their current
+behavior. Old and new lifecycle artifacts cannot be mixed or silently upgraded.
+Detailed evidence and lifecycle rationale are retained in
 the [steering and author-absence research](../research/2026-09-11-steering-and-author-absence-contract.md).
 
 ## Alternatives considered

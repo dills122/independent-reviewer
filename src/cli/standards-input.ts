@@ -7,10 +7,12 @@ import { NonEmptyTextSchema } from "../contracts/primitives.js";
 import { FlowIdSchema } from "../contracts/review-request.js";
 import { ReviewRunConfigV3Schema } from "../contracts/review-run-config.js";
 import {
+  declinedAuthorContextV1,
   MAX_EXTERNAL_JSON_BYTES_V1,
+  providedAuthorContextV1,
   ReviewAuthorSchema,
   StandardsProfileSchema,
-  StandardsReviewRequestV2Schema,
+  StandardsReviewRequestV3Schema,
 } from "../contracts/standards-review.js";
 import { readStrictJsonFileV1 } from "../contracts/strict-json.js";
 import { resolveRepositoryRootV1 } from "../snapshot/git-capture.js";
@@ -21,6 +23,8 @@ export interface StandardsCliOptionsV1 {
   config?: string;
   standards?: string;
   author?: string;
+  noAuthor?: boolean;
+  requireAuthorExplanation?: boolean;
   newFlow?: boolean;
   base?: string;
 }
@@ -118,9 +122,13 @@ export async function assembleStandardsRequest(
   const standardPath = options.standards;
   const authorPath = options.author;
   const configPath = options.config;
-  if (!standardPath || !authorPath || (!configPath && !suppliedConfig))
+  if (!standardPath || (!configPath && !suppliedConfig))
+    throw new Error("Provide --standards and either --config or simple model/cost settings.");
+  if (options.noAuthor && authorPath)
+    throw new Error("Use either --author or --no-author, not both.");
+  if (!authorPath && !options.noAuthor && options.requireAuthorExplanation !== false)
     throw new Error(
-      "Provide --standards, --author and either --config or simple model/cost settings.",
+      "Author explanation is required; provide --author or explicitly use --no-author.",
     );
   const profile = StandardsProfileSchema.parse(
     await readStrictJsonFileV1(resolve(standardPath), {
@@ -128,7 +136,7 @@ export async function assembleStandardsRequest(
       source: "standards profile",
     }),
   );
-  const author = await readAuthor(resolve(authorPath));
+  const author = authorPath ? await readAuthor(resolve(authorPath)) : undefined;
   const config =
     suppliedConfig ??
     ReviewRunConfigV3Schema.parse(
@@ -166,8 +174,8 @@ export async function assembleStandardsRequest(
     throw new Error(
       "This review flow has used all three instances. Start a distinct review with --new-flow.",
     );
-  const request = StandardsReviewRequestV2Schema.parse({
-    schemaVersion: 2,
+  const request = StandardsReviewRequestV3Schema.parse({
+    schemaVersion: 3,
     mode: "STANDARDS",
     flowId,
     reviewInstance: { number, maximum: 3 },
@@ -186,14 +194,15 @@ export async function assembleStandardsRequest(
         },
       ],
     },
-    authorPacket: author,
+    authorContext: author ? providedAuthorContextV1(author) : declinedAuthorContextV1(),
+    ...(author ? { authorPacket: author } : {}),
     reviewConfigRef: config.configId,
   });
   return {
     request,
     excludedPaths: [
       resolve(standardPath),
-      resolve(authorPath),
+      ...(authorPath ? [resolve(authorPath)] : []),
       ...(configPath ? [resolve(configPath)] : []),
     ],
     async claim() {

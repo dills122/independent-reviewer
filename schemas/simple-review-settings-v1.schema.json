@@ -21,7 +21,7 @@
     "requireAuthorExplanation": {
       "type": "boolean"
     },
-    "discoverRepositorySteering": {
+    "useReviewerRules": {
       "type": "boolean"
     }
   },
@@ -30,7 +30,7 @@
     "model",
     "maxCostUsd",
     "requireAuthorExplanation",
-    "discoverRepositorySteering"
+    "useReviewerRules"
   ],
   "additionalProperties": false
 }

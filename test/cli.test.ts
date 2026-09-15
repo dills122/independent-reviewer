@@ -1040,7 +1040,7 @@ it("keeps version root-only and routes config help through config show", async (
   assert.equal(configHelp[0], "Usage: independent-reviewer config show [options]");
   assert.equal(
     configHelp.find((line) => line.includes("--resolved")),
-    "  --resolved          Include complete resolved runtime policy.",
+    "  --resolved           Include complete resolved runtime policy.",
   );
 
   assert.equal(await runCliV1(["prepare", "--help"], io), 0);

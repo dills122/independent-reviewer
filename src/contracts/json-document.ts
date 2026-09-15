@@ -16,3 +16,8 @@ export function sha256BytesHex(bytes: Uint8Array): string {
 export function sha256BytesDigestV1(bytes: Uint8Array): DigestV1 {
   return { algorithm: "SHA256", value: sha256BytesHex(bytes) };
 }
+
+/** SHA-256 of exact persisted JSON-document bytes, including pretty-printing and final newline. */
+export function jsonDocumentDigestV1(value: unknown): DigestV1 {
+  return sha256BytesDigestV1(Buffer.from(jsonDocument(value), "utf8"));
+}

@@ -26,7 +26,9 @@ export interface ResumeShapeV1 {
   preliminaryPersisted: RunRecordEventOfTypeV1<"PRELIMINARY_PERSISTED">;
   findingVerificationPersisted: RunRecordEventOfTypeV1<"FINDING_VERIFICATION_PERSISTED">;
   findingVerificationSucceededCalls: RunRecordEventOfTypeV1<"CALL_SUCCEEDED">[];
-  authorDelivered: RunRecordEventOfTypeV1<"AUTHOR_DELIVERED">;
+  authorDelivered:
+    | RunRecordEventOfTypeV1<"AUTHOR_DELIVERED">
+    | RunRecordEventOfTypeV1<"AUTHOR_CONTEXT_RELEASED">;
   finalStarted: RunRecordEventOfTypeV1<"CALL_STARTED">;
   finalFailed: RunRecordEventOfTypeV1<"CALL_FAILED">;
   acceptedAttemptNumber: number;
@@ -107,7 +109,9 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
   const preliminarySucceeded = preliminarySucceededCalls.at(-1);
   const preliminaryPersisted = eventsOfType(events, "PRELIMINARY_PERSISTED")[0];
   const findingVerificationPersisted = eventsOfType(events, "FINDING_VERIFICATION_PERSISTED")[0];
-  const authorDelivered = eventsOfType(events, "AUTHOR_DELIVERED")[0];
+  const authorDelivered =
+    eventsOfType(events, "AUTHOR_DELIVERED")[0] ??
+    eventsOfType(events, "AUTHOR_CONTEXT_RELEASED")[0];
   const finalStarted = startedCalls.findLast((event) => event.stage === "FINAL");
   const failedCalls = eventsOfType(events, "CALL_FAILED");
   const finalFailed = failedCalls.at(-1)?.stage === "FINAL" ? failedCalls.at(-1) : undefined;

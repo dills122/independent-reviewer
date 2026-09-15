@@ -12,6 +12,7 @@ import { GUIDANCE_GRAPH_V1_JSON_SCHEMA } from "../src/contracts/guidance-graph.j
 import {
   INSPECTION_REPORT_V1_JSON_SCHEMA,
   StandardsInspectionReportV2Schema,
+  StandardsInspectionReportV3Schema,
 } from "../src/contracts/inspection-report.js";
 import {
   NEUTRAL_REVIEW_BRIEF_V1_JSON_SCHEMA,
@@ -41,12 +42,14 @@ import {
   STANDARDS_CANDIDATE_V3_JSON_SCHEMA,
   STANDARDS_PRELIMINARY_V2_JSON_SCHEMA,
   STANDARDS_REPORT_V2_JSON_SCHEMA,
+  STANDARDS_REPORT_V3_JSON_SCHEMA,
 } from "../src/contracts/standards-results.js";
 import {
   contractJsonSchema,
   STANDARDS_PROFILE_V1_JSON_SCHEMA,
   STANDARDS_PROFILE_V2_JSON_SCHEMA,
   STANDARDS_REVIEW_REQUEST_V2_JSON_SCHEMA,
+  STANDARDS_REVIEW_REQUEST_V3_JSON_SCHEMA,
 } from "../src/contracts/standards-review.js";
 
 const schemaDirectory = resolve("schemas");
@@ -63,8 +66,10 @@ const schemaArtifacts = [
   ["standards-profile-v1.schema.json", STANDARDS_PROFILE_V1_JSON_SCHEMA],
   ["standards-profile-v2.schema.json", STANDARDS_PROFILE_V2_JSON_SCHEMA],
   ["standards-review-request-v2.schema.json", STANDARDS_REVIEW_REQUEST_V2_JSON_SCHEMA],
+  ["standards-review-request-v3.schema.json", STANDARDS_REVIEW_REQUEST_V3_JSON_SCHEMA],
   ["standards-preliminary-v2.schema.json", STANDARDS_PRELIMINARY_V2_JSON_SCHEMA],
   ["standards-report-v2.schema.json", STANDARDS_REPORT_V2_JSON_SCHEMA],
+  ["standards-report-v3.schema.json", STANDARDS_REPORT_V3_JSON_SCHEMA],
   ["standards-candidate-v2.schema.json", STANDARDS_CANDIDATE_V2_JSON_SCHEMA],
   ["standards-candidate-v3.schema.json", STANDARDS_CANDIDATE_V3_JSON_SCHEMA],
   [
@@ -78,6 +83,10 @@ const schemaArtifacts = [
   [
     "standards-inspection-report-v2.schema.json",
     contractJsonSchema(StandardsInspectionReportV2Schema, "standards-inspection-report:v2"),
+  ],
+  [
+    "standards-inspection-report-v3.schema.json",
+    contractJsonSchema(StandardsInspectionReportV3Schema, "standards-inspection-report:v3"),
   ],
   ["final-review-candidate-v2.schema.json", FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA],
   ["final-review-candidate-v3.schema.json", FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA],

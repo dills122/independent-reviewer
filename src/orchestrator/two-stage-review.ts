@@ -37,9 +37,10 @@ import {
   STANDARDS_CANDIDATE_V3_JSON_SCHEMA,
   STANDARDS_PRELIMINARY_V2_JSON_SCHEMA,
   StandardsPreliminaryV2Schema,
+  StandardsReportV3Schema,
 } from "../contracts/standards-results.js";
-import type { ReviewAuthor } from "../contracts/standards-review.js";
-import { selectedRules } from "../contracts/standards-review.js";
+import type { AuthorContextBindingV1, ReviewAuthor } from "../contracts/standards-review.js";
+import { DECLINED_AUTHOR_CONTEXT_MARKER_V1, selectedRules } from "../contracts/standards-review.js";
 import { parseStrictJsonV1, readStrictJsonFileV1 } from "../contracts/strict-json.js";
 import { planReviewUnitsV1 } from "../planning/review-unit-planner.js";
 import {
@@ -54,7 +55,11 @@ import {
   type RunnerOwnedFinalCoverageV1,
 } from "../report/final-review-candidate.js";
 import { renderReviewMarkdown } from "../report/markdown.js";
-import { inspectSnapshotPacket, readSnapshotBlobV1 } from "../snapshot/snapshot-packet.js";
+import {
+  type InspectedSnapshotPacket,
+  inspectSnapshotPacket,
+  readSnapshotBlobV1,
+} from "../snapshot/snapshot-packet.js";
 import { buildReviewBrief } from "../transmission/neutral-brief-builder.js";
 import { compactProjectGuidanceV1 } from "../transmission/project-guidance-digest.js";
 import {
@@ -1889,9 +1894,70 @@ async function completeFinalStageV1(
   }
 }
 
+interface ReleasedAuthorContextV1 {
+  binding?: AuthorContextBindingV1;
+  authorPacket?: ReviewAuthor;
+  claimedVerification: AuthorPacketV1["claimedVerification"];
+}
+
+function releasedAuthorContextV1(packet: InspectedSnapshotPacket): ReleasedAuthorContextV1 {
+  if (packet.authorContext?.status === "DECLINED") {
+    return { binding: packet.authorContext, claimedVerification: [] };
+  }
+  if (packet.authorPacket) {
+    return {
+      ...(packet.authorContext ? { binding: packet.authorContext } : {}),
+      authorPacket: packet.authorPacket,
+      claimedVerification: packet.authorPacket.claimedVerification,
+    };
+  }
+  throw new Error("An author packet or explicit declined author context is required.");
+}
+
+function authorReleaseMessageV1(brief: ReviewBrief, released: ReleasedAuthorContextV1): string {
+  if (!released.binding) {
+    return JSON.stringify({
+      schemaVersion: 1,
+      type: "AUTHOR_PACKET",
+      snapshotDigest: brief.snapshotManifest.snapshotDigest,
+      authorPacket: released.authorPacket,
+    });
+  }
+  return JSON.stringify({
+    schemaVersion: 1,
+    type: "AUTHOR_CONTEXT_RELEASED",
+    snapshotDigest: brief.snapshotManifest.snapshotDigest,
+    authorContext: released.binding,
+    ...(released.authorPacket
+      ? { authorPacket: released.authorPacket }
+      : { declinedMarker: DECLINED_AUTHOR_CONTEXT_MARKER_V1 }),
+  });
+}
+
+function bindReleasedAuthorContextV1(
+  report: ReviewReport,
+  released: ReleasedAuthorContextV1,
+): ReviewReport {
+  if (!released.binding) return report;
+  if (!("ruleAssessments" in report))
+    throw new Error("Explicit author-context lifecycle requires a standards report.");
+  return StandardsReportV3Schema.parse({
+    ...report,
+    schemaVersion: 3,
+    authorContext: {
+      status: released.binding.status,
+      digest: released.binding.digest,
+      noteCode: released.binding.status === "DECLINED" ? "AUTHOR_CONTEXT_DECLINED" : null,
+    },
+    ...(released.binding.status === "DECLINED"
+      ? { authorClaims: [], authorVerificationClaims: [] }
+      : {}),
+  });
+}
+
 function prepareReviewCalls(
   brief: ReviewBrief,
-  authorPacket: ReviewAuthor,
+  releasedAuthorContext: ReleasedAuthorContextV1,
   config: ReviewRunConfigV3,
   plan: ReviewUnitPlanV1,
   contextMap: ReviewContextMapV1,
@@ -1919,7 +1985,7 @@ function prepareReviewCalls(
         snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
         briefDigest: brief.briefDigest.value,
       },
-      authorVerificationClaims: authorPacket.claimedVerification,
+      authorVerificationClaims: releasedAuthorContext.claimedVerification,
       ...(isStandardsBrief(brief)
         ? { ruleIds: selectedRules(brief.canonicalInputs).map((rule) => rule.id) }
         : {}),
@@ -1938,7 +2004,7 @@ function prepareReviewCalls(
         snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
         briefDigest: brief.briefDigest.value,
       },
-      authorVerificationClaims: authorPacket.claimedVerification,
+      authorVerificationClaims: releasedAuthorContext.claimedVerification,
       ...(isStandardsBrief(brief)
         ? { ruleIds: selectedRules(brief.canonicalInputs).map((rule) => rule.id) }
         : {}),
@@ -1955,12 +2021,7 @@ function prepareReviewCalls(
     },
   ).schema;
   assertConversationBudget(blindMessages, config.budgets.maxConversationBytes);
-  const authorMessage = JSON.stringify({
-    schemaVersion: 1,
-    type: "AUTHOR_PACKET",
-    snapshotDigest: brief.snapshotManifest.snapshotDigest,
-    authorPacket: authorPacket,
-  });
+  const authorMessage = authorReleaseMessageV1(brief, releasedAuthorContext);
   const guidanceAdmission = guidanceAdmissionForCallsV1(
     brief,
     blindEvidence,
@@ -2041,8 +2102,7 @@ export async function preflightReview(
     ...(guidanceRepositoryPath !== undefined ? { guidanceRepositoryPath } : {}),
     requireGuidanceImportResolution: true,
   });
-  if (!packet.authorPacket)
-    throw new Error("An author packet is required for the two-stage review.");
+  const releasedAuthorContext = releasedAuthorContextV1(packet);
   if (packet.reviewConfigRef !== config.configId)
     throw new Error("Review configuration does not match packet.");
   if (!packet.manifest.paths.length)
@@ -2056,7 +2116,7 @@ export async function preflightReview(
     policyVersion: REVIEW_UNIT_POLICY_VERSION_V1,
     maxSupportingBytesPerUnit: config.budgets.maxInitialEvidenceBytes,
   });
-  const calls = prepareReviewCalls(brief, packet.authorPacket, config, plan, packet.contextMap);
+  const calls = prepareReviewCalls(brief, releasedAuthorContext, config, plan, packet.contextMap);
   if (calls.reservedCostUsd > config.budgets.maxTotalCostUsd)
     throw new Error("The remaining cost budget cannot reserve the preliminary call.");
   return {
@@ -2089,9 +2149,7 @@ export async function runTwoStageReview(
   if (packet.manifest.paths.length === 0) {
     throw new Error("The snapshot contains no changed paths to review.");
   }
-  if (!packet.authorPacket) {
-    throw new Error("An author packet is required for the two-stage review.");
-  }
+  const releasedAuthorContext = releasedAuthorContextV1(packet);
   if (packet.reviewConfigRef !== config.configId) {
     throw new Error(
       `Review config ${config.configId} does not match packet reference ${packet.reviewConfigRef}.`,
@@ -2143,7 +2201,7 @@ export async function runTwoStageReview(
       finalCallReservation,
       reservedCostUsd,
       guidanceAdmission,
-    } = prepareReviewCalls(brief, packet.authorPacket, config, plan, packet.contextMap);
+    } = prepareReviewCalls(brief, releasedAuthorContext, config, plan, packet.contextMap);
     if (guidanceAdmission) {
       await appendRunEvent(runRecordPath, {
         type: "GUIDANCE_ADMISSION",
@@ -2239,11 +2297,18 @@ export async function runTwoStageReview(
       },
       { role: "user", content: authorMessage },
     ];
-    await appendRunEvent(runRecordPath, {
-      type: "AUTHOR_DELIVERED",
-      authorPacketDigest: sha256Utf8(JSON.stringify(packet.authorPacket)),
-    });
-    const report = await completeFinalStageV1(
+    if (releasedAuthorContext.binding) {
+      await appendRunEvent(runRecordPath, {
+        type: "AUTHOR_CONTEXT_RELEASED",
+        authorContext: releasedAuthorContext.binding,
+      });
+    } else {
+      await appendRunEvent(runRecordPath, {
+        type: "AUTHOR_DELIVERED",
+        authorPacketDigest: sha256Utf8(JSON.stringify(releasedAuthorContext.authorPacket)),
+      });
+    }
+    const candidateReport = await completeFinalStageV1(
       packetPath,
       reviewDirectory,
       runRecordPath,
@@ -2257,10 +2322,11 @@ export async function runTwoStageReview(
       finalConstrained,
       finalCallReservation,
       validatedPreliminary.chargedTokens + validatedVerification.chargedTokens,
-      packet.authorPacket.claimedVerification,
+      releasedAuthorContext.claimedVerification,
       costLedger,
       retryState,
     );
+    const report = bindReleasedAuthorContextV1(candidateReport, releasedAuthorContext);
     return await finishReviewV1(report, brief, paths);
   } catch (error) {
     return await recordRunFailureV1(runRecordPath, error);
@@ -2447,9 +2513,7 @@ export async function resumeFinalReview(
     ...(guidanceRepositoryPath !== undefined ? { guidanceRepositoryPath } : {}),
     requireGuidanceImportResolution: true,
   });
-  if (!packet.authorPacket) {
-    throw new Error("An author packet is required to resume the final review stage.");
-  }
+  const releasedAuthorContext = releasedAuthorContextV1(packet);
   if (packet.reviewConfigRef !== config.configId) {
     throw new Error(
       `Review config ${config.configId} does not match packet reference ${packet.reviewConfigRef}.`,
@@ -2630,8 +2694,12 @@ export async function resumeFinalReview(
     JSON.stringify(findingVerificationPersisted?.verificationDigest) !==
       JSON.stringify(sha256Utf8(jsonDocument(findingVerification))) ||
     events.indexOf(findingVerificationPersisted) > events.indexOf(authorDelivered) ||
-    JSON.stringify(authorDelivered?.authorPacketDigest) !==
-      JSON.stringify(sha256Utf8(JSON.stringify(packet.authorPacket)))
+    (authorDelivered.type === "AUTHOR_CONTEXT_RELEASED"
+      ? JSON.stringify(authorDelivered.authorContext) !==
+        JSON.stringify(releasedAuthorContext.binding)
+      : releasedAuthorContext.binding !== undefined ||
+        JSON.stringify(authorDelivered.authorPacketDigest) !==
+          JSON.stringify(sha256Utf8(JSON.stringify(releasedAuthorContext.authorPacket))))
   ) {
     throw new Error("The persisted preliminary or author-stage identity is invalid.");
   }
@@ -2702,12 +2770,7 @@ export async function resumeFinalReview(
       content: JSON.stringify(blindEvidence),
     },
   ];
-  const authorMessage = JSON.stringify({
-    schemaVersion: 1,
-    type: "AUTHOR_PACKET",
-    snapshotDigest: brief.snapshotManifest.snapshotDigest,
-    authorPacket: packet.authorPacket,
-  });
+  const authorMessage = authorReleaseMessageV1(brief, releasedAuthorContext);
   const finalMessages: ReviewMessageV1[] = [
     ...blindMessages,
     { role: "assistant", content: preliminaryProvider.rawContent },
@@ -2729,7 +2792,7 @@ export async function resumeFinalReview(
         snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
         briefDigest: brief.briefDigest.value,
       },
-      authorVerificationClaims: packet.authorPacket.claimedVerification,
+      authorVerificationClaims: releasedAuthorContext.claimedVerification,
       ...(isStandardsBrief(brief)
         ? { ruleIds: selectedRules(brief.canonicalInputs).map((rule) => rule.id) }
         : {}),
@@ -2747,7 +2810,7 @@ export async function resumeFinalReview(
         snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
         briefDigest: brief.briefDigest.value,
       },
-      authorVerificationClaims: packet.authorPacket.claimedVerification,
+      authorVerificationClaims: releasedAuthorContext.claimedVerification,
       ...(isStandardsBrief(brief)
         ? { ruleIds: selectedRules(brief.canonicalInputs).map((rule) => rule.id) }
         : {}),
@@ -2955,7 +3018,7 @@ export async function resumeFinalReview(
     nextAttemptNumber: resumedAttemptNumber,
   });
   try {
-    const report = await completeFinalStageV1(
+    const candidateReport = await completeFinalStageV1(
       packetPath,
       reviewDirectory,
       runRecordPath,
@@ -2969,9 +3032,10 @@ export async function resumeFinalReview(
       finalConstrained,
       finalCallReservation,
       firstCallTokens,
-      packet.authorPacket.claimedVerification,
+      releasedAuthorContext.claimedVerification,
       costLedger,
     );
+    const report = bindReleasedAuthorContextV1(candidateReport, releasedAuthorContext);
     return await finishReviewV1(report, brief, paths);
   } catch (error) {
     return await recordRunFailureV1(runRecordPath, error);

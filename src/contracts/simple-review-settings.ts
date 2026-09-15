@@ -52,14 +52,14 @@ export const SimpleReviewSettingsV1Schema = z.strictObject({
   model: SupportedReviewModelV1Schema,
   maxCostUsd: MaxReviewCostUsdV1Schema,
   requireAuthorExplanation: z.boolean(),
-  discoverRepositorySteering: z.boolean(),
+  useReviewerRules: z.boolean(),
 });
 
 export const SimpleReviewSettingsOverridesV1Schema = z.strictObject({
   model: ReviewModelSlugV1Schema.optional(),
   maxCostUsd: MaxReviewCostUsdV1Schema.optional(),
   requireAuthorExplanation: z.boolean().optional(),
-  discoverRepositorySteering: z.boolean().optional(),
+  useReviewerRules: z.boolean().optional(),
 });
 
 const SimpleReviewSettingSourceV1Schema = z.enum(["CLI", "LOCAL", "ENGINE_DEFAULT"]);
@@ -67,7 +67,7 @@ const SimpleReviewSettingsProvenanceV1Schema = z.strictObject({
   model: SimpleReviewSettingSourceV1Schema,
   maxCostUsd: SimpleReviewSettingSourceV1Schema,
   requireAuthorExplanation: SimpleReviewSettingSourceV1Schema,
-  discoverRepositorySteering: SimpleReviewSettingSourceV1Schema,
+  useReviewerRules: SimpleReviewSettingSourceV1Schema,
 });
 
 const ReviewModelProfileRefV1Schema = z.strictObject({
@@ -190,8 +190,7 @@ export function resolveSimpleReviewSettingsV1(
     maxCostUsd: cli.maxCostUsd ?? local?.maxCostUsd,
     requireAuthorExplanation:
       cli.requireAuthorExplanation ?? local?.requireAuthorExplanation ?? true,
-    discoverRepositorySteering:
-      cli.discoverRepositorySteering ?? local?.discoverRepositorySteering ?? true,
+    useReviewerRules: cli.useReviewerRules ?? local?.useReviewerRules ?? true,
   });
   const reviewRunConfig = reviewRunConfigForSettingsV1(settings);
   return ResolvedSimpleReviewSettingsV1Schema.parse({
@@ -201,7 +200,7 @@ export function resolveSimpleReviewSettingsV1(
       model: settingSourceV1("model", cli, local),
       maxCostUsd: settingSourceV1("maxCostUsd", cli, local),
       requireAuthorExplanation: settingSourceV1("requireAuthorExplanation", cli, local),
-      discoverRepositorySteering: settingSourceV1("discoverRepositorySteering", cli, local),
+      useReviewerRules: settingSourceV1("useReviewerRules", cli, local),
     },
     profile: { schemaVersion: PROFILE_VERSION_V1, model: settings.model },
     settingsDigest: digestCanonicalJson(settings),
