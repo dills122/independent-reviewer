@@ -1,7 +1,8 @@
 # reviewd implementation study
 
 Date: 2026-09-15 UTC. Status: source study and offline characterization complete;
-follow-up issues and planning guidance only. No product runtime changes.
+the bounded Git-preflight follow-up in #169 is implemented and provider-free
+qualified. Other follow-ups remain planning guidance only.
 
 ## Scope and evidence
 
@@ -212,13 +213,16 @@ Timing values are observations, not performance targets.
 
 ### Further review and action
 
-This study records evidence and proposed acceptance criteria; merging it does not
-complete either new issue or qualify a new runtime capability.
+This study records evidence and proposed acceptance criteria. It now links the
+completed #169 product regression; merging it does not complete the other
+follow-ups or qualify a broader runtime capability.
 
-- [ ] Implement [#169](https://github.com/dills122/independent-reviewer/issues/169)
-  as a bounded Git preflight fix, with fresh-process regressions. Replace the
-  current bug-characterization probe with a reference to the passing product
-  regression when the issue is complete.
+- [x] Implement [#169](https://github.com/dills122/independent-reviewer/issues/169)
+  as a bounded Git preflight fix. Fresh-process
+  [product regressions](../../test/snapshot/git-command.test.ts) cover exact
+  NUL-delimited values and empty multi-value resets, configured/unset/failed
+  reads, accepted and rejected resource boundaries, producer closure,
+  concurrent callers, and all three Git wrappers.
 - [ ] Evaluate [#170](https://github.com/dills122/independent-reviewer/issues/170)
   within the [friendly operations plan](../plans/2026-09-11-friendly-reviewer-operations-plan.md).
   Keep the compact view optional and verify unchanged report contents and outcomes.
@@ -236,13 +240,17 @@ rerun probes against the stated revisions, and update this action list with PR o
 validation links. New observations against newer upstream revisions need their
 own source identity; do not silently overwrite this study's baseline.
 
-Our timeout probe uses Node.js 24.19.0 and a fake Git that sleeps 300 ms for
-safe-directory discovery. A `runGit` call configured for 20 ms returned after
-approximately 497 ms. All three wrappers await discovery before their command
-timer starts; discovery itself has no watchdog. #34 already fixed main-command
-timeouts, so #169 tracks this narrower gap. Retained
-[local probe](reviewd/probe_git_config_timeout.py) fails once the characterized
-behavior changes and should then be retired or updated with new evidence.
+The retained [historical timeout probe](reviewd/probe_git_config_timeout.py) uses
+Node.js 24.19.0 and a fake Git that sleeps 300 ms for safe-directory discovery.
+Before #169, a `runGit` call configured for 20 ms returned after approximately
+497 ms because all three wrappers awaited an unbounded discovery promise before
+starting their command timers. That observation remains source-study evidence.
+
+#169 deliberately gives shared process-wide discovery a separate one-second
+ceiling, so the probe's 300 ms sleep remains below the new bound and is not a
+current regression gate. The product tests linked above supersede it for current
+behavior. Keep the probe only to reproduce the historical baseline; a passing
+probe no longer demonstrates the original unbounded defect.
 
 No upstream code was copied into product runtime. Retained probe scripts are
 original research helpers, outside application tests and bootstrap-owned scripts.
@@ -283,4 +291,6 @@ real provider credentials. Reproduction assumes a Unix host with Git and
 - Committed-context check (`python3 -B scripts/check-ai-context.py --ci`) passed.
 - Additional machine-local context check reported missing shared skills in this
   worktree. Local AI Central installation was not changed by this research task.
-- Product runtime and contracts are unchanged; application suite was not rerun.
+- Product runtime change is limited to #169's Git preflight lifecycle; no public
+  contract, dependency, provider behavior, or paid path changed. Focused and
+  complete provider-free application gates cover the fix.

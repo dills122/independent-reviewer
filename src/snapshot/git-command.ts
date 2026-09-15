@@ -2,17 +2,22 @@ import { spawn } from "node:child_process";
 import { devNull } from "node:os";
 
 const MAX_GIT_OUTPUT_BYTES = 64 * 1024 * 1024;
-const MAX_SAFE_DIRECTORY_CONFIG_BYTES = 1024 * 1024;
+const MAX_SAFE_DIRECTORY_CONFIG_BYTES = 1024;
 const MAX_SAFE_DIRECTORY_ENTRIES = 256;
+const MAX_SAFE_DIRECTORY_VALUE_FOOTPRINT_BYTES = 512;
+const MAX_GIT_ENVIRONMENT_FOOTPRINT_BYTES = 7 * 512;
+const CONSERVATIVE_ENVIRONMENT_POINTER_BYTES = 8;
 
 /**
  * Process-wide configuration discovery has its own fixed ceiling instead of borrowing a caller's
  * command timeout. Concurrent callers share this one lookup, so using whichever command arrived
  * first would make forwarding depend on call order. One second permits a slow local protected-
- * scope read while bounding startup. Timeout, overflow, or failure kills the producer, discards
- * all output, and resolves the best-effort lookup empty; the command watchdog starts afterward.
+ * scope read while bounding startup. Timeout, overflow, or failure kills the producer, waits for
+ * its close event, discards all output, and resolves the best-effort lookup empty. A short fallback
+ * prevents a missing close event from leaving the cache pending; command watchdogs start afterward.
  */
 const SAFE_DIRECTORY_DISCOVERY_TIMEOUT_MS = 1_000;
+const SAFE_DIRECTORY_KILL_CLOSE_GRACE_MS = 250;
 
 /** Default ceiling for a single Git invocation; a wedged Git must not hang the review. */
 export const DEFAULT_GIT_COMMAND_TIMEOUT_MS = 60_000;
@@ -54,7 +59,7 @@ function ambientGitEnvironment(): NodeJS.ProcessEnv {
 async function readConfiguredSafeDirectories(): Promise<readonly string[]> {
   return new Promise((resolve) => {
     const start = () =>
-      spawn("git", ["config", "--get-all", "safe.directory"], {
+      spawn("git", ["config", "-z", "--get-all", "safe.directory"], {
         shell: false,
         stdio: ["ignore", "pipe", "ignore"],
         env: ambientGitEnvironment(),
@@ -69,51 +74,72 @@ async function readConfiguredSafeDirectories(): Promise<readonly string[]> {
     const chunks: Buffer[] = [];
     let length = 0;
     let settled = false;
+    let aborting = false;
     let watchdog: NodeJS.Timeout | undefined;
+    let closeFallback: NodeJS.Timeout | undefined;
 
-    const settle = (safeDirectoryEntries: readonly string[], signal?: NodeJS.Signals): void => {
+    const settle = (safeDirectoryEntries: readonly string[]): void => {
       if (settled) return;
       settled = true;
       clearTimeout(watchdog);
+      clearTimeout(closeFallback);
       child.stdout.destroy();
-      if (signal !== undefined) child.kill(signal);
       resolve(safeDirectoryEntries);
     };
 
-    const fail = (): void => settle([], "SIGKILL");
+    const abort = (): void => {
+      if (settled || aborting) return;
+      aborting = true;
+      clearTimeout(watchdog);
+      child.stdout.destroy();
+      child.kill("SIGKILL");
+      closeFallback = setTimeout(() => settle([]), SAFE_DIRECTORY_KILL_CLOSE_GRACE_MS);
+      closeFallback.unref();
+    };
 
-    watchdog = setTimeout(fail, SAFE_DIRECTORY_DISCOVERY_TIMEOUT_MS);
+    watchdog = setTimeout(abort, SAFE_DIRECTORY_DISCOVERY_TIMEOUT_MS);
     watchdog.unref();
 
     child.stdout.on("data", (chunk: Buffer) => {
-      if (settled) return;
+      if (settled || aborting) return;
       length += chunk.length;
       // A pathological config must not become a pathological argument list.
       if (length > MAX_SAFE_DIRECTORY_CONFIG_BYTES) {
-        fail();
+        abort();
         return;
       }
       chunks.push(chunk);
     });
     // Exit status 1 simply means the key is unset, and any other failure means capture proceeds
     // without forwarding rather than refusing to run at all.
-    child.stdout.on("error", fail);
-    child.on("error", fail);
+    child.stdout.on("error", abort);
+    child.on("error", () => {
+      if (child.pid === undefined) settle([]);
+      else abort();
+    });
     child.on("close", (exitCode) => {
       if (settled) return;
-      if (exitCode !== 0) {
+      if (aborting || exitCode !== 0) {
         settle([]);
         return;
       }
       try {
-        const entries = new TextDecoder("utf-8", { fatal: true })
+        const records = new TextDecoder("utf-8", { fatal: true })
           .decode(Buffer.concat(chunks, length))
-          .split("\n")
-          .map((line) => line.trim())
-          .filter((line) => line.length > 0);
+          .split("\0");
+        if (records.pop() !== "") {
+          settle([]);
+          return;
+        }
+        // Empty values are semantic records: Git uses one to reset a multi-valued configuration
+        // list. Dropping it could re-admit an earlier wildcard and broaden trust.
+        const entries = records;
         if (
           entries.length > MAX_SAFE_DIRECTORY_ENTRIES ||
-          entries.some((entry) => entry.includes("\0"))
+          entries.some(
+            (entry) =>
+              textEnvironmentFootprintBytes(entry) > MAX_SAFE_DIRECTORY_VALUE_FOOTPRINT_BYTES,
+          )
         ) {
           settle([]);
           return;
@@ -124,6 +150,29 @@ async function readConfiguredSafeDirectories(): Promise<readonly string[]> {
       }
     });
   });
+}
+
+function textEnvironmentFootprintBytes(value: string): number {
+  return process.platform === "win32" ? value.length * 2 : Buffer.byteLength(value, "utf8");
+}
+
+function environmentEntryFootprintBytes(name: string, value: string): number {
+  const posixBytes =
+    Buffer.byteLength(name, "utf8") +
+    1 +
+    Buffer.byteLength(value, "utf8") +
+    1 +
+    CONSERVATIVE_ENVIRONMENT_POINTER_BYTES;
+  const windowsBytes = (name.length + 1 + value.length + 1) * 2;
+  return process.platform === "win32" ? windowsBytes : posixBytes;
+}
+
+function environmentFootprintBytes(environment: NodeJS.ProcessEnv): number {
+  let footprint = CONSERVATIVE_ENVIRONMENT_POINTER_BYTES;
+  for (const [name, value] of Object.entries(environment)) {
+    if (value !== undefined) footprint += environmentEntryFootprintBytes(name, value);
+  }
+  return footprint;
 }
 
 function safeDirectories(): Promise<readonly string[]> {
@@ -157,11 +206,20 @@ function gitEnvironment(forwardedSafeDirectories: readonly string[]): NodeJS.Pro
   const environment = ambientGitEnvironment();
   environment.GIT_CONFIG_GLOBAL = devNull;
   environment.GIT_CONFIG_SYSTEM = devNull;
+  const candidate = { ...environment };
   forwardedSafeDirectories.forEach((directory, index) => {
-    environment[`GIT_CONFIG_KEY_${index}`] = "safe.directory";
-    environment[`GIT_CONFIG_VALUE_${index}`] = directory;
+    candidate[`GIT_CONFIG_KEY_${index}`] = "safe.directory";
+    candidate[`GIT_CONFIG_VALUE_${index}`] = directory;
   });
-  environment.GIT_CONFIG_COUNT = String(forwardedSafeDirectories.length);
+  candidate.GIT_CONFIG_COUNT = String(forwardedSafeDirectories.length);
+
+  // POSIX permits ARG_MAX as low as 4 KiB and counts both argv and environment. Limit the current
+  // platform's UTF-8-plus-pointer or UTF-16 representation to 3.5 KiB, leaving at least 512 bytes
+  // beneath that cross-platform floor for Git arguments and bookkeeping. Forward all or none.
+  if (environmentFootprintBytes(candidate) <= MAX_GIT_ENVIRONMENT_FOOTPRINT_BYTES) {
+    return candidate;
+  }
+  environment.GIT_CONFIG_COUNT = "0";
   return environment;
 }
 
