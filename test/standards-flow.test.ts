@@ -1111,6 +1111,7 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
   const f = await fixture();
   const errors: string[] = [];
   let providerCalls = 0;
+  let providerConstructions = 0;
   const provider: ReviewProviderV1 = {
     auditRequest: () => ({
       providerPolicyVersion: "test-provider-v1",
@@ -1196,7 +1197,13 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
         f.packet,
       ],
       { stdout: () => undefined, stderr: (message) => errors.push(message) },
-      { readOpenRouterApiKey: () => "test", createProvider: () => provider },
+      {
+        readOpenRouterApiKey: () => "test",
+        createProvider: () => {
+          providerConstructions += 1;
+          return provider;
+        },
+      },
     );
     const stderr = errors.join("\n");
 
@@ -1311,8 +1318,66 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
         );
         draft.splice(finalStarted, 0, failed);
       },
+      // Duplicate global call identity.
+      (draft: typeof events) => {
+        const index = draft.findIndex(
+          (event) => event.type === "CALL_STARTED" && event.stage === "FINAL",
+        );
+        draft.splice(index + 1, 0, structuredClone(draft[index]));
+      },
+      // Outcome bound to an existing attempt but wrong stage.
+      (draft: typeof events) => {
+        const index = draft.findIndex(
+          (event) => event.type === "CALL_SUCCEEDED" && event.stage === "PRELIMINARY",
+        );
+        const wrongStage = structuredClone(draft[index]);
+        wrongStage.stage = "FINAL";
+        draft.splice(index + 1, 0, wrongStage);
+      },
+      // Orphan retry intent after terminal failure.
+      (draft: typeof events) => {
+        const index = draft.findIndex(
+          (event) => event.type === "CALL_FAILED" && event.stage === "FINAL",
+        );
+        draft.splice(index + 1, 0, {
+          schemaVersion: 1,
+          at: draft[index].at,
+          type: "PROVIDER_RETRY_REQUESTED",
+          stage: "FINAL",
+          failedAttemptNumber: draft[index].attemptNumber,
+          retryAttemptNumber: draft[index].attemptNumber + 1,
+          retriesUsed: 1,
+          maxRetries: 1,
+          delayMs: 1,
+          chargedFailedTokens: 0,
+          chargedFailedCostUsd: 0,
+        });
+      },
+      // Only FINAL reservation bookkeeping is allowed after terminal FINAL failure.
+      (draft: typeof events) => {
+        const index = draft.findIndex(
+          (event) => event.type === "CALL_FAILED" && event.stage === "FINAL",
+        );
+        draft.splice(index + 1, 0, {
+          schemaVersion: 1,
+          at: draft[index].at,
+          type: "BUDGET_EXHAUSTED",
+          budget: "COST",
+          stage: "PRELIMINARY",
+          phase: "RESERVATION",
+          spentUsd: 0.1,
+          additionalUsd: 0.1,
+        });
+      },
     ];
-    for (const corrupt of corruptions) {
+    const grammarCorruptionStart = corruptions.length - 4;
+    const grammarRefusalCodes = [
+      "CALL_START_SEQUENCE_INVALID",
+      "CALL_OUTCOME_SEQUENCE_INVALID",
+      "PROVIDER_RETRY_SEQUENCE_INVALID",
+      "POST_TERMINAL_EVENT_INVALID",
+    ];
+    for (const [corruptionIndex, corrupt] of corruptions.entries()) {
       const corrupted = structuredClone(events);
       corrupt(corrupted);
       corrupted.forEach((event) => {
@@ -1323,11 +1388,18 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
         `${corrupted.map((event) => JSON.stringify(event)).join("\n")}\n`,
       );
       errors.length = 0;
+      const constructionsBeforeResume = providerConstructions;
       assert.equal(
         await runCliV1(
           ["resume-final", "--packet", f.packet, "--repo", f.repo, "--config", f.configPath],
           { stdout: () => undefined, stderr: (message) => errors.push(message) },
-          { readOpenRouterApiKey: () => "test", createProvider: () => provider },
+          {
+            readOpenRouterApiKey: () => "test",
+            createProvider: () => {
+              providerConstructions += 1;
+              return provider;
+            },
+          },
         ),
         1,
       );
@@ -1336,6 +1408,13 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
         /not eligible|persisted preliminary or author-stage identity is invalid/i,
       );
       assert.equal(providerCalls, callsBeforeResume);
+      if (corruptionIndex >= grammarCorruptionStart) {
+        assert.equal(providerConstructions, constructionsBeforeResume);
+        assert.match(
+          errors.join("\n"),
+          new RegExp(grammarRefusalCodes[corruptionIndex - grammarCorruptionStart] as string),
+        );
+      }
     }
   } finally {
     await rm(f.repo, { recursive: true, force: true });

@@ -67,6 +67,10 @@ export type ResumeRefusalV1 =
   | "MULTIPLE_TERMINAL_FINAL_FAILURES"
   | "MULTIPLE_RUN_FAILED"
   | "RUN_FAILED_OUT_OF_ORDER"
+  | "CALL_START_SEQUENCE_INVALID"
+  | "CALL_OUTCOME_SEQUENCE_INVALID"
+  | "PROVIDER_RETRY_SEQUENCE_INVALID"
+  | "POST_TERMINAL_EVENT_INVALID"
   | "CALL_ATTEMPTED_AFTER_FINAL_FAILURE"
   | "PRELIMINARY_DID_NOT_START_FIRST"
   | "ATTEMPT_NUMBERS_NOT_MONOTONIC"
@@ -91,6 +95,152 @@ function eventsOfType<T extends RunRecordEventV1["type"]>(
   return events.filter((event): event is RunRecordEventOfTypeV1<T> => event.type === type);
 }
 
+const STAGE_ORDER_V1 = {
+  PRELIMINARY: 0,
+  FINDING_VERIFICATION: 1,
+  FINAL: 2,
+} as const;
+
+interface CallAttemptGrammarV1 {
+  callStartSequenceInvalid: boolean;
+  callOutcomeSequenceInvalid: boolean;
+  providerRetrySequenceInvalid: boolean;
+  postTerminalEventInvalid: boolean;
+}
+
+/**
+ * Validates complete runner-owned call history before resume-specific artifact selection.
+ *
+ * Attempts are global, contiguous identities. Each start owns one later outcome before next start.
+ * A failed attempt may lead to another start only through one exact retry transition. Final
+ * terminal failure permits cost-reservation bookkeeping and one optional trailing RUN_FAILED.
+ */
+function evaluateCallAttemptGrammarV1(events: readonly RunRecordEventV1[]): CallAttemptGrammarV1 {
+  const indexedStarts = events.flatMap((event, index) =>
+    event.type === "CALL_STARTED" ? [{ event, index }] : [],
+  );
+  const indexedOutcomes = events.flatMap((event, index) =>
+    event.type === "CALL_SUCCEEDED" || event.type === "CALL_FAILED" ? [{ event, index }] : [],
+  );
+  const indexedRetries = events.flatMap((event, index) =>
+    event.type === "PROVIDER_RETRY_REQUESTED" ? [{ event, index }] : [],
+  );
+
+  let callStartSequenceInvalid = false;
+  const startByAttempt = new Map<number, (typeof indexedStarts)[number]>();
+  let previousStage = -1;
+  for (const [position, started] of indexedStarts.entries()) {
+    const attempt = started.event.attemptNumber;
+    const stage = STAGE_ORDER_V1[started.event.stage];
+    if (
+      !Number.isSafeInteger(attempt) ||
+      attempt < 1 ||
+      attempt !== position + 1 ||
+      stage < previousStage ||
+      startByAttempt.has(attempt)
+    ) {
+      callStartSequenceInvalid = true;
+    }
+    previousStage = stage;
+    if (!startByAttempt.has(attempt)) startByAttempt.set(attempt, started);
+  }
+
+  let callOutcomeSequenceInvalid = false;
+  const outcomesByAttempt = new Map<number, (typeof indexedOutcomes)[number][]>();
+  for (const outcome of indexedOutcomes) {
+    const attempt = outcome.event.attemptNumber;
+    const outcomes = outcomesByAttempt.get(attempt) ?? [];
+    outcomes.push(outcome);
+    outcomesByAttempt.set(attempt, outcomes);
+    const started = startByAttempt.get(attempt);
+    if (
+      started === undefined ||
+      outcome.event.stage !== started.event.stage ||
+      outcome.index <= started.index
+    ) {
+      callOutcomeSequenceInvalid = true;
+    }
+  }
+  for (const [position, started] of indexedStarts.entries()) {
+    const outcomes = outcomesByAttempt.get(started.event.attemptNumber) ?? [];
+    const outcome = outcomes[0];
+    const nextStarted = indexedStarts[position + 1];
+    if (
+      outcomes.length !== 1 ||
+      outcome === undefined ||
+      (nextStarted !== undefined && outcome.index >= nextStarted.index)
+    ) {
+      callOutcomeSequenceInvalid = true;
+    }
+  }
+
+  let providerRetrySequenceInvalid = false;
+  const matchedRetryIndexes = new Set<number>();
+  for (const outcome of indexedOutcomes) {
+    if (outcome.event.type !== "CALL_FAILED") continue;
+    const nextStarted = indexedStarts.find((started) => started.index > outcome.index);
+    const retries = indexedRetries.filter(
+      (retry) => retry.event.failedAttemptNumber === outcome.event.attemptNumber,
+    );
+    if (nextStarted === undefined) {
+      if (retries.length !== 0) providerRetrySequenceInvalid = true;
+      continue;
+    }
+    if (retries.length !== 1) {
+      providerRetrySequenceInvalid = true;
+      continue;
+    }
+    const retry = retries[0];
+    if (
+      retry === undefined ||
+      retry.index <= outcome.index ||
+      retry.index >= nextStarted.index ||
+      retry.event.stage !== outcome.event.stage ||
+      nextStarted.event.stage !== outcome.event.stage ||
+      retry.event.retryAttemptNumber !== nextStarted.event.attemptNumber
+    ) {
+      providerRetrySequenceInvalid = true;
+      continue;
+    }
+    matchedRetryIndexes.add(retry.index);
+  }
+  if (matchedRetryIndexes.size !== indexedRetries.length) providerRetrySequenceInvalid = true;
+
+  let postTerminalEventInvalid = false;
+  const terminalFinalFailure = indexedOutcomes.findLast(
+    (outcome) => outcome.event.type === "CALL_FAILED" && outcome.event.stage === "FINAL",
+  );
+  if (terminalFinalFailure !== undefined) {
+    const tail = events.slice(terminalFinalFailure.index + 1);
+    let sawBudgetExhausted = false;
+    let sawRunFailed = false;
+    for (const [position, event] of tail.entries()) {
+      if (
+        event.type === "BUDGET_EXHAUSTED" &&
+        event.stage === "FINAL" &&
+        event.phase === "RESERVATION" &&
+        !sawBudgetExhausted &&
+        !sawRunFailed
+      ) {
+        sawBudgetExhausted = true;
+        continue;
+      }
+      if (event.type === "RUN_FAILED" && !sawRunFailed && position === tail.length - 1) {
+        sawRunFailed = true;
+        continue;
+      }
+      postTerminalEventInvalid = true;
+    }
+  }
+
+  return {
+    callStartSequenceInvalid,
+    callOutcomeSequenceInvalid,
+    providerRetrySequenceInvalid,
+    postTerminalEventInvalid,
+  };
+}
+
 /**
  * Evaluates every predicate rather than short-circuiting, so a refusal reports all of its causes.
  *
@@ -103,6 +253,7 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
   const refuse = (reason: ResumeRefusalV1, failed: boolean): void => {
     if (failed) refusals.push(reason);
   };
+  const callGrammar = evaluateCallAttemptGrammarV1(events);
 
   const startedCalls = eventsOfType(events, "CALL_STARTED");
   const succeededCalls = eventsOfType(events, "CALL_SUCCEEDED");
@@ -152,6 +303,10 @@ export function evaluateResumeShapeV1(events: readonly RunRecordEventV1[]): Resu
   );
   refuse("NO_RUN_STARTED", started === undefined);
   refuse("MULTIPLE_RUN_STARTED", runStartedEvents.length > 1);
+  refuse("CALL_START_SEQUENCE_INVALID", callGrammar.callStartSequenceInvalid);
+  refuse("CALL_OUTCOME_SEQUENCE_INVALID", callGrammar.callOutcomeSequenceInvalid);
+  refuse("PROVIDER_RETRY_SEQUENCE_INVALID", callGrammar.providerRetrySequenceInvalid);
+  refuse("POST_TERMINAL_EVENT_INVALID", callGrammar.postTerminalEventInvalid);
   refuse(
     "NOT_TERMINALLY_FAILED",
     events.some((event) => event.type === "RUN_COMPLETED") ||

@@ -40,7 +40,10 @@ import {
 import { readStrictJsonFileV1 } from "./contracts/strict-json.js";
 import { captureRepositoryGuidanceV1 } from "./guidance/repository-guidance.js";
 import { withReviewProgress } from "./orchestrator/progress.js";
-import { evaluateResumeShapeV1 } from "./orchestrator/resume-eligibility.js";
+import {
+  describeResumeRefusalsV1,
+  evaluateResumeShapeV1,
+} from "./orchestrator/resume-eligibility.js";
 import { readRunRecordEventsV1 as readDurableRunRecordEventsV1 } from "./orchestrator/run-record.js";
 import {
   preflightReview,
@@ -1057,10 +1060,15 @@ async function resumeFinal(
   io: CliIoV1,
   dependencies: CliDependenciesV1,
 ): Promise<number> {
+  const packetPath = resolve(options.packet);
+  const eligibility = evaluateResumeShapeV1(
+    await readRunRecordEventsV1(join(packetPath, "review", "run-record.jsonl")),
+  );
+  if (!eligibility.eligible) throw new Error(describeResumeRefusalsV1(eligibility.refusals));
   const config = await resolveReviewConfigV1(options);
   const { provider } = await resolveLiveReviewContextV1(config, dependencies);
   const repositoryPath = resolve(options.repo ?? process.cwd());
-  const result = await resumeFinalReview(resolve(options.packet), config, provider, repositoryPath);
+  const result = await resumeFinalReview(packetPath, config, provider, repositoryPath);
   io.stdout(`Verdict: ${reviewVerdictLabel(result.report)}`);
   io.stdout(`Report: ${result.markdownPath}`);
   return reviewOutcomeExitCodeV1(result.report.verdict);

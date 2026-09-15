@@ -92,9 +92,14 @@ requires matching request, packet, prompt, result, and run-record versions plus
 same author status and digest. Resumable ledger must contain exactly one run
 start, preliminary persistence, finding-verification persistence, and author
 transition in lifecycle order, plus one terminal failure for last final attempt.
-Earlier provider retry records remain valid. Existing request versions keep
-their current behavior. Old and new lifecycle artifacts cannot be mixed or
-silently upgraded.
+Call attempt identities are global and contiguous; every start has exactly one
+later matching outcome before another start. A failed attempt can lead to its
+exact next start only through one matching retry record. After terminal final
+failure, only final reservation bookkeeping and one optional trailing run
+failure are valid. Missing run failure remains eligible as explicit
+crash-recovery policy because durable call failure is already recorded. Existing
+request versions keep their current behavior. Old and new lifecycle artifacts
+cannot be mixed or silently upgraded.
 Detailed evidence and lifecycle rationale are retained in
 the [steering and author-absence research](../research/2026-09-11-steering-and-author-absence-contract.md).
 
