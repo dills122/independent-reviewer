@@ -178,6 +178,7 @@ const EvaluationCorpusDefinitionV1Schema = z
     }
   });
 
+export type EvaluationCorpusCaseDefinitionV1 = z.output<typeof CorpusCaseDefinitionV1Schema>;
 export type EvaluationCorpusDefinitionV1 = z.output<typeof EvaluationCorpusDefinitionV1Schema>;
 
 const PAIRS = {
@@ -282,7 +283,9 @@ function runtimeForCase(caseId: string): {
   };
 }
 
-function definitionForCase(testCase: (typeof EVALUATION_CASES_V1)[number]) {
+function definitionForCase(
+  testCase: (typeof EVALUATION_CASES_V1)[number],
+): EvaluationCorpusCaseDefinitionV1 {
   const obligationId = `obligation_${testCase.id}` as const;
   const pairTuple = PAIRS[testCase.id as keyof typeof PAIRS];
   const roots = testCase.oracle.expectedRootIds

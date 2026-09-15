@@ -48,7 +48,13 @@ async function materializeFile(
 }
 
 async function git(repositoryPath: string, ...arguments_: string[]): Promise<void> {
-  await exec("git", ["-C", repositoryPath, ...arguments_]);
+  await exec("git", ["-C", repositoryPath, ...arguments_], {
+    env: {
+      ...process.env,
+      GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+      GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+    },
+  });
 }
 
 function assertOracleSeparated(testCase: EvaluationCaseV1): void {
