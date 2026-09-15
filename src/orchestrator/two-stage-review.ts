@@ -6,9 +6,9 @@ import {
   type AuthorPacketV1,
   type DigestV1,
   FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
-  FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
+  FINDING_VERIFICATION_CANDIDATE_V4_JSON_SCHEMA,
   type FinalReviewReportV1,
-  type FindingVerificationV3,
+  type FindingVerificationV4,
   GuidancePromptPresentationSchema,
   jsonDocument,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
@@ -57,7 +57,7 @@ import { emitReviewProgress } from "./progress.js";
 import {
   type ConstrainedResponseSchemaV1,
   constrainFinalConcernScopeV1,
-  constrainFindingVerificationCandidateSchemaV3,
+  constrainFindingVerificationCandidateSchemaV4,
   constrainRepairReferencesV1,
   constrainResponseSchemaV1,
 } from "./response-schema.js";
@@ -71,8 +71,8 @@ import {
 } from "./response-validation.js";
 import { describeResumeRefusalsV1, evaluateResumeShapeV1 } from "./resume-eligibility.js";
 import {
-  FINDING_VERIFICATION_POLICY_V3,
-  FINDING_VERIFICATION_POLICY_VERSION_V3,
+  FINDING_VERIFICATION_POLICY_V4,
+  FINDING_VERIFICATION_POLICY_VERSION_V4,
   finalSchemaNameForBrief,
   isStandardsBrief,
   preliminarySchemaNameForBrief,
@@ -690,7 +690,7 @@ function requiredReviewTokenReservations(
     maxOutputTokensPerCall;
   const findingVerificationCallReservation =
     conservativeInputTokenUpperBound(
-      findingVerificationMessagesV3(blindEvidence, null),
+      findingVerificationMessagesV4(blindEvidence, null),
       findingVerificationResponseSchema,
     ) +
     maxOutputTokensPerCall +
@@ -712,9 +712,9 @@ function requiredReviewTokenReservations(
   };
 }
 
-function findingVerificationEnvelope(verification: FindingVerificationV3 | null): string {
+function findingVerificationEnvelope(verification: FindingVerificationV4 | null): string {
   return JSON.stringify({
-    schemaVersion: 3,
+    schemaVersion: 4,
     type: "FINDING_VERIFICATION",
     verification,
     finalProtocol: {
@@ -797,8 +797,8 @@ function guidanceAdmissionForCallsV1(
     preliminary:
       serializedMessageBytes(blindMessages) - serializedMessageBytes(baselineBlindMessages),
     findingVerification:
-      serializedMessageBytes(findingVerificationMessagesV3(blindEvidence, null)) -
-      serializedMessageBytes(findingVerificationMessagesV3(baselineEvidence, null)),
+      serializedMessageBytes(findingVerificationMessagesV4(blindEvidence, null)) -
+      serializedMessageBytes(findingVerificationMessagesV4(baselineEvidence, null)),
     final:
       serializedMessageBytes(finalMessages(blindMessages)) -
       serializedMessageBytes(finalMessages(baselineBlindMessages)),
@@ -1034,16 +1034,16 @@ async function validatePreliminaryStageV1(
   }
 }
 
-function findingVerificationMessagesV3(
+function findingVerificationMessagesV4(
   blindEvidence: unknown,
   preliminary: ReviewPreliminary | null,
 ): ReviewMessageV1[] {
   return [
-    { role: "system", content: FINDING_VERIFICATION_POLICY_V3 },
+    { role: "system", content: FINDING_VERIFICATION_POLICY_V4 },
     {
       role: "user",
       content: JSON.stringify({
-        schemaVersion: 3,
+        schemaVersion: 4,
         type: "FINDING_VERIFICATION_REQUEST",
         blindReviewEvidence: blindEvidence,
         preliminaryFindings:
@@ -1059,10 +1059,10 @@ function findingVerificationMessagesV3(
   ];
 }
 
-function emptyFindingVerificationV3(
+function emptyFindingVerificationV4(
   preliminary: ReviewPreliminary,
   brief: ReviewBrief,
-): FindingVerificationV3 {
+): FindingVerificationV4 {
   if (
     preliminary.findings.length !== 0 ||
     preliminary.evidenceGaps.length !== 0 ||
@@ -1071,7 +1071,7 @@ function emptyFindingVerificationV3(
     throw new Error("Cannot skip finding verification while preliminary adverse claims exist.");
   }
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     stage: "FINDING_VERIFICATION",
     snapshotDigest: brief.snapshotManifest.snapshotDigest,
     briefDigest: brief.briefDigest,
@@ -1080,7 +1080,7 @@ function emptyFindingVerificationV3(
   };
 }
 
-async function completeFindingVerificationStageV3(
+async function completeFindingVerificationStageV4(
   reviewDirectory: string,
   runRecordPath: string,
   config: ReviewRunConfigV3,
@@ -1093,11 +1093,11 @@ async function completeFindingVerificationStageV3(
   finalCallReservation: number,
   costLedger: RunCostLedgerV1,
   retryState: ProviderRetryStateV1,
-): Promise<{ verification: FindingVerificationV3; chargedTokens: number }> {
+): Promise<{ verification: FindingVerificationV4; chargedTokens: number }> {
   const verificationPath = join(reviewDirectory, "finding-verification.json");
   const concernCount = preliminary.evidenceGaps.length + preliminary.limitations.length;
   if (preliminary.findings.length === 0 && concernCount === 0) {
-    const verification = emptyFindingVerificationV3(preliminary, brief);
+    const verification = emptyFindingVerificationV4(preliminary, brief);
     await writeFile(verificationPath, jsonDocument(verification), { flag: "wx", mode: 0o600 });
     await appendRunEvent(runRecordPath, {
       type: "FINDING_VERIFICATION_PERSISTED",
@@ -1108,10 +1108,10 @@ async function completeFindingVerificationStageV3(
     return { verification, chargedTokens: 0 };
   }
 
-  const messages = findingVerificationMessagesV3(blindEvidence, preliminary);
+  const messages = findingVerificationMessagesV4(blindEvidence, preliminary);
   assertConversationBudget(messages, config.budgets.maxConversationBytes);
-  const constrained = constrainFindingVerificationCandidateSchemaV3(
-    FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
+  const constrained = constrainFindingVerificationCandidateSchemaV4(
+    FINDING_VERIFICATION_CANDIDATE_V4_JSON_SCHEMA,
     preliminary.findings.length,
     concernCount,
     {
@@ -1146,12 +1146,12 @@ async function completeFindingVerificationStageV3(
       timeoutMs: config.budgets.timeoutMs,
       messages,
       responseSchema: {
-        name: "finding_verification_candidate_v3",
+        name: "finding_verification_candidate_v4",
         schema: constrained.schema,
       },
     },
     {
-      promptVersion: FINDING_VERIFICATION_POLICY_VERSION_V3,
+      promptVersion: FINDING_VERIFICATION_POLICY_VERSION_V4,
       responseArrayLimits: constrained.appliedArrayLimits,
     },
     providerRetryContextV1(retryState, config, costLedger, {
@@ -1195,7 +1195,7 @@ async function completeFinalStageV1(
   provider: ReviewProviderV1,
   brief: ReviewBrief,
   preliminary: ReviewPreliminary,
-  findingVerification: FindingVerificationV3,
+  findingVerification: FindingVerificationV4,
   finalMessages: ReviewMessageV1[],
   finalConstrained: ConstrainedResponseSchemaV1,
   finalCallReservation: number,
@@ -1514,8 +1514,8 @@ function prepareReviewCalls(
     },
   );
   const finalResponseSchema = finalConstrained.schema;
-  const findingVerificationResponseSchema = constrainFindingVerificationCandidateSchemaV3(
-    FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
+  const findingVerificationResponseSchema = constrainFindingVerificationCandidateSchemaV4(
+    FINDING_VERIFICATION_CANDIDATE_V4_JSON_SCHEMA,
     findingVerificationReservationCountV1(),
     findingVerificationConcernReservationCountV1(),
     {
@@ -1540,7 +1540,7 @@ function prepareReviewCalls(
   ];
   assertConversationBudget(finalMessageSkeleton, config.budgets.maxConversationBytes);
   assertConversationBudget(
-    findingVerificationMessagesV3(blindEvidence, null),
+    findingVerificationMessagesV4(blindEvidence, null),
     config.budgets.maxConversationBytes,
   );
   const reservations = requiredReviewTokenReservations(
@@ -1687,8 +1687,8 @@ export async function runTwoStageReview(
     promptVersion: promptVersionForBrief(brief),
     preliminarySchema: preliminarySchemaNameForBrief(brief),
     finalSchema: finalSchemaNameForBrief(brief),
-    findingVerificationSchema: "finding_verification_candidate_v3",
-    findingVerificationPromptVersion: FINDING_VERIFICATION_POLICY_VERSION_V3,
+    findingVerificationSchema: "finding_verification_candidate_v4",
+    findingVerificationPromptVersion: FINDING_VERIFICATION_POLICY_VERSION_V4,
   });
 
   try {
@@ -1777,7 +1777,7 @@ export async function runTwoStageReview(
       responseArtifact: validatedPreliminary.responseArtifact,
     });
 
-    const validatedVerification = await completeFindingVerificationStageV3(
+    const validatedVerification = await completeFindingVerificationStageV4(
       reviewDirectory,
       runRecordPath,
       config,
@@ -2030,8 +2030,8 @@ function assertResumeProtocolV1(
       ("standards" in packet.canonicalInputs
         ? "standards_candidate_v3"
         : "final_review_candidate_v3") ||
-    started.findingVerificationSchema !== "finding_verification_candidate_v3" ||
-    started.findingVerificationPromptVersion !== FINDING_VERIFICATION_POLICY_VERSION_V3
+    started.findingVerificationSchema !== "finding_verification_candidate_v4" ||
+    started.findingVerificationPromptVersion !== FINDING_VERIFICATION_POLICY_VERSION_V4
   ) {
     throw new Error(
       "The persisted run uses an incompatible final response protocol; start a new review.",
@@ -2170,7 +2170,7 @@ async function readVerifiedFindingVerificationResponseV1(
   config: ReviewRunConfigV3,
   brief: ReviewBrief,
   preliminary: ReviewPreliminary,
-  findingVerification: FindingVerificationV3 | null,
+  findingVerification: FindingVerificationV4 | null,
   succeededCalls: ResumeShapeV1["findingVerificationSucceededCalls"],
   persisted: ResumeShapeV1["findingVerificationPersisted"],
 ): Promise<StoredProviderResponseV1 | undefined> {
@@ -2303,8 +2303,8 @@ function replayFindingVerificationSpendV1(
 ): { inputTokens: number; callTokens: number } {
   if (!provider) return { inputTokens: 0, callTokens: 0 };
 
-  const constrained = constrainFindingVerificationCandidateSchemaV3(
-    FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
+  const constrained = constrainFindingVerificationCandidateSchemaV4(
+    FINDING_VERIFICATION_CANDIDATE_V4_JSON_SCHEMA,
     preliminary.findings.length,
     preliminary.evidenceGaps.length + preliminary.limitations.length,
     {
@@ -2317,9 +2317,9 @@ function replayFindingVerificationSpendV1(
     models: permittedModelsV1(config),
     maxOutputTokens: config.budgets.maxOutputTokensPerCall,
     timeoutMs: config.budgets.timeoutMs,
-    messages: findingVerificationMessagesV3(blindEvidence, preliminary),
+    messages: findingVerificationMessagesV4(blindEvidence, preliminary),
     responseSchema: {
-      name: "finding_verification_candidate_v3",
+      name: "finding_verification_candidate_v4",
       schema: constrained.schema,
     },
   };
@@ -2329,7 +2329,7 @@ function replayFindingVerificationSpendV1(
       event.stage === "FINDING_VERIFICATION" && event.attemptNumber === succeeded?.attemptNumber,
   );
   if (
-    started?.promptVersion !== FINDING_VERIFICATION_POLICY_VERSION_V3 ||
+    started?.promptVersion !== FINDING_VERIFICATION_POLICY_VERSION_V4 ||
     JSON.stringify(started.inputDigest) !== JSON.stringify(sha256Utf8(JSON.stringify(request)))
   ) {
     throw new Error("The persisted finding-verification request is invalid.");

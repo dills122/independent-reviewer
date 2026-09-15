@@ -59,6 +59,9 @@ The versioned run-record event contract is recorded in
 Fresh verification of preliminary adverse claims and runner-owned final
 limitations is recorded in
 [ADR-016](decisions/016-verify-every-verdict-affecting-review-claim.md).
+Runner-derived finding judgments from explicit obligation, scenario-scope, and
+behavior checks are recorded in
+[ADR-020](decisions/020-derive-finding-verification-from-structured-checks.md).
 Isolating capture from developer Git configuration is recorded in
 [ADR-017](decisions/017-isolate-capture-from-developer-git-configuration.md).
 Proposed isolated named-check contracts, Linux backend qualification, and the
@@ -350,7 +353,10 @@ evidence set. It persists the raw and validated preliminary result, then persist
 a fresh author-blind assessment of every preliminary finding, evidence gap, and
 limitation before author delivery. Adverse-claim-free reviews create the empty
 verification ledger locally; other reviews make one schema-constrained verifier
-call. Final reconciliation must withdraw every finding with a verifier
+call. Active finding-verification V4 requires explicit obligation applicability,
+scenario scope, and behavioral support checks; runner derives finding status
+from those checks instead of accepting an opaque provider label. Final
+reconciliation must withdraw every finding with a verifier
 `NO_VIOLATION` judgment, resolve every concern with
 `NO_BLOCKING_UNCERTAINTY`, and retain demonstrated or inconclusive blocking
 uncertainty. It permits at most

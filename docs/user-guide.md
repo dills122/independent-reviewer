@@ -442,7 +442,9 @@ Key files include:
 - `review-context-map.json`: language-neutral context regions and relations.
 - `review/review-unit-plan.json`: deterministic target/support grouping sent for review.
 - `review/preliminary.json`: persisted blind result.
-- `review/finding-verification.json`: one judgment per preliminary finding.
+- `review/finding-verification.json`: runner-derived judgment plus obligation,
+  scenario-scope, and behavioral-support checks for each preliminary finding;
+  one judgment per preliminary concern.
 - `review/final.json`: validated final result.
 - `review/report.md`: presentation-safe human report.
 - `review/run-record.jsonl`: append-only stage, routing, usage, and failure ledger.

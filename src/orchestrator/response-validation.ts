@@ -2,11 +2,11 @@ import * as z from "zod";
 
 import {
   type AuthorPacketV1,
-  assembleFindingVerificationV3,
-  assertFindingVerificationScopeV3,
-  FindingVerificationCandidateV3Schema,
-  type FindingVerificationV3,
-  FindingVerificationV3Schema,
+  assembleFindingVerificationV4,
+  assertFindingVerificationScopeV4,
+  FindingVerificationCandidateV4Schema,
+  type FindingVerificationV4,
+  FindingVerificationV4Schema,
   logicalLineCountV1,
   PreliminaryAssessmentV1Schema,
   type PreliminaryConcernIdentityV3,
@@ -198,7 +198,7 @@ export async function assertAssessmentAnchors(
 export async function assertFinalSemantics(
   report: ReviewReport,
   preliminary: ReviewPreliminary,
-  findingVerification: FindingVerificationV3,
+  findingVerification: FindingVerificationV4,
   brief: ReviewBrief,
   packetPath: string,
   authorVerificationClaims: AuthorPacketV1["claimedVerification"],
@@ -402,8 +402,8 @@ export function parseFindingVerification(
   value: unknown,
   preliminary: ReviewPreliminary,
   brief: ReviewBrief,
-): FindingVerificationV3 {
-  const parsed = FindingVerificationV3Schema.safeParse(value);
+): FindingVerificationV4 {
+  const parsed = FindingVerificationV4Schema.safeParse(value);
   if (!parsed.success) {
     throw new FindingVerificationOutputValidationError(
       `Invalid finding verification: ${z.prettifyError(parsed.error)}`,
@@ -419,7 +419,7 @@ export function parseFindingVerification(
     );
   }
   try {
-    assertFindingVerificationScopeV3(
+    assertFindingVerificationScopeV4(
       parsed.data,
       preliminary.findings.map((finding) => finding.id),
       preliminaryConcernIdentitiesV3(preliminary),
@@ -437,8 +437,8 @@ export function parseFindingVerificationCandidate(
   value: unknown,
   preliminary: ReviewPreliminary,
   brief: ReviewBrief,
-): FindingVerificationV3 {
-  const parsed = FindingVerificationCandidateV3Schema.safeParse(value);
+): FindingVerificationV4 {
+  const parsed = FindingVerificationCandidateV4Schema.safeParse(value);
   if (!parsed.success) {
     throw new FindingVerificationOutputValidationError(
       `Invalid finding verification: ${z.prettifyError(parsed.error)}`,
@@ -454,7 +454,7 @@ export function parseFindingVerificationCandidate(
     );
   }
   try {
-    return assembleFindingVerificationV3(
+    return assembleFindingVerificationV4(
       parsed.data,
       preliminary.findings.map((finding) => finding.id),
       preliminaryConcernIdentitiesV3(preliminary),
@@ -470,7 +470,7 @@ export function parseFindingVerificationCandidate(
 export async function parseFinal(
   value: unknown,
   preliminary: ReviewPreliminary,
-  findingVerification: FindingVerificationV3,
+  findingVerification: FindingVerificationV4,
   brief: ReviewBrief,
   packetPath: string,
   authorVerificationClaims: AuthorPacketV1["claimedVerification"],

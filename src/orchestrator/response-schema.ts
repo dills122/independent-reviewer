@@ -446,6 +446,21 @@ export function constrainFindingVerificationCandidateSchemaV3(
   return { schema: root, appliedArrayLimits };
 }
 
+/** Pins ordered V4 finding-basis checks and concern judgments to runner-owned counts. */
+export function constrainFindingVerificationCandidateSchemaV4(
+  schema: unknown,
+  findingCount: number,
+  concernCount: number,
+  identities: ConstrainResponseSchemaOptionsV1["identities"],
+): ConstrainedResponseSchemaV1 {
+  return constrainFindingVerificationCandidateSchemaV3(
+    schema,
+    findingCount,
+    concernCount,
+    identities,
+  );
+}
+
 /** Narrow concern scope before call two without enlarging its reserved schema. */
 export function constrainFinalConcernScopeV1(
   final: ConstrainedResponseSchemaV1,

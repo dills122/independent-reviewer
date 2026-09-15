@@ -4,6 +4,10 @@
 
 Accepted
 
+Finding judgment shape is refined by
+[ADR-020](020-derive-finding-verification-from-structured-checks.md); concern
+verification and runner-owned limitation decisions here remain active.
+
 ## Date
 
 2026-09-13
