@@ -2,8 +2,9 @@
 
 Status: implementation started for [#160](https://github.com/dills122/independent-reviewer/issues/160).
 Initial 20-case corpus, deterministic fixture builder, tiered selection, paid admission, and run
-accounting are implemented. Split manifests, finding-level scorer, adjudication records, and paid
-Stage A sampling remain pending.
+accounting are implemented. The first paid Stage A sample is recorded in
+[tiered review matrix paid validation](../validation/2026-09-14-tiered-review-matrix.md). Split
+manifests, finding-level scorer, adjudication records, and repeated sampling remain pending.
 
 ## Purpose
 
