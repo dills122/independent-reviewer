@@ -1,10 +1,10 @@
 # Next-wave delivery execution index
 
-Status: active execution index. Repository baseline is `6cc5301`, including
-merged [PR #175](https://github.com/dills122/independent-reviewer/pull/175)
-and [PR #176](https://github.com/dills122/independent-reviewer/pull/176).
-PR #175 records final-claim adjudication design; PR #176 bounds Git
-`safe.directory` discovery and closes the independent preflight hang.
+Status: active execution index. Repository baseline is `be3935e`, including
+merged evaluation foundation
+[PR #178](https://github.com/dills122/independent-reviewer/pull/178), paid
+checkpoint [PR #179](https://github.com/dills122/independent-reviewer/pull/179),
+and author-lifecycle [PR #180](https://github.com/dills122/independent-reviewer/pull/180).
 
 Canonical scope remains in the
 [architecture and roadmap](../architecture-and-roadmap.md),
@@ -46,9 +46,9 @@ This wave is complete when:
 - [#169](https://github.com/dills122/independent-reviewer/issues/169) is closed
   by PR #176 after bounded discovery, cleanup, and exact-record regression
   coverage passed independent review and CI.
-- [#103](https://github.com/dills122/independent-reviewer/issues/103) and
-  [#149](https://github.com/dills122/independent-reviewer/issues/149) are the
-  remaining friendly-operations milestone units.
+- [#103](https://github.com/dills122/independent-reviewer/issues/103) is closed
+  by PR #180. [#149](https://github.com/dills122/independent-reviewer/issues/149)
+  remains the friendly-operations qualification unit.
 - [#70](https://github.com/dills122/independent-reviewer/issues/70) is closed as
   completed; [#18](https://github.com/dills122/independent-reviewer/issues/18)
   is closed as superseded by [#123](https://github.com/dills122/independent-reviewer/issues/123)
@@ -105,7 +105,7 @@ flowchart TD
 | ID | Issues | Owner and delivery type | Dependencies | Acceptance and verification | Status |
 | --- | --- | --- | --- | --- | --- |
 | SYNC-172 | [PR #172](https://github.com/dills122/independent-reviewer/pull/172) | Lead integration | PR #173 on `main` | Rebase if needed; retain research/probes; all required checks green | Complete; squash-merged as `12ee826` |
-| A-FOUNDATION | [#160](https://github.com/dills122/independent-reviewer/issues/160) | Evaluation-contract worker | SYNC-172 | Version case, family split, experiment, attempt, adjudication, and score artifacts using shared primitives; labels remain evaluator-only | Remediation in progress on `codex/evaluation-artifact-contracts` after review found oracle-fragment, comparison-freeze, provider-attempt, score-binding, and chronology gaps |
+| A-FOUNDATION | [#160](https://github.com/dills122/independent-reviewer/issues/160) | Evaluation-contract worker | SYNC-172 | Version case, family split, experiment, attempt, adjudication, and score artifacts using shared primitives; labels remain evaluator-only | Complete; independently reviewed and merged in PR #178 |
 | A-SCORER | [#160](https://github.com/dills122/independent-reviewer/issues/160) | Scorer worker | A-FOUNDATION | Mock reports prove root matching, duplicates, partial labels, unresolved claims, zero denominators, and delivery failures | Queued |
 | A-CORPUS | [#160](https://github.com/dills122/independent-reviewer/issues/160) | Corpus worker | A-FOUNDATION | Freeze whole-family development/holdout allocation, provenance, root definitions, and expansion path toward approximately 30 cases | Queued; parallel with A-SCORER |
 | A-LEAK | [#160](https://github.com/dills122/independent-reviewer/issues/160) | Isolation-test worker | A-FOUNDATION | Reject evaluator labels, fixes, oracle tests, and revealing filenames in every reviewer stage and tool result | Queued; parallel with A-SCORER |
@@ -114,25 +114,22 @@ flowchart TD
 | B-PROJECTION | [#161](https://github.com/dills122/independent-reviewer/issues/161), [#168](https://github.com/dills122/independent-reviewer/issues/168), [#171](https://github.com/dills122/independent-reviewer/issues/171) | Contract/report worker | B-ADR, A-GATE | Pure demonstrated/rejected/inconclusive projection; exact duplicate, category-escape, out-of-domain, false-runtime-premise, and true in-domain controls | Queued |
 | B-FINAL | [#161](https://github.com/dills122/independent-reviewer/issues/161) | Orchestrator worker | B-PROJECTION | Verify final-only/materially changed claims; reserve worst-case calls; persist durable events; preserve resume compatibility and incomplete outcomes | Queued; serialize contract changes with B-PROJECTION |
 | OPS-169 | [#169](https://github.com/dills122/independent-reviewer/issues/169) | Snapshot worker | SYNC-172 only | Bound setup, output, cleanup, and concurrent cached waiters across all three Git wrappers; focused fake-Git tests pass | Complete; independently reviewed and merged in PR #176 |
-| FO-5B | [#103](https://github.com/dills122/independent-reviewer/issues/103) | CLI/author-lifecycle worker | Compact guidance and Commander work merged | Every simple setting changes behavior; warned author opt-out and isolation/resume cases pass | In progress on `codex/author-explanation-settings` |
-| FO-6 | [#149](https://github.com/dills122/independent-reviewer/issues/149) | Docs/E2E worker | FO-5B | Clean-checkout short flow, provider-free multilingual matrix, repository checks, and current user docs pass | Blocked only on FO-5B remainder |
+| FO-5B | [#103](https://github.com/dills122/independent-reviewer/issues/103) | CLI/author-lifecycle worker | Compact guidance and Commander work merged | Every simple setting changes behavior; warned author opt-out and isolation/resume cases pass | Complete; independently reviewed and merged in PR #180 |
+| FO-6 | [#149](https://github.com/dills122/independent-reviewer/issues/149) | Docs/E2E worker | FO-5B | Clean-checkout short flow, provider-free multilingual matrix, repository checks, and current user docs pass | Ready; FO-5B dependency complete |
 | UX-170 | [#170](https://github.com/dills122/independent-reviewer/issues/170) | CLI presentation worker | Stable B selection semantics preferred | Opt-in deterministic compact view; complete report, verdict, digest, exit status, uncertainty, and machine output unchanged | P3; schedule after B-PROJECTION |
 | C1 | [#162](https://github.com/dills122/independent-reviewer/issues/162) | ADR, then serialized evidence workers | A-GATE, B-FINAL | Inventory/citation-role ADR; declaration expansion; offline frozen service; provider tool loop only after offline qualification | Later critical path |
 | C2 | [#163](https://github.com/dills122/independent-reviewer/issues/163) | Frozen adapter worker | C1; D backend for build-dependent producer | Pure reverse-reference baseline first; semantic producer only with source identity, honest unsupported states, and measured benefit | Later |
-| D-RESEARCH | [#164](https://github.com/dills122/independent-reviewer/issues/164), [#113](https://github.com/dills122/independent-reviewer/issues/113), [#116](https://github.com/dills122/independent-reviewer/issues/116) | Research worker | None | Threat boundary and platform spike cover secrets, network, resources, descendants, setup failure, and cleanup | In review/remediation on `codex/isolated-checks-backend-decision`; no runtime claim and not complete until PR |
+| D-RESEARCH | [#164](https://github.com/dills122/independent-reviewer/issues/164), [#113](https://github.com/dills122/independent-reviewer/issues/113), [#116](https://github.com/dills122/independent-reviewer/issues/116) | Research worker | None | Threat boundary and platform spike cover secrets, network, resources, descendants, setup failure, and cleanup | In review as [PR #181](https://github.com/dills122/independent-reviewer/pull/181); ADR Proposed, all backends unsupported |
 | E-RESEARCH | [#165](https://github.com/dills122/independent-reviewer/issues/165) | Research worker | None | Define dimensions, obligations, evidence, and mode-compatible outcomes; no new pass ships without measured benefit | Ready in parallel; no runtime claim |
 
 ## Parallel waves and integration order
 
 1. SYNC-172 is complete, and this execution-index branch is rebased on resulting
    `main`.
-2. A-FOUNDATION, B-ADR, OPS-169, and FO-5B have been dispatched as independent
-   worktrees. B-ADR and OPS-169 are complete. D-RESEARCH is in review/remediation;
-   E-RESEARCH remains a ready parallel lane after active implementation capacity
-   frees. Each worker owns only its listed area and must preserve concurrent
-   status and paid-checkpoint updates.
-3. After A-FOUNDATION freezes evaluator contracts, dispatch A-SCORER, A-CORPUS,
-   and A-LEAK in parallel. Lead owns A-GATE integration.
+2. A-FOUNDATION, B-ADR, OPS-169, and FO-5B are complete. D-RESEARCH is in PR
+   review; E-RESEARCH remains ready after active implementation capacity frees.
+3. A-FOUNDATION has frozen evaluator contracts. A-SCORER, A-CORPUS, and A-LEAK
+   are ready for parallel dispatch. Lead owns A-GATE integration.
 4. Serialize B-PROJECTION then B-FINAL because both touch claim/report schemas
    and orchestrator boundaries. Fold #168 and #171 provider-free regressions into
    these units; a prompt-only change is insufficient.
