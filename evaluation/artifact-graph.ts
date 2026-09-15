@@ -154,7 +154,7 @@ export function deriveEvaluationAttemptMetricCountsV1(
   const invalid = finalDefects.filter(({ label }) => label === "INVALID_DEFECT").length;
   const unresolved = finalDefects.filter(({ label }) => label === "UNRESOLVED").length;
   const duplicates = finalDefects.filter(({ label }) => label === "DUPLICATE").length;
-  const clean = caseManifest.pair?.role === "CLEAN";
+  const clean = caseManifest.oracleInventory.labelsExhaustive && expectedRoots.size === 0;
   const completeEvidence = caseManifest.oracleInventory.expectedUncertainties.length === 0;
   const expectedUncertainties = new Set(
     caseManifest.oracleInventory.expectedUncertainties.map(({ uncertaintyId }) => uncertaintyId),

@@ -226,6 +226,30 @@ describe("evaluation artifact graph", () => {
     );
   });
 
+  it("scores exhaustive zero-root controls as clean without pair metadata", () => {
+    const graph = makeEvaluationGraph();
+    const cleanCase = first(graph.cases.filter(({ caseId }) => caseId === "case_clean"));
+    const cleanAttempt = first(
+      graph.attempts.filter(
+        ({ caseId, variantId }) => caseId === cleanCase.caseId && variantId === "variant_baseline",
+      ),
+    );
+    Object.assign(cleanCase, { pair: null });
+
+    const counts = deriveEvaluationAttemptMetricCountsV1(
+      EvaluationAttemptRecordV1Schema.parse(cleanAttempt),
+      EvaluationCaseManifestV1Schema.parse(cleanCase),
+      graph.adjudications
+        .filter(({ attemptId }) => attemptId === cleanAttempt.attemptId)
+        .map((value) => EvaluationAdjudicationRecordV1Schema.parse(value)),
+    );
+
+    assert.deepEqual(
+      counts.find(({ metric }) => metric === "CLEAN_FALSE_POSITIVE_RATE"),
+      { metric: "CLEAN_FALSE_POSITIVE_RATE", numerator: 1, denominator: 1 },
+    );
+  });
+
   it("requires score breakdown and typed raw-reference coverage for exact graph", () => {
     const missingCase = makeEvaluationGraph();
     missingCase.score.caseBreakdowns.pop();

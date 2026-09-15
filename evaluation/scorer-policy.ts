@@ -17,6 +17,7 @@ export const EvaluationScorerPolicyV1Schema = z.strictObject({
   novelRootIdentity: z.literal("NON_ORACLE_ROOT_ID_V1"),
   invalidRootIdentity: z.literal("NON_ORACLE_ROOT_ID_V1"),
   duplicateIdentity: z.literal("CREDITED_SAME_STAGE_ROOT_ID_V1"),
+  cleanControlIdentity: z.literal("EXHAUSTIVE_ZERO_EXPECTED_ROOTS_V1"),
   failedStageRetention: z.literal("UNAVAILABLE_V1"),
   aggregation: z.literal("MAGNITUDE_VALUE_UTF16_ARTIFACT_ID_ORDER_NEUMAIER_SUM_V1"),
   interval: z.strictObject({
@@ -38,6 +39,7 @@ export const EVALUATION_SCORER_POLICY_V1 = EvaluationScorerPolicyV1Schema.parse(
   novelRootIdentity: "NON_ORACLE_ROOT_ID_V1",
   invalidRootIdentity: "NON_ORACLE_ROOT_ID_V1",
   duplicateIdentity: "CREDITED_SAME_STAGE_ROOT_ID_V1",
+  cleanControlIdentity: "EXHAUSTIVE_ZERO_EXPECTED_ROOTS_V1",
   failedStageRetention: "UNAVAILABLE_V1",
   aggregation: "MAGNITUDE_VALUE_UTF16_ARTIFACT_ID_ORDER_NEUMAIER_SUM_V1",
   interval: {
