@@ -352,6 +352,7 @@ describe("evaluation scorer", () => {
       expectedUncertainties: [
         {
           uncertaintyId: "uncertainty_missing_contract",
+          sourceOracleId: "root_missing_contract",
           obligationId: "obligation_currency",
           description: "Required upstream currency contract is unavailable.",
         },
