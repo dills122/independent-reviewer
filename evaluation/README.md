@@ -64,21 +64,36 @@ npm run matrix:reconstruct-corpus -- --output /tmp/independent-reviewer-corpus-v
 Output directory must not already exist. Each reconstructed repository contains reviewer-visible
 inputs only. Sibling `evaluator/` directories retain hidden assertion records, correction artifacts,
 and case manifests; top-level `evaluator/family-split-manifest.json` binds every case-manifest digest.
-Git author and committer metadata are fixed so identical clean checkouts produce identical BASE
-commit and case-manifest identities.
+Git runs receive an explicit deterministic environment, fixed author and committer metadata,
+isolated configuration, disabled hooks and signing, and no ambient `GIT_*` authority channels. Thus
+identical clean checkouts produce identical BASE commit and case-manifest identities.
 
 Corpus v1 contains 12 defect/clean pairs and six controls. Eight pairs are development data and four
-are holdout data. Whole families stay in one split. Every case records source and license provenance,
-an explicit unqualified runtime identity, obligations, label completeness, and expected roots or
-uncertainties. Oracle assertions are evaluator evidence, not qualified executable checks; isolated
-execution remains deferred to Stage D.
+are holdout data. Controls cover missing required context, irrelevant missing context, misleading
+author concern, unsupported author defense, conflicting applicable standards, and post-author claim
+change exactly once. Whole families stay in one split, and paired reviewer inputs are identical.
+Every case records source and license provenance, an explicit unqualified runtime identity,
+obligations, label completeness, and expected roots, uncertainties, or recommendations. Unknown
+catalog oracle IDs fail reconstruction instead of being filtered.
+
+Three defect cases are reduced reverse-fix fixtures derived from repository regressions
+[#128](https://github.com/dills122/independent-reviewer/issues/128),
+[#132](https://github.com/dills122/independent-reviewer/issues/132), and
+[#137](https://github.com/dills122/independent-reviewer/issues/137), fixed by commit
+`597e2ba758a232f109f85dc01c47e21f9d30ed2a` and [PR
+#139](https://github.com/dills122/independent-reviewer/pull/139). Their provenance retains source
+path and blob identity, exact fix and parent revisions, issue/fix references, and environment needs.
+That source revision has no top-level license file; manifests record `NO_LICENSE_FILE` and the narrow
+repository-owner evaluator-use basis rather than claiming an open-source license. Clean pair members
+are reduced comparators, not historical PRs. Oracle assertions are evaluator evidence, not qualified
+executable checks; isolated execution remains deferred to Stage D.
 
 ## Corpus rules
 
 - Keep case IDs opaque. Put defect labels and expected root causes only in evaluator-owned oracle
   fields; control inputs sent to the reviewer must not reveal them.
-- Add behavior changes as clean/defect pairs where practical. Both members of a family belong to
-  the same train/test split when scoring is added.
+- Add behavior changes as clean/defect pairs where practical. Pair members keep BASE, obligations,
+  standards, author framing, and split fixed; only intended HEAD correctness changes.
 - Preserve fixed `smoke` and `standard` membership. Add new cases to `full` first; change smaller
   suites only when their coverage purpose changes deliberately.
 - Set `labelsExhaustive` only when every material root cause has been labeled.

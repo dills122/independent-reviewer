@@ -96,6 +96,12 @@ describe("evaluation corpus reconstruction", () => {
         for (const uncertainty of reconstructedCase.manifest.oracleInventory
           .expectedUncertainties) {
           assert.ok(!control.includes(uncertainty.uncertaintyId));
+          assert.ok(!control.includes(uncertainty.sourceOracleId));
+        }
+        for (const recommendation of reconstructedCase.manifest.oracleInventory
+          .expectedRecommendations) {
+          assert.ok(!control.includes(recommendation.recommendationId));
+          assert.ok(!control.includes(recommendation.sourceOracleId));
         }
         if (reconstructedCase.manifest.oracleInventory.expectedRoots.length > 0) {
           await assert.doesNotReject(() =>
@@ -109,6 +115,20 @@ describe("evaluation corpus reconstruction", () => {
           );
         }
       }
+      const advisory = reconstructed.cases.find(({ manifest }) => manifest.caseId === "case_010");
+      assert.equal(
+        advisory?.manifest.oracleInventory.expectedRecommendations[0]?.sourceOracleId,
+        "root_010_advisory_export_name",
+      );
+      const historical = reconstructed.cases.filter(({ manifest }) =>
+        manifest.source.provenance.includes('"kind": "REPOSITORY_REVERSE_FIX"'),
+      );
+      assert.equal(historical.length, 6);
+      assert.ok(
+        historical.every(({ manifest }) =>
+          manifest.source.provenance.includes('"licenseStatus": "NO_LICENSE_FILE"'),
+        ),
+      );
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });
     }

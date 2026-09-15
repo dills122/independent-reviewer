@@ -59,7 +59,7 @@ Names below describe future contracts, not currently exported schemas.
 
 | Artifact | Required content |
 | --- | --- |
-| Case manifest | Case/pair/family ID, source provenance and digests, BASE/HEAD or cumulative snapshot, mode, obligations, permitted reviewer inputs, expected roots/uncertainties, oracle references, label completeness, split |
+| Case manifest | Case/pair/family/control-role ID, source provenance and digests, BASE/HEAD or cumulative snapshot, mode, obligations, permitted reviewer inputs, expected roots/uncertainties/recommendations, oracle references, label completeness, split |
 | Experiment manifest | Engine commit, corpus/scorer versions, model and provider policy, prompt/schema versions, depth/evidence variant, environment, seed where supported, repetition count, budgets, stop rules |
 | Attempt record | Case/repetition/variant, runtime run reference, terminal state, stage outcomes, valid usage, known cost, unknown-cost reservation, latency |
 | Adjudication record | Finding/claim digest, label, matched root, causal evidence, adjudicator identity/type, rationale, unresolved disagreement |
@@ -220,11 +220,19 @@ and do not tune semantic policy in response to 429/transport errors.
 
 ### First implementation slice
 
-The package-private [evaluation harness](../../evaluation/README.md) reconstructs 30 synthetic
-cases from clean Git baselines. Fixed `smoke` (4), `standard` (8), and `full` (30) suites plus group
-and exact-case selectors keep routine runs bounded. Live execution requires an explicit selector,
-confirmation, and aggregate cost ceiling before fixture creation or provider access. Opaque case
-IDs and construction-time leak guards keep evaluator root labels outside reviewer inputs.
+The package-private [evaluation harness](../../evaluation/README.md) reconstructs 30 mixed synthetic
+and repository-history-derived cases from clean Git baselines. Three defect cases are explicitly
+labeled reduced reverse fixes of repository regressions #128, #132, and #137; they retain exact
+source revision, parent, path/blob, issue/fix, environment, and honest no-license provenance. Fixed
+`smoke` (4), `standard` (8), and `full` (30) suites plus group and exact-case selectors keep routine
+runs bounded. Live execution requires an explicit selector, confirmation, and aggregate cost ceiling
+before fixture creation or provider access. Opaque case IDs and construction-time leak guards keep
+evaluator root labels outside reviewer inputs.
+
+All six specified controls are unpaired and explicitly typed. Every pair shares BASE, reviewer mode,
+requirements or standards, and complete author framing; only intended HEAD correctness differs.
+Catalog oracle IDs are exhaustively classified as roots, uncertainties, or recommendations before
+reconstruction.
 
 This slice records versioned case and family split manifests, evaluator-only hidden assertions and
 correction artifacts, experiment manifests, per-case terminal results, validated verdicts,

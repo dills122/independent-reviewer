@@ -148,80 +148,82 @@ const priceClearName = `export function sumPrices(prices: number[]): number {
 export const EVALUATION_CASES_V1: readonly EvaluationCaseV1[] = [
   requirementsCase({
     id: "case_001",
-    title: "Behavior-preserving multi-file checkout refactor",
-    family: "javascript-checkout",
+    title: "NUL-delimited Git path decoding preserved",
+    family: "repository-git-nul-decoding",
     groups: ["cross-file"],
     suites: ALL_SUITES,
     files: [
       {
-        path: "pricing.mjs",
-        base: `export function subtotalDollars(items) {
-  return items.reduce((sum, item) => sum + item.priceDollars * item.quantity, 0);
+        path: "git-fields.ts",
+        base: `export function firstNulField(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("utf8").split("\\0")[0] ?? "";
 }
 `,
-        head: `export function subtotalCents(items) {
-  return items.reduce((sum, item) => sum + Math.round(item.priceDollars * 100) * item.quantity, 0);
+        head: `export function firstNulField(bytes: Uint8Array): string {
+  const [path = ""] = Buffer.from(bytes).toString("utf8").split("\\0");
+  return path;
 }
 `,
       },
       {
-        path: "checkout.mjs",
-        base: `import { subtotalDollars } from "./pricing.mjs";
-export function chargeAmount(items) {
-  return Math.round(subtotalDollars(items) * 100);
+        path: "attributes.ts",
+        base: `import { firstNulField } from "./git-fields.js";
+export function attributePath(bytes: Uint8Array): string {
+  return firstNulField(bytes);
 }
 `,
-        head: `import { subtotalCents } from "./pricing.mjs";
-export function chargeAmount(items) {
-  return subtotalCents(items);
+        head: `import { firstNulField } from "./git-fields.js";
+export function attributePath(bytes: Uint8Array): string {
+  return firstNulField(bytes);
 }
 `,
       },
     ],
     requirements:
-      "chargeAmount returns total payable integer cents from whole-dollar prices. Convert dollars to cents exactly once; empty items total zero.",
-    plan: "Move currency conversion into pricing and adapt checkout to consume cents.",
-    authorApproach: "Moved conversion into pricing and made checkout return the cents result.",
+      "NUL-delimited Git fields preserve every path byte represented as UTF-8 text, including leading whitespace in the first field.",
+    plan: "Destructure the first decoded field without changing NUL-record semantics.",
+    authorApproach: "Named the first decoded path while preserving raw NUL-field handling.",
     expectedVerdict: "READY",
   }),
   requirementsCase({
     id: "case_002",
-    title: "Cross-file double currency conversion",
-    family: "javascript-checkout",
+    title: "NUL-delimited Git path trimmed",
+    family: "repository-git-nul-decoding",
     groups: ["cross-file"],
     suites: ALL_SUITES,
     files: [
       {
-        path: "pricing.mjs",
-        base: `export function subtotalDollars(items) {
-  return items.reduce((sum, item) => sum + item.priceDollars * item.quantity, 0);
+        path: "git-fields.ts",
+        base: `export function firstNulField(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("utf8").split("\\0")[0] ?? "";
 }
 `,
-        head: `export function subtotalCents(items) {
-  return items.reduce((sum, item) => sum + Math.round(item.priceDollars * 100) * item.quantity, 0);
+        head: `export function firstNulField(bytes: Uint8Array): string {
+  const [path = ""] = Buffer.from(bytes).toString("utf8").trim().split("\\0");
+  return path;
 }
 `,
       },
       {
-        path: "checkout.mjs",
-        base: `import { subtotalDollars } from "./pricing.mjs";
-export function chargeAmount(items) {
-  return Math.round(subtotalDollars(items) * 100);
+        path: "attributes.ts",
+        base: `import { firstNulField } from "./git-fields.js";
+export function attributePath(bytes: Uint8Array): string {
+  return firstNulField(bytes);
 }
 `,
-        head: `import { subtotalCents } from "./pricing.mjs";
-export function chargeAmount(items) {
-  return Math.round(subtotalCents(items) * 100);
+        head: `import { firstNulField } from "./git-fields.js";
+export function attributePath(bytes: Uint8Array): string {
+  return firstNulField(bytes);
 }
 `,
       },
     ],
     requirements:
-      "chargeAmount returns total payable integer cents from whole-dollar prices. Convert dollars to cents exactly once; empty items total zero.",
-    plan: "Move currency conversion into pricing and adapt checkout to consume cents.",
-    authorApproach: "Moved conversion into pricing and made checkout return the cents result.",
+      "NUL-delimited Git fields preserve every path byte represented as UTF-8 text, including leading whitespace in the first field.",
+    plan: "Destructure the first decoded field without changing NUL-record semantics.",
+    authorApproach: "Named the first decoded path while preserving raw NUL-field handling.",
     expectedVerdict: "NOT_READY",
-    expectedRootIds: ["root_002_double_currency_conversion"],
+    expectedRootIds: ["root_002_git_nul_path_trimmed"],
   }),
   requirementsCase({
     id: "case_003",
@@ -823,103 +825,115 @@ export function v(prices: number[]): number {
   }),
   requirementsCase({
     id: "case_024",
-    title: "Terminal job state remains terminal",
-    family: "typescript-state-lifecycle",
+    title: "Untrusted Markdown prose remains inline text",
+    family: "repository-markdown-rendering",
     suites: FULL_SUITE,
     files: [
       {
-        path: "jobs.ts",
-        base: `export function retryState(state: string): string {
-  return state === "failed" ? "queued" : state;
+        path: "markdown.ts",
+        base: `export function escapeMarkdown(value: string): string {
+  return value.replace(/[\\r\\n]+/g, " ").replace(/([=~])/g, "\\\\$1");
 }
 `,
-        head: `const RETRYABLE = new Set(["failed"]);
-export function retryState(state: string): string {
-  return RETRYABLE.has(state) ? "queued" : state;
+        head: `export function escapeMarkdown(value: string): string {
+  const singleLine = value.replace(/[\\r\\n]+/g, " ");
+  return singleLine.replace(/([=~])/g, "\\\\$1");
 }
 `,
       },
     ],
     requirements:
-      "Only failed jobs become queued for retry. Completed and cancelled jobs remain terminal.",
-    plan: "Centralize retryable states without changing lifecycle transitions.",
-    authorApproach: "Moved retryable-state membership into a named set.",
+      "Untrusted prose renders on one Markdown line and cannot create setext headings or tilde fences.",
+    plan: "Name the single-line intermediate while preserving Markdown structure escaping.",
+    authorApproach: "Extracted single-line normalization before punctuation escaping.",
     expectedVerdict: "READY",
   }),
   requirementsCase({
     id: "case_025",
-    title: "Completed jobs incorrectly reopen",
-    family: "typescript-state-lifecycle",
+    title: "Untrusted prose can create Markdown blocks",
+    family: "repository-markdown-rendering",
     suites: FULL_SUITE,
     files: [
       {
-        path: "jobs.ts",
-        base: `export function retryState(state: string): string {
-  return state === "failed" ? "queued" : state;
+        path: "markdown.ts",
+        base: `export function escapeMarkdown(value: string): string {
+  return value.replace(/[\\r\\n]+/g, " ").replace(/([=~])/g, "\\\\$1");
 }
 `,
-        head: `const RETRYABLE = new Set(["failed", "completed"]);
-export function retryState(state: string): string {
-  return RETRYABLE.has(state) ? "queued" : state;
+        head: `export function escapeMarkdown(value: string): string {
+  const singleLine = value;
+  return singleLine.replace(/([*_])/g, "\\\\$1");
 }
 `,
       },
     ],
     requirements:
-      "Only failed jobs become queued for retry. Completed and cancelled jobs remain terminal.",
-    plan: "Centralize retryable states without changing lifecycle transitions.",
-    authorApproach: "Moved retryable-state membership into a named set.",
+      "Untrusted prose renders on one Markdown line and cannot create setext headings or tilde fences.",
+    plan: "Name the single-line intermediate while preserving Markdown structure escaping.",
+    authorApproach: "Extracted single-line normalization before punctuation escaping.",
     expectedVerdict: "NOT_READY",
-    expectedRootIds: ["root_025_completed_job_reopened"],
+    expectedRootIds: ["root_025_markdown_structure_escape"],
   }),
   requirementsCase({
     id: "case_026",
-    title: "Batch-size default preserved",
-    family: "typescript-default-compatibility",
+    title: "Grammar provenance follows resolved package",
+    family: "repository-grammar-provenance",
     suites: FULL_SUITE,
     files: [
       {
-        path: "batch.ts",
-        base: `export function batchSize(config?: { size?: number }): number {
-  return config?.size ?? 100;
+        path: "adapter.ts",
+        base: `export function producerVersion(manifest: { version: string }): string {
+  return \`tree-sitter-javascript@\${manifest.version}\`;
 }
 `,
-        head: `const DEFAULT_BATCH_SIZE = 100;
-export function batchSize(config?: { size?: number }): number {
-  return config?.size ?? DEFAULT_BATCH_SIZE;
+        head: `export function producerVersion(manifest: { version: string }): string {
+  const packageVersion = manifest.version;
+  return \`tree-sitter-javascript@\${packageVersion}\`;
 }
 `,
       },
+      {
+        path: "package.json",
+        base: '{\n  "name": "tree-sitter-javascript",\n  "version": "0.25.0"\n}\n',
+        head: '{\n  "name": "tree-sitter-javascript",\n  "version": "0.25.0"\n}\n',
+      },
     ],
-    requirements: "Omitted batch size defaults to 100. Explicit zero remains zero.",
-    plan: "Name the default without changing configuration compatibility.",
-    authorApproach: "Extracted the existing default to a constant.",
+    requirements:
+      "Recorded grammar producer version comes from the same resolved package manifest as the loaded grammar.",
+    plan: "Name the resolved package version before composing provenance.",
+    authorApproach: "Extracted the package version used in the producer identity.",
     expectedVerdict: "READY",
   }),
   requirementsCase({
     id: "case_027",
-    title: "Explicit zero batch size loses meaning",
-    family: "typescript-default-compatibility",
+    title: "Grammar provenance uses stale literal",
+    family: "repository-grammar-provenance",
     suites: FULL_SUITE,
     files: [
       {
-        path: "batch.ts",
-        base: `export function batchSize(config?: { size?: number }): number {
-  return config?.size ?? 100;
+        path: "adapter.ts",
+        base: `export function producerVersion(manifest: { version: string }): string {
+  return \`tree-sitter-javascript@\${manifest.version}\`;
 }
 `,
-        head: `const DEFAULT_BATCH_SIZE = 100;
-export function batchSize(config?: { size?: number }): number {
-  return config?.size || DEFAULT_BATCH_SIZE;
+        head: `export function producerVersion(manifest: { version: string }): string {
+  const packageVersion = "0.23.1";
+  return \`tree-sitter-javascript@\${packageVersion}\`;
 }
 `,
       },
+      {
+        path: "package.json",
+        base: '{\n  "name": "tree-sitter-javascript",\n  "version": "0.25.0"\n}\n',
+        head: '{\n  "name": "tree-sitter-javascript",\n  "version": "0.25.0"\n}\n',
+      },
     ],
-    requirements: "Omitted batch size defaults to 100. Explicit zero remains zero.",
-    plan: "Name the default without changing configuration compatibility.",
-    authorApproach: "Extracted the existing default to a constant.",
+    requirements:
+      "Recorded grammar producer version comes from the same resolved package manifest as the loaded grammar.",
+    plan: "Name the resolved package version before composing provenance.",
+    authorApproach: "Extracted the package version used in the producer identity.",
     expectedVerdict: "NOT_READY",
-    expectedRootIds: ["root_027_zero_batch_size_overwritten"],
+    expectedRootIds: ["root_027_stale_grammar_version"],
   }),
   requirementsCase({
     id: "case_028",

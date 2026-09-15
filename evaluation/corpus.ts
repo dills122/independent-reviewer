@@ -42,6 +42,33 @@ const PrivateArtifactSchema = z.strictObject({
   reference: NonEmptyTextSchema,
   content: NonEmptyTextSchema,
 });
+const SyntheticProvenanceSchema = z.strictObject({
+  kind: z.literal("SYNTHETIC"),
+  source: NonEmptyTextSchema,
+  sourceRepository: NonEmptyTextSchema,
+  sourceRevision: NonEmptyTextSchema,
+  sourcePath: z.null(),
+  issueReferences: z.array(NonEmptyTextSchema).length(0),
+  fixReferences: z.array(NonEmptyTextSchema).length(0),
+  licenseStatus: z.literal("REPOSITORY_AUTHORED"),
+  license: NonEmptyTextSchema,
+  environmentRequirements: z.array(NonEmptyTextSchema).min(1),
+});
+const ReverseFixProvenanceSchema = z.strictObject({
+  kind: z.literal("REPOSITORY_REVERSE_FIX"),
+  source: NonEmptyTextSchema,
+  sourceRepository: NonEmptyTextSchema,
+  sourceRevision: z.string().regex(/^[0-9a-f]{40}$/),
+  sourceParentRevision: z.string().regex(/^[0-9a-f]{40}$/),
+  sourcePath: NonEmptyTextSchema,
+  sourceBlobGitObject: z.string().regex(/^[0-9a-f]{40}$/),
+  issueReferences: z.array(NonEmptyTextSchema).min(1),
+  fixReferences: z.array(NonEmptyTextSchema).min(1),
+  licenseStatus: z.literal("NO_LICENSE_FILE"),
+  license: NonEmptyTextSchema,
+  environmentRequirements: z.array(NonEmptyTextSchema).min(1),
+  derivation: z.literal("REDUCED_REVERSE_FIX"),
+});
 
 const CorpusCaseDefinitionV1Schema = z.strictObject({
   caseId: OpaqueCaseIdSchema,
@@ -49,12 +76,7 @@ const CorpusCaseDefinitionV1Schema = z.strictObject({
   pair: PairSchema.nullable(),
   controlRole: ControlRoleSchema.nullable(),
   split: CorpusSplitSchema,
-  provenance: z.strictObject({
-    kind: z.literal("SYNTHETIC"),
-    source: NonEmptyTextSchema,
-    sourceRevision: NonEmptyTextSchema,
-    license: NonEmptyTextSchema,
-  }),
+  provenance: z.discriminatedUnion("kind", [SyntheticProvenanceSchema, ReverseFixProvenanceSchema]),
   runtime: z.strictObject({
     identity: NonEmptyTextSchema,
     language: NonEmptyTextSchema,
@@ -236,8 +258,8 @@ export type EvaluationCorpusCaseDefinitionV1 = z.output<typeof CorpusCaseDefinit
 export type EvaluationCorpusDefinitionV1 = z.output<typeof EvaluationCorpusDefinitionV1Schema>;
 
 const PAIRS = {
-  case_001: ["pair_checkout", "CLEAN"],
-  case_002: ["pair_checkout", "DEFECT"],
+  case_001: ["pair_git_nul_fields", "CLEAN"],
+  case_002: ["pair_git_nul_fields", "DEFECT"],
   case_003: ["pair_boundaries", "DEFECT"],
   case_004: ["pair_access", "DEFECT"],
   case_006: ["pair_naming_direct", "DEFECT"],
@@ -255,10 +277,10 @@ const PAIRS = {
   case_021: ["pair_access", "CLEAN"],
   case_022: ["pair_naming_registry", "DEFECT"],
   case_023: ["pair_naming_extraction", "DEFECT"],
-  case_024: ["pair_state_lifecycle", "CLEAN"],
-  case_025: ["pair_state_lifecycle", "DEFECT"],
-  case_026: ["pair_default_compatibility", "CLEAN"],
-  case_027: ["pair_default_compatibility", "DEFECT"],
+  case_024: ["pair_markdown_structure", "CLEAN"],
+  case_025: ["pair_markdown_structure", "DEFECT"],
+  case_026: ["pair_grammar_provenance", "CLEAN"],
+  case_027: ["pair_grammar_provenance", "DEFECT"],
   case_030: ["pair_boundaries", "CLEAN"],
 } as const;
 
@@ -289,9 +311,9 @@ type OracleClassification =
     };
 
 const ORACLE_CLASSIFICATIONS: Readonly<Record<string, OracleClassification>> = {
-  root_002_double_currency_conversion: {
+  root_002_git_nul_path_trimmed: {
     kind: "ROOT",
-    description: "Cents returned by pricing are multiplied by 100 again.",
+    description: "Text trimming removes leading whitespace from first NUL-delimited Git path.",
   },
   root_003_pagination_exclusive_end: {
     kind: "ROOT",
@@ -352,13 +374,13 @@ const ORACLE_CLASSIFICATIONS: Readonly<Record<string, OracleClassification>> = {
     kind: "ROOT",
     description: "Helper extraction also introduces prohibited single-letter export.",
   },
-  root_025_completed_job_reopened: {
+  root_025_markdown_structure_escape: {
     kind: "ROOT",
-    description: "Completed jobs are added to retryable states and reopen.",
+    description: "Line breaks and block punctuation let untrusted prose restructure Markdown.",
   },
-  root_027_zero_batch_size_overwritten: {
+  root_027_stale_grammar_version: {
     kind: "ROOT",
-    description: "Truthy fallback replaces explicit zero with default.",
+    description: "Hard-coded grammar version can disagree with resolved package manifest.",
   },
   root_029_author_cannot_replace_cache_requirement: {
     kind: "ROOT",
@@ -474,6 +496,90 @@ function goldFixForCase(testCase: (typeof EVALUATION_CASES_V1)[number]): string 
     .join("\n");
 }
 
+const REVERSE_FIX_SOURCE = {
+  case_001: {
+    issue: "128",
+    path: "src/snapshot/git-capture.ts",
+    blob: "7c049cf0c45e635691cf5ddbb13ca5833a4bb57c",
+    environment:
+      "Git NUL-delimited path output and Node.js 24 Uint8Array decoding; no external service.",
+  },
+  case_002: {
+    issue: "128",
+    path: "src/snapshot/git-capture.ts",
+    blob: "7c049cf0c45e635691cf5ddbb13ca5833a4bb57c",
+    environment:
+      "Git NUL-delimited path output and Node.js 24 Uint8Array decoding; no external service.",
+  },
+  case_024: {
+    issue: "132",
+    path: "src/report/markdown.ts",
+    blob: "85e258d98c54237d472be52288ccf5d60c319124",
+    environment: "CommonMark-compatible Markdown rendering of untrusted UTF-8 prose.",
+  },
+  case_025: {
+    issue: "132",
+    path: "src/report/markdown.ts",
+    blob: "85e258d98c54237d472be52288ccf5d60c319124",
+    environment: "CommonMark-compatible Markdown rendering of untrusted UTF-8 prose.",
+  },
+  case_026: {
+    issue: "137",
+    path: "src/context/tree-sitter-analyzer.ts",
+    blob: "99c81ffbfe104863611f7418252eb59929b0081d",
+    environment:
+      "Node.js 24 package resolution with tree-sitter-javascript manifest version 0.25.0.",
+  },
+  case_027: {
+    issue: "137",
+    path: "src/context/tree-sitter-analyzer.ts",
+    blob: "99c81ffbfe104863611f7418252eb59929b0081d",
+    environment:
+      "Node.js 24 package resolution with tree-sitter-javascript manifest version 0.25.0.",
+  },
+} as const;
+
+function provenanceForCase(
+  testCase: (typeof EVALUATION_CASES_V1)[number],
+): EvaluationCorpusCaseDefinitionV1["provenance"] {
+  const historical = REVERSE_FIX_SOURCE[testCase.id as keyof typeof REVERSE_FIX_SOURCE];
+  if (historical) {
+    return {
+      kind: "REPOSITORY_REVERSE_FIX",
+      source: `Reduced reverse-fix fixture derived from repository regression #${historical.issue}.`,
+      sourceRepository: "https://github.com/dills122/independent-reviewer",
+      sourceRevision: "597e2ba758a232f109f85dc01c47e21f9d30ed2a",
+      sourceParentRevision: "759346fed286978c3d2f59cb59e6fe0b3e9151b4",
+      sourcePath: historical.path,
+      sourceBlobGitObject: historical.blob,
+      issueReferences: [
+        `https://github.com/dills122/independent-reviewer/issues/${historical.issue}`,
+      ],
+      fixReferences: [
+        "https://github.com/dills122/independent-reviewer/commit/597e2ba758a232f109f85dc01c47e21f9d30ed2a",
+        "https://github.com/dills122/independent-reviewer/pull/139",
+      ],
+      licenseStatus: "NO_LICENSE_FILE",
+      license:
+        "No top-level license file exists at source revision; repository-owner-authored code is retained only for this repository's evaluator.",
+      environmentRequirements: [historical.environment],
+      derivation: "REDUCED_REVERSE_FIX",
+    };
+  }
+  return {
+    kind: "SYNTHETIC",
+    source: "Repository-authored deterministic evaluation fixture.",
+    sourceRepository: "https://github.com/dills122/independent-reviewer",
+    sourceRevision: `corpus_v1/${testCase.id}`,
+    sourcePath: null,
+    issueReferences: [],
+    fixReferences: [],
+    licenseStatus: "REPOSITORY_AUTHORED",
+    license: "Repository-authored synthetic fixture; no third-party license applies.",
+    environmentRequirements: ["Clean Git checkout; case runtime remains unqualified."],
+  };
+}
+
 function definitionForCase(
   testCase: (typeof EVALUATION_CASES_V1)[number],
 ): EvaluationCorpusCaseDefinitionV1 {
@@ -497,12 +603,7 @@ function definitionForCase(
     pair: pairTuple ? { pairId: pairTuple[0], role: pairTuple[1] } : null,
     controlRole,
     split: HOLDOUT_FAMILIES.has(testCase.family) ? "HOLDOUT" : "DEVELOPMENT",
-    provenance: {
-      kind: "SYNTHETIC",
-      source: "Repository-authored deterministic evaluation fixture.",
-      sourceRevision: `corpus_v1/${testCase.id}`,
-      license: "Repository-authored synthetic fixture; no third-party license applies.",
-    },
+    provenance: provenanceForCase(testCase),
     runtime: runtimeForCase(testCase.id),
     obligations: [{ obligationId, text: obligationText }],
     expectedRoots: roots,

@@ -144,6 +144,25 @@ describe("evaluation corpus definition", () => {
     );
   });
 
+  it("records three repository-history reverse fixes with exact provenance", () => {
+    const corpus = validateEvaluationCorpusDefinitionV1(EVALUATION_CORPUS_V1);
+    const historical = corpus.cases.filter(
+      ({ provenance }) => provenance.kind === "REPOSITORY_REVERSE_FIX",
+    );
+    const defectSources = historical.filter(({ pair }) => pair?.role === "DEFECT");
+
+    assert.equal(defectSources.length, 3);
+    assert.equal(new Set(defectSources.map(({ provenance }) => provenance.sourcePath)).size, 3);
+    for (const entry of historical) {
+      assert.equal(entry.provenance.sourceRevision, "597e2ba758a232f109f85dc01c47e21f9d30ed2a");
+      assert.equal(entry.provenance.licenseStatus, "NO_LICENSE_FILE");
+      assert.match(entry.provenance.sourceBlobGitObject, /^[0-9a-f]{40}$/);
+      assert.ok(entry.provenance.issueReferences.length > 0);
+      assert.ok(entry.provenance.fixReferences.length > 0);
+      assert.ok(entry.provenance.environmentRequirements.length > 0);
+    }
+  });
+
   it("keeps BASE inventory and reviewer obligations fixed within every pair", () => {
     const corpus = validateEvaluationCorpusDefinitionV1(EVALUATION_CORPUS_V1);
     const catalogById = new Map<string, (typeof EVALUATION_CASES_V1)[number]>(
