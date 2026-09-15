@@ -87,6 +87,28 @@ describe("evaluation corpus reconstruction", () => {
       assert.equal(reconstructed.split.assignments.length, 30);
       assert.doesNotThrow(() => EvaluationFamilySplitManifestV1Schema.parse(reconstructed.split));
       assert.match(await readFile(reconstructed.splitPath, "utf8"), /"splitVersion": "split_v1"/);
+      for (const reconstructedCase of reconstructed.cases) {
+        const control = await readFile(reconstructedCase.prepared.controlPath, "utf8");
+        assert.doesNotMatch(control, /oracles\/v1/);
+        for (const root of reconstructedCase.manifest.oracleInventory.expectedRoots) {
+          assert.ok(!control.includes(root.rootId));
+        }
+        for (const uncertainty of reconstructedCase.manifest.oracleInventory
+          .expectedUncertainties) {
+          assert.ok(!control.includes(uncertainty.uncertaintyId));
+        }
+        if (reconstructedCase.manifest.oracleInventory.expectedRoots.length > 0) {
+          await assert.doesNotReject(() =>
+            exec("git", [
+              "-C",
+              reconstructedCase.prepared.repositoryPath,
+              "apply",
+              "--check",
+              join(reconstructedCase.oracleDirectory, "correction.patch"),
+            ]),
+          );
+        }
+      }
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });
     }
