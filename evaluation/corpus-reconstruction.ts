@@ -17,9 +17,14 @@ import {
   type EvaluationCorpusCaseDefinitionV1,
   validateEvaluationCorpusDefinitionV1,
 } from "./corpus.js";
-import { prepareEvaluationCaseV1, runEvaluationFixtureGitV1 } from "./fixture-builder.js";
+import {
+  type PreparedEvaluationFixtureV1,
+  type PreparedEvaluationReviewerInputV1,
+  prepareEvaluationCorpusCaseV1,
+  runEvaluationFixtureGitV1,
+} from "./fixture-builder.js";
 import { EVALUATION_CASES_V1 } from "./matrix-selection.js";
-import type { EvaluationCaseV1, PreparedEvaluationCaseV1 } from "./matrix-types.js";
+import type { EvaluationCaseV1 } from "./matrix-types.js";
 
 function digestText(content: string) {
   return sha256BytesDigestV1(Buffer.from(content, "utf8"));
@@ -35,38 +40,15 @@ function repositoryStateDigest(testCase: EvaluationCaseV1, side: "base" | "head"
   return digestText(jsonDocument({ files }));
 }
 
-function reviewerInputInventory(testCase: EvaluationCaseV1) {
-  const canonicalInputs =
-    testCase.reviewer.kind === "requirements"
-      ? [
-          {
-            role: "REQUIREMENTS" as const,
-            reference: "inputs/requirements",
-            digest: digestText(testCase.reviewer.requirements),
-          },
-          {
-            role: "IMPLEMENTATION_PLAN" as const,
-            reference: "inputs/implementation-plan",
-            digest: digestText(testCase.reviewer.implementationPlan),
-          },
-          {
-            role: "AUTHOR_PACKET" as const,
-            reference: "inputs/author-packet",
-            digest: digestText(jsonDocument(testCase.reviewer)),
-          },
-        ]
-      : [
-          {
-            role: "PROJECT_GUIDANCE" as const,
-            reference: "inputs/standards-profile",
-            digest: digestText(jsonDocument(testCase.reviewer.profile)),
-          },
-          {
-            role: "AUTHOR_PACKET" as const,
-            reference: "inputs/author-overview",
-            digest: digestText(testCase.reviewer.authorOverview),
-          },
-        ];
+function reviewerInputInventory(
+  testCase: EvaluationCaseV1,
+  reviewerInputArtifacts: readonly PreparedEvaluationReviewerInputV1[],
+) {
+  const canonicalInputs = reviewerInputArtifacts.map(({ role, reference, content }) => ({
+    role,
+    reference,
+    digest: digestText(content),
+  }));
   const sourceInputs = testCase.repository.files.map((file) => ({
     role: (file.base === file.head ? "SUPPORTING_SOURCE" : "SOURCE_CHANGE") as
       | "SUPPORTING_SOURCE"
@@ -91,7 +73,7 @@ async function writePrivateArtifact(
 }
 
 export interface ReconstructedEvaluationCorpusCaseV1 {
-  prepared: PreparedEvaluationCaseV1;
+  prepared: PreparedEvaluationFixtureV1;
   manifest: EvaluationCaseManifestV1;
   manifestPath: string;
   oracleDirectory: string;
@@ -116,7 +98,7 @@ export async function reconstructEvaluationCorpusCaseV1(
     throw new Error(`Corpus definition does not match reconstructable case ${testCase.id}.`);
   }
 
-  const prepared = await prepareEvaluationCaseV1(testCase, caseRoot);
+  const prepared = await prepareEvaluationCorpusCaseV1(testCase, caseRoot);
   const baseCommit = await runEvaluationFixtureGitV1(prepared.repositoryPath, "rev-parse", "main");
   const evaluatorRoot = join(caseRoot, "evaluator");
   const oracleDirectory = join(evaluatorRoot, "oracles", "v1", testCase.id);
@@ -147,7 +129,7 @@ export async function reconstructEvaluationCorpusCaseV1(
       }).trim(),
     },
     obligations: definition.obligations,
-    reviewerInputInventory: reviewerInputInventory(testCase),
+    reviewerInputInventory: reviewerInputInventory(testCase, prepared.reviewerInputArtifacts),
     oracleInventory: {
       expectedVerdict: testCase.oracle.expectedVerdict,
       expectedRoots: definition.expectedRoots,

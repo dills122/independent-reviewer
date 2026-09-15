@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 
 import { jsonDocument } from "../src/contracts/json-document.js";
 import { ReviewRequestV1Schema } from "../src/contracts/review-request.js";
-import { StandardsProfileSchema } from "../src/contracts/standards-review.js";
+import { ReviewAuthorSchema, StandardsProfileSchema } from "../src/contracts/standards-review.js";
 import type {
   EvaluationCaseV1,
   EvaluationRepositoryFileV1,
@@ -28,6 +28,16 @@ const FIXTURE_GIT_ENV = {
   LANG: "C",
   LC_ALL: "C",
 } as const;
+
+export interface PreparedEvaluationReviewerInputV1 {
+  role: "REQUIREMENTS" | "IMPLEMENTATION_PLAN" | "PROJECT_GUIDANCE" | "AUTHOR_PACKET";
+  reference: string;
+  content: string;
+}
+
+export interface PreparedEvaluationFixtureV1 extends PreparedEvaluationCaseV1 {
+  reviewerInputArtifacts: readonly PreparedEvaluationReviewerInputV1[];
+}
 
 function assertRepositoryPath(path: string): void {
   const normalized = normalize(path);
@@ -159,11 +169,11 @@ function requirementsRequest(
   });
 }
 
-export async function prepareEvaluationCaseV1(
+export async function prepareEvaluationCorpusCaseV1(
   testCase: EvaluationCaseV1,
   caseRoot: string,
   configId = "config_evaluation_placeholder",
-): Promise<PreparedEvaluationCaseV1> {
+): Promise<PreparedEvaluationFixtureV1> {
   assertOracleSeparated(testCase);
   try {
     await mkdir(caseRoot, { recursive: false });
@@ -206,17 +216,44 @@ export async function prepareEvaluationCaseV1(
 
   let controlPath: string;
   let cliArguments: readonly string[];
+  let reviewerInputArtifacts: readonly PreparedEvaluationReviewerInputV1[];
   if (testCase.reviewer.kind === "requirements") {
     controlPath = join(caseRoot, "control.json");
     const request = requirementsRequest(testCase, testCase.reviewer, repositoryPath, configId);
     await writeFile(controlPath, jsonDocument(request), { flag: "wx", mode: 0o600 });
     cliArguments = ["--request", controlPath];
+    if (!request.authorPacket)
+      throw new Error("Evaluation requirements request has no author packet.");
+    reviewerInputArtifacts = [
+      {
+        role: "REQUIREMENTS",
+        reference: "inputs/requirements",
+        content: request.canonicalInputs.requirements[0]?.content ?? "",
+      },
+      {
+        role: "IMPLEMENTATION_PLAN",
+        reference: "inputs/implementation-plan",
+        content: request.canonicalInputs.implementationPlan.content,
+      },
+      {
+        role: "AUTHOR_PACKET",
+        reference: "inputs/author-packet",
+        content: jsonDocument(request.authorPacket),
+      },
+    ];
   } else {
     controlPath = join(caseRoot, "control.json");
     const authorPath = join(caseRoot, "author.md");
     const profile = StandardsProfileSchema.parse(testCase.reviewer.profile);
-    await writeFile(controlPath, jsonDocument(profile), { flag: "wx", mode: 0o600 });
-    await writeFile(authorPath, `${testCase.reviewer.authorOverview.trim()}\n`, {
+    const profileText = jsonDocument(profile);
+    const authorText = `${testCase.reviewer.authorOverview.trim()}\n`;
+    const authorPacket = ReviewAuthorSchema.parse({
+      schemaVersion: 2,
+      overview: authorText,
+      claimedVerification: [],
+    });
+    await writeFile(controlPath, profileText, { flag: "wx", mode: 0o600 });
+    await writeFile(authorPath, authorText, {
       flag: "wx",
       mode: 0o600,
     });
@@ -231,7 +268,27 @@ export async function prepareEvaluationCaseV1(
       authorPath,
       "--new-flow",
     ];
+    reviewerInputArtifacts = [
+      {
+        role: "PROJECT_GUIDANCE",
+        reference: "inputs/standards-profile",
+        content: profileText,
+      },
+      {
+        role: "AUTHOR_PACKET",
+        reference: "inputs/author-overview",
+        content: jsonDocument(authorPacket),
+      },
+    ];
   }
 
-  return { repositoryPath, controlPath, outputPath, cliArguments };
+  return { repositoryPath, controlPath, outputPath, cliArguments, reviewerInputArtifacts };
+}
+
+export async function prepareEvaluationCaseV1(
+  testCase: EvaluationCaseV1,
+  caseRoot: string,
+  configId = "config_evaluation_placeholder",
+): Promise<PreparedEvaluationCaseV1> {
+  return prepareEvaluationCorpusCaseV1(testCase, caseRoot, configId);
 }

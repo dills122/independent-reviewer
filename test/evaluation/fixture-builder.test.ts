@@ -6,8 +6,14 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 
-import { prepareEvaluationCaseV1 } from "../../evaluation/fixture-builder.js";
+import {
+  prepareEvaluationCaseV1,
+  prepareEvaluationCorpusCaseV1,
+} from "../../evaluation/fixture-builder.js";
 import { EVALUATION_CASES_V1 } from "../../evaluation/matrix-selection.js";
+import type { EvaluationCaseV1 } from "../../evaluation/matrix-types.js";
+import { jsonDocument, sha256BytesDigestV1 } from "../../src/contracts/json-document.js";
+import { ReviewRequestV1Schema } from "../../src/contracts/review-request.js";
 
 const exec = promisify(execFile);
 
@@ -136,6 +142,41 @@ describe("evaluation fixture reconstruction", () => {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
       }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("binds the complete generated requirements author packet into reviewer identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "review-evaluation-"));
+    try {
+      const canonical = EVALUATION_CASES_V1.find(({ id }) => id === "case_018");
+      assert.ok(canonical);
+      assert.equal(canonical.reviewer.kind, "requirements");
+      const changed = {
+        ...canonical,
+        reviewer: { ...canonical.reviewer, authorApproach: "Changed catalog prose." },
+      } satisfies EvaluationCaseV1;
+      const baseline = await prepareEvaluationCorpusCaseV1(canonical, join(root, "baseline"));
+      const changedFixture = await prepareEvaluationCorpusCaseV1(changed, join(root, "changed"));
+      const baselineAuthor = baseline.reviewerInputArtifacts.find(
+        ({ role }) => role === "AUTHOR_PACKET",
+      );
+      const changedAuthor = changedFixture.reviewerInputArtifacts.find(
+        ({ role }) => role === "AUTHOR_PACKET",
+      );
+      assert.ok(baselineAuthor);
+      assert.ok(changedAuthor);
+      const request = ReviewRequestV1Schema.parse(
+        JSON.parse(await readFile(baseline.controlPath, "utf8")),
+      );
+      assert.ok(request.authorPacket);
+      assert.equal(baselineAuthor.content, jsonDocument(request.authorPacket));
+      assert.match(baselineAuthor.content, /Updated implementation for the declared plan/);
+      assert.notEqual(
+        sha256BytesDigestV1(Buffer.from(baselineAuthor.content, "utf8")).value,
+        sha256BytesDigestV1(Buffer.from(changedAuthor.content, "utf8")).value,
+      );
+    } finally {
       await rm(root, { recursive: true, force: true });
     }
   });

@@ -18,6 +18,12 @@ import {
 } from "../../evaluation/corpus-reconstruction.js";
 import { EVALUATION_CASES_V1 } from "../../evaluation/matrix-selection.js";
 import type { EvaluationCaseV1 } from "../../evaluation/matrix-types.js";
+import { jsonDocument, sha256BytesDigestV1 } from "../../src/contracts/json-document.js";
+import { ReviewRequestV1Schema } from "../../src/contracts/review-request.js";
+import {
+  ReviewAuthorSchema,
+  StandardsProfileSchema,
+} from "../../src/contracts/standards-review.js";
 
 const exec = promisify(execFile);
 
@@ -78,6 +84,10 @@ async function assertCaseMutationRejectedBeforeFileSystemWork(
     /catalog case/i,
   );
   await assert.rejects(() => stat(caseRoot), { code: "ENOENT" });
+}
+
+function textDigest(content: string): string {
+  return sha256BytesDigestV1(Buffer.from(content, "utf8")).value;
 }
 
 describe("evaluation corpus reconstruction", () => {
@@ -275,6 +285,74 @@ describe("evaluation corpus reconstruction", () => {
         oracle: { ...canonical.oracle, expectedRootIds: ["root_uncatalogued"] },
       } satisfies EvaluationCaseV1;
       await assertCaseMutationRejectedBeforeFileSystemWork(mutated, join(temporaryRoot, "oracle"));
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("binds requirements reviewer digests to exact emitted logical inputs", async () => {
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "evaluation-corpus-"));
+    try {
+      const testCase = EVALUATION_CASES_V1.find(({ id }) => id === "case_018");
+      const definition = EVALUATION_CORPUS_V1.cases.find(({ caseId }) => caseId === testCase?.id);
+      assert.ok(testCase);
+      assert.ok(definition);
+      const reconstructed = await reconstructEvaluationCorpusCaseV1(
+        testCase,
+        definition,
+        join(temporaryRoot, "requirements"),
+      );
+      const request = ReviewRequestV1Schema.parse(
+        JSON.parse(await readFile(reconstructed.prepared.controlPath, "utf8")),
+      );
+      assert.ok(request.authorPacket);
+      const expected = new Map([
+        ["REQUIREMENTS", textDigest(request.canonicalInputs.requirements[0]?.content ?? "")],
+        ["IMPLEMENTATION_PLAN", textDigest(request.canonicalInputs.implementationPlan.content)],
+        ["AUTHOR_PACKET", textDigest(jsonDocument(request.authorPacket))],
+      ]);
+      for (const entry of reconstructed.manifest.reviewerInputInventory) {
+        const digest = expected.get(entry.role);
+        if (digest !== undefined) assert.equal(entry.digest.value, digest);
+      }
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("binds standards reviewer digests to exact emitted logical inputs", async () => {
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "evaluation-corpus-"));
+    try {
+      const testCase = EVALUATION_CASES_V1.find(({ id }) => id === "case_006");
+      const definition = EVALUATION_CORPUS_V1.cases.find(({ caseId }) => caseId === testCase?.id);
+      assert.ok(testCase);
+      assert.ok(definition);
+      const reconstructed = await reconstructEvaluationCorpusCaseV1(
+        testCase,
+        definition,
+        join(temporaryRoot, "standards"),
+      );
+      const profileText = await readFile(reconstructed.prepared.controlPath, "utf8");
+      StandardsProfileSchema.parse(JSON.parse(profileText));
+      const authorIndex = reconstructed.prepared.cliArguments.indexOf("--author");
+      assert.ok(authorIndex >= 0);
+      const authorText = await readFile(
+        reconstructed.prepared.cliArguments[authorIndex + 1] ?? "",
+        "utf8",
+      );
+      const authorPacket = ReviewAuthorSchema.parse({
+        schemaVersion: 2,
+        overview: authorText,
+        claimedVerification: [],
+      });
+      const expected = new Map([
+        ["PROJECT_GUIDANCE", textDigest(profileText)],
+        ["AUTHOR_PACKET", textDigest(jsonDocument(authorPacket))],
+      ]);
+      for (const entry of reconstructed.manifest.reviewerInputInventory) {
+        const digest = expected.get(entry.role);
+        if (digest !== undefined) assert.equal(entry.digest.value, digest);
+      }
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });
     }
