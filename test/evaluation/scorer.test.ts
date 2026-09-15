@@ -122,6 +122,67 @@ describe("evaluation scorer", () => {
     assert.equal(metric(score.metrics, "DUPLICATE_RATE").value, 1 / 3);
   });
 
+  it("rejects tampered interval policy metadata in every aggregate scope", () => {
+    const intervalTargets = [
+      {
+        scope: "global",
+        expectedUnit: "FAMILY" as const,
+        select: (score: ReturnType<typeof scoreGraph>) => score.metrics,
+      },
+      {
+        scope: "case",
+        expectedUnit: "CASE" as const,
+        select: (score: ReturnType<typeof scoreGraph>) =>
+          score.caseBreakdowns.find(({ caseId }) => caseId === "case_defect")?.metrics ?? [],
+      },
+      {
+        scope: "family",
+        expectedUnit: "CASE" as const,
+        select: (score: ReturnType<typeof scoreGraph>) => score.familyBreakdowns[0]?.metrics ?? [],
+      },
+    ];
+    const mutations = [
+      {
+        field: "method",
+        apply: (interval: Record<string, unknown>) => (interval.method = "Wilson score"),
+      },
+      {
+        field: "confidence",
+        apply: (interval: Record<string, unknown>) => (interval.confidenceLevel = 0.9),
+      },
+      {
+        field: "lower bound",
+        apply: (interval: Record<string, unknown>) => (interval.lower = 0.1),
+      },
+      {
+        field: "upper bound",
+        apply: (interval: Record<string, unknown>) => (interval.upper = 0.9),
+      },
+      {
+        field: "unit",
+        apply: (interval: Record<string, unknown>, expectedUnit: "CASE" | "FAMILY") =>
+          (interval.independentUnit = expectedUnit === "CASE" ? "FAMILY" : "CASE"),
+      },
+    ];
+
+    for (const target of intervalTargets) {
+      for (const mutation of mutations) {
+        const graph = makeEvaluationGraph();
+        const score = scoreGraph(graph);
+        const scoredMetric = target
+          .select(score)
+          .find(({ metric: name }) => name === "UNIQUE_ACTION_YIELD");
+        assert.ok(scoredMetric?.interval);
+        mutation.apply(scoredMetric.interval, target.expectedUnit);
+
+        assert.throws(
+          () => validateEvaluationArtifactGraphV1({ ...graph, score }),
+          new RegExp(`${target.scope}.*interval.*${mutation.field}`, "i"),
+        );
+      }
+    }
+  });
+
   it("keeps incomplete-gold claims unresolved and excludes them from point precision", () => {
     const graph = makeEvaluationGraph();
     const cleanCase = graph.cases.find(({ caseId }) => caseId === "case_clean");

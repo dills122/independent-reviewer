@@ -12,7 +12,7 @@ import {
   EvaluationSourceIdentityV1Schema,
   validateEvaluationFamilySplitV1,
 } from "./artifact-contracts.js";
-import { assertEvaluationScorerIdentityV1 } from "./scorer-policy.js";
+import { assertEvaluationScorerIdentityV1, EVALUATION_SCORER_POLICY_V1 } from "./scorer-policy.js";
 
 export interface EvaluationArtifactGraphInputV1 {
   experiment: unknown;
@@ -269,6 +269,51 @@ function assertMetricCounts(
     const entry = actualByMetric.get(count.metric);
     if (entry?.numerator !== count.numerator || entry.denominator !== count.denominator) {
       throw new TypeError(`score ${label} metric ${count.metric} does not match artifacts`);
+    }
+  }
+}
+
+function assertMetricIntervals(
+  actual: readonly {
+    metric: string;
+    interval: {
+      method: string;
+      confidenceLevel: number;
+      lower: number;
+      upper: number;
+      independentUnit: "CASE" | "FAMILY";
+    } | null;
+  }[],
+  independentUnit: "CASE" | "FAMILY",
+  label: string,
+): void {
+  const expected = {
+    method: EVALUATION_SCORER_POLICY_V1.interval.method,
+    confidenceLevel: EVALUATION_SCORER_POLICY_V1.interval.confidenceLevel,
+    lower: EVALUATION_SCORER_POLICY_V1.interval.lower,
+    upper: EVALUATION_SCORER_POLICY_V1.interval.upper,
+    independentUnit,
+  };
+  for (const metric of actual) {
+    if (metric.interval === null) continue;
+    for (const field of [
+      "method",
+      "confidenceLevel",
+      "lower",
+      "upper",
+      "independentUnit",
+    ] as const) {
+      if (metric.interval[field] !== expected[field]) {
+        const fieldLabel =
+          field === "confidenceLevel"
+            ? "confidence"
+            : field === "independentUnit"
+              ? "unit"
+              : field === "lower" || field === "upper"
+                ? `${field} bound`
+                : field;
+        throw new TypeError(`score ${label} interval ${fieldLabel} does not match scorer policy`);
+      }
     }
   }
 }
@@ -634,6 +679,7 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     aggregateMetricCounts([...contributionByAttempt.values()]),
     "global",
   );
+  assertMetricIntervals(score.metrics, "FAMILY", "global");
   assertEqual(
     score.resources.providerAttempts,
     sumEvaluationNumbersV1(attempts.map((attempt) => attempt.usage.providerAttempts)),
@@ -732,6 +778,7 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
       ),
       `case ${caseManifest.caseId}`,
     );
+    assertMetricIntervals(breakdown.metrics, "CASE", "case");
   }
   const expectedFamilies = new Map<string, "DEVELOPMENT" | "HOLDOUT">();
   for (const assignment of split.assignments)
@@ -756,6 +803,7 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
       ),
       `family ${breakdown.familyId}`,
     );
+    assertMetricIntervals(breakdown.metrics, "CASE", "family");
   }
   const pairIds = new Set(cases.flatMap(({ pair }) => (pair === null ? [] : [pair.pairId])));
   const expectedDeltaKeys = new Set<string>();
