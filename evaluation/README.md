@@ -92,6 +92,16 @@ serialized messages, raw oracle subsequences inside attachment streams, ordered 
 base64-encoded metadata fragments, and case-insensitive hexadecimal forms without concatenating
 across messages. This module does not intercept provider traffic or discover omitted messages.
 
-These evaluator-only modules do not allocate corpus splits, execute scoring, collect runtime
-messages, integrate artifacts into matrix runs, call providers, or change product behavior. Those
-integration and execution steps remain later #160 work.
+`scorer.ts` deterministically derives a complete `EvaluationScoreReportV1` from fixed case, split,
+experiment, attempt, and human-adjudication artifacts. Callers supply stable artifact references,
+score ID, and generation timestamp; scorer computes digests, attempt/case/family/global counts,
+predeclared pair deltas, missingness, latency, resources, cost, severity, and enforcement confusion,
+then validates complete graph before returning. Zero denominators stay unavailable. Provider
+failures remain missing delivery while semantic abstentions remain delivered reports and are scored
+through false-abstention policy. Recommendation adjudications stay visible in exact raw/evidence
+coverage but cannot inflate defect metrics. Current intervals use explicit conservative `[0, 1]`
+bounds because repeated calls are not independent cases or families.
+
+These evaluator-only modules do not allocate corpus splits, collect runtime messages, integrate
+artifacts into matrix runs, call providers, or change product behavior. Those integration steps
+remain later #160 work.
