@@ -177,10 +177,11 @@ AI Central skill                       Hosting adapter
 | Report layer | Preserve preliminary assessment and final report, validate evidence anchors, render Markdown. |
 | Hosting adapter | Translate MR/PR state into review input and later publish results without changing review semantics. |
 
-The accepted initial runtime is TypeScript 6 on Node.js 24 LTS in a single ESM
-package with explicit modules. No daemon, database server, or web UI is needed
-for the first version. The runtime is not a dependency on Codex or an OpenAI
-SDK. See [ADR-002](decisions/002-use-typescript-node-runtime.md).
+The accepted initial runtime is TypeScript on Node.js 24 LTS in a single ESM
+package with explicit modules; `package.json` owns the exact compiler version.
+No daemon, database server, or web UI is needed for the first version. The
+runtime is not a dependency on Codex or an OpenAI SDK. See
+[ADR-002](decisions/002-use-typescript-node-runtime.md).
 
 ## Review lifecycle
 
@@ -429,22 +430,28 @@ not a separate product milestone.[^openai-evals][^anthropic-evals]
 
 First useful release: local CLI, one primary reviewer conversation, selective fresh-context preliminary adverse-claim verification, enforced author withholding, bounded snapshot reads, static inspection, structured findings, local audit artifacts, and AI Central invocation. Preserve module boundaries for a bot while keeping hosting-specific APIs outside the core.
 
-Proposed future command surface:
+Current command surface:
 
 ```text
-independent-reviewer prepare --repo <path> --base <ref> --head <ref>
-independent-reviewer inspect --packet <path>
-independent-reviewer review --packet <path> --config <path>
-independent-reviewer report --run <id> --format markdown
+independent-reviewer init [--repo <path>] (--model <id> --max-cost <usd> | --config <path> ...)
+independent-reviewer config show [--repo <path>] [--resolved]
+independent-reviewer review (--repo <path> --standards <path> --author <path> | --request <path> --config <path>)
+independent-reviewer prepare --request <path> --output <path>
+independent-reviewer inspect --packet <path> [--repo <path>] [--json]
+independent-reviewer resume-final --packet <path> [--repo <path>] (--model <id> --max-cost <usd> | --config <path>)
 ```
 
-Exact working-tree and author-packet options follow the capture contract. A failed or incomplete review must produce a distinct non-success exit status and a readable diagnostic artifact.
+`review --dry-run` performs capture and conservative admission with no provider
+call. Exact options remain CLI-owned and are documented in the
+[user guide](user-guide.md). A failed or incomplete review produces a distinct
+non-success exit status and readable diagnostics.
 
-## Decisions to settle before live use
+## Decisions to settle before wider release
 
 Production model/provider selection, representative numerical token and cost
-budgets, repository configuration, and the private run-directory default remain
-open. The first smoke uses the accepted bounded policy from the
+budgets, and repository configuration remain open. Current local runs default
+private artifacts to `.review-runs` under the target repository and require it
+to remain ignored. Initial live qualification uses bounded policy from the
 [provider failover research spike](research/2026-09-08-openrouter-provider-failover-and-cost-spike.md).
 Runtime and development dependencies are exact-pinned.
 
