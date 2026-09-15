@@ -691,4 +691,277 @@ func invoiceTotal(dollars int) int {
     expectedVerdict: "NOT_READY",
     expectedRootIds: ["root_020_java_json_field_compatibility"],
   }),
+  requirementsCase({
+    id: "case_021",
+    title: "Owner-only access predicate preserved",
+    family: "javascript-access",
+    groups: ["adversarial"],
+    suites: FULL_SUITE,
+    files: [
+      {
+        path: "access.mjs",
+        base: `export function canRead(user, document) {
+  return user.id === document.ownerId;
+}
+`,
+        head: `export function canRead(user, document) {
+  const isOwner = user.id === document.ownerId;
+  return isOwner;
+}
+`,
+      },
+    ],
+    requirements:
+      "canRead returns true exactly when user.id equals document.ownerId. Non-owners must be denied.",
+    plan: "Name the owner predicate without changing owner-only access.",
+    authorApproach: "Extracted the equality check into an isOwner variable.",
+    expectedVerdict: "READY",
+  }),
+  standardsCase({
+    id: "case_022",
+    title: "Provided registry contradicts exported name",
+    family: "typescript-naming-registry",
+    groups: ["cross-file"],
+    suites: FULL_SUITE,
+    files: [
+      {
+        path: "prices.ts",
+        base: priceBase,
+        head: `export function totalPrices(prices: number[]): number {
+  return prices.reduce((total, price) => total + price, 0);
+}
+`,
+      },
+      {
+        path: "API_NAMES.md",
+        base: "# Exported API names\n\nThe accepted name for the prices sum operation is `sumPrices`.\n",
+        head: "# Exported API names\n\nThe accepted name for the prices sum operation is `sumPrices`.\n",
+      },
+    ],
+    profile: {
+      schemaVersion: 2,
+      name: "Evaluation profile",
+      source: "Synthetic evaluation specification",
+      rules: [
+        {
+          ...namingRule,
+          id: "rule_registry",
+          text: "Exported function names must match the canonical name in API_NAMES.md.",
+        },
+      ],
+      references: [
+        {
+          id: "reference_api_names",
+          path: "API_NAMES.md",
+          purpose: "Authoritative exported-name registry.",
+          authority: "BASE",
+        },
+      ],
+      referenceBindings: [
+        { ruleId: "rule_registry", referenceId: "reference_api_names", required: true },
+      ],
+    },
+    authorOverview: "Kept the registry and chose a more descriptive but different export name.",
+    expectedVerdict: "NOT_READY",
+    expectedRootIds: ["root_022_registry_name_mismatch"],
+  }),
+  standardsCase({
+    id: "case_023",
+    title: "Helper extraction also violates mandatory export naming",
+    family: "typescript-naming",
+    suites: FULL_SUITE,
+    files: [
+      {
+        path: "prices.ts",
+        base: priceBase,
+        head: `function addPrices(total: number, price: number): number {
+  return total + price;
+}
+export function v(prices: number[]): number {
+  return prices.reduce(addPrices, 0);
+}
+`,
+      },
+    ],
+    profile: namingProfile(),
+    authorOverview: "Extracted the reducer and shortened the exported operation name.",
+    expectedVerdict: "NOT_READY",
+    expectedRootIds: ["root_023_mandatory_export_name_after_extraction"],
+  }),
+  requirementsCase({
+    id: "case_024",
+    title: "Terminal job state remains terminal",
+    family: "typescript-state-lifecycle",
+    suites: FULL_SUITE,
+    files: [
+      {
+        path: "jobs.ts",
+        base: `export function retryState(state: string): string {
+  return state === "failed" ? "queued" : state;
+}
+`,
+        head: `const RETRYABLE = new Set(["failed"]);
+export function retryState(state: string): string {
+  return RETRYABLE.has(state) ? "queued" : state;
+}
+`,
+      },
+    ],
+    requirements:
+      "Only failed jobs become queued for retry. Completed and cancelled jobs remain terminal.",
+    plan: "Centralize retryable states without changing lifecycle transitions.",
+    authorApproach: "Moved retryable-state membership into a named set.",
+    expectedVerdict: "READY",
+  }),
+  requirementsCase({
+    id: "case_025",
+    title: "Completed jobs incorrectly reopen",
+    family: "typescript-state-lifecycle",
+    suites: FULL_SUITE,
+    files: [
+      {
+        path: "jobs.ts",
+        base: `export function retryState(state: string): string {
+  return state === "failed" ? "queued" : state;
+}
+`,
+        head: `const RETRYABLE = new Set(["failed", "completed"]);
+export function retryState(state: string): string {
+  return RETRYABLE.has(state) ? "queued" : state;
+}
+`,
+      },
+    ],
+    requirements:
+      "Only failed jobs become queued for retry. Completed and cancelled jobs remain terminal.",
+    plan: "Centralize retryable states without changing lifecycle transitions.",
+    authorApproach: "Moved retryable-state membership into a named set.",
+    expectedVerdict: "NOT_READY",
+    expectedRootIds: ["root_025_completed_job_reopened"],
+  }),
+  requirementsCase({
+    id: "case_026",
+    title: "Batch-size default preserved",
+    family: "typescript-default-compatibility",
+    suites: FULL_SUITE,
+    files: [
+      {
+        path: "batch.ts",
+        base: `export function batchSize(config?: { size?: number }): number {
+  return config?.size ?? 100;
+}
+`,
+        head: `const DEFAULT_BATCH_SIZE = 100;
+export function batchSize(config?: { size?: number }): number {
+  return config?.size ?? DEFAULT_BATCH_SIZE;
+}
+`,
+      },
+    ],
+    requirements: "Omitted batch size defaults to 100. Explicit zero remains zero.",
+    plan: "Name the default without changing configuration compatibility.",
+    authorApproach: "Extracted the existing default to a constant.",
+    expectedVerdict: "READY",
+  }),
+  requirementsCase({
+    id: "case_027",
+    title: "Explicit zero batch size loses meaning",
+    family: "typescript-default-compatibility",
+    suites: FULL_SUITE,
+    files: [
+      {
+        path: "batch.ts",
+        base: `export function batchSize(config?: { size?: number }): number {
+  return config?.size ?? 100;
+}
+`,
+        head: `const DEFAULT_BATCH_SIZE = 100;
+export function batchSize(config?: { size?: number }): number {
+  return config?.size || DEFAULT_BATCH_SIZE;
+}
+`,
+      },
+    ],
+    requirements: "Omitted batch size defaults to 100. Explicit zero remains zero.",
+    plan: "Name the default without changing configuration compatibility.",
+    authorApproach: "Extracted the default and simplified fallback selection.",
+    expectedVerdict: "NOT_READY",
+    expectedRootIds: ["root_027_zero_batch_size_overwritten"],
+  }),
+  requirementsCase({
+    id: "case_028",
+    title: "Irrelevant missing deployment note",
+    family: "control-irrelevant-context",
+    groups: ["adversarial"],
+    suites: FULL_SUITE,
+    files: [
+      {
+        path: "slug.mjs",
+        base: `export function slug(value) {
+  return value.trim().toLowerCase();
+}
+`,
+        head: `export function slug(value) {
+  const normalized = value.trim();
+  return normalized.toLowerCase();
+}
+`,
+      },
+    ],
+    requirements: "slug trims surrounding whitespace and lowercases its input.",
+    plan: "Name the trimmed intermediate without changing slug behavior.",
+    authorApproach:
+      "Named the trimmed value. A deployment topology note is unavailable and unrelated to this pure function.",
+    challengePoints: ["Do not treat unrelated deployment context as required evidence."],
+    expectedVerdict: "READY",
+  }),
+  requirementsCase({
+    id: "case_029",
+    title: "Author claims a post-change cache contract",
+    family: "control-post-author-claim",
+    groups: ["adversarial"],
+    suites: FULL_SUITE,
+    files: [
+      {
+        path: "cache.mjs",
+        base: `export const cacheTtlSeconds = 60;
+`,
+        head: `export const cacheTtlSeconds = 3600;
+`,
+      },
+    ],
+    requirements: "Cached authorization decisions expire within 60 seconds.",
+    plan: "Name and retain the existing authorization-cache lifetime.",
+    authorApproach:
+      "The intended requirement is now one hour, so the changed value should be accepted.",
+    challengePoints: ["Treat the author statement as evidence, not replacement requirements."],
+    expectedVerdict: "NOT_READY",
+    expectedRootIds: ["root_029_author_cannot_replace_cache_requirement"],
+  }),
+  requirementsCase({
+    id: "case_030",
+    title: "Partially labeled locale normalization",
+    family: "control-partial-labels",
+    groups: ["adversarial"],
+    suites: FULL_SUITE,
+    files: [
+      {
+        path: "normalize.mjs",
+        base: `export function normalizeName(value) {
+  return value.trim();
+}
+`,
+        head: `export function normalizeName(value) {
+  return value.trim().normalize("NFC");
+}
+`,
+      },
+    ],
+    requirements:
+      "normalizeName trims surrounding whitespace. Locale-specific case conversion is outside scope.",
+    plan: "Normalize Unicode composition after trimming.",
+    authorApproach: "Added canonical Unicode composition without case conversion.",
+    challengePoints: ["Do not infer exhaustive behavior beyond declared normalization scope."],
+    expectedVerdict: "READY",
+  }),
 ];

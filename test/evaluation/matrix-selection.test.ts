@@ -10,9 +10,9 @@ import {
 const ids = (cases: readonly { id: string }[]): string[] => cases.map(({ id }) => id);
 
 describe("evaluation matrix selection", () => {
-  it("keeps the 20-case corpus and stable suites explicit", () => {
-    assert.equal(EVALUATION_CASES_V1.length, 20);
-    assert.equal(new Set(ids(EVALUATION_CASES_V1)).size, 20);
+  it("keeps the 30-case corpus and stable bounded suites explicit", () => {
+    assert.equal(EVALUATION_CASES_V1.length, 30);
+    assert.equal(new Set(ids(EVALUATION_CASES_V1)).size, 30);
     assert.ok(EVALUATION_CASES_V1.every(({ id }) => /^case_\d{3}$/.test(id)));
 
     assert.deepEqual(ids(selectEvaluationCasesV1({ suite: "smoke" })), [
@@ -46,8 +46,8 @@ describe("evaluation matrix selection", () => {
   });
 
   it("selects stable unions by group and exact case", () => {
-    assert.equal(selectEvaluationCasesV1({ groups: ["requirements"] }).length, 11);
-    assert.equal(selectEvaluationCasesV1({ groups: ["standards"] }).length, 9);
+    assert.equal(selectEvaluationCasesV1({ groups: ["requirements"] }).length, 19);
+    assert.equal(selectEvaluationCasesV1({ groups: ["standards"] }).length, 11);
     assert.equal(selectEvaluationCasesV1({ groups: ["multilingual"] }).length, 6);
     assert.deepEqual(ids(selectEvaluationCasesV1({ cases: ["case_020", "case_001"] })), [
       "case_001",
