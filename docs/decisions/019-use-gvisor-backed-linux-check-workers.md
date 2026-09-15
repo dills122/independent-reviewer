@@ -61,23 +61,36 @@ Define strict V1 contracts before backend orchestration:
   oracle identity, and explicit enablement;
 - `CheckExecutionPolicyV1`: backend/image/acquisition identity, denied network,
   filesystem/environment rules, hard limits, and termination/cleanup policy;
-- `CheckEnvironmentManifestV1`: digest-derived actual backend, image,
-  dependency, host capability, environment, and qualification identity;
+- `CheckEnvironmentProfileV1`: stable digest-derived backend, image,
+  dependency, host capability, environment, and qualification identity without
+  timestamps or attempt IDs;
+- `CheckEnvironmentObservationV1`: per-attempt timestamps, actual preflight,
+  backend resource IDs, applied controls, and stable-profile drift decision;
 - `CheckResultV1`: exact source/check/policy/environment/oracle bindings,
-  lifecycle, process termination, separate bounded outputs, resource
-  observations, cleanup receipt, and outcome; and
+  separate assertion/execution/cleanup outcomes, lifecycle, process termination,
+  resource observations, and cleanup receipt;
+- private `CheckRawOutputV1` and separately scanned, budget-admitted
+  `CheckTransmittedOutputV1`; and
 - evaluator-owned `OracleValidationV1` for independently validating generated
   assertions and input domains before execution.
 
-Use shared contract primitives and JCS/SHA-256 artifact identity. Old evidence
-is reusable only under exact source, check, policy, environment, oracle, and
-engine identities.
+Use shared contract primitives and JCS/SHA-256 artifact identity. Historical
+evidence is comparable only under exact source, check, policy, environment,
+oracle, and engine identities; V1 never reuses it as current runner evidence.
 
-Result outcome is exactly one of `PASSED_ASSERTION`, `ASSERTION_FAILURE`,
-`SETUP_FAILURE`, `TIMED_OUT`, `CANCELLED`, `UNSUPPORTED_ENVIRONMENT`, or
-`NOT_RUN`. Claim projection is separate. Setup failure, timeout, cancellation,
-unsupported environment, flaky evidence, or an inconsistent differential pair
-cannot automatically become a demonstrated defect.
+Assertion outcome is `PASSED`, `FAILED`, or `NOT_OBSERVED`. Execution outcome is
+`COMPLETED`, `SETUP_FAILURE`, `PROCESS_CRASHED`, `OOM_KILLED`,
+`OUTPUT_LIMIT_EXCEEDED`, `RESOURCE_LIMIT_EXCEEDED`, `TIMED_OUT`, `CANCELLED`,
+`UNSUPPORTED_ENVIRONMENT`, or `NOT_RUN`. Cleanup is independently `SUCCEEDED`,
+`FAILED`, or `NOT_REQUIRED`. A non-completed execution requires
+`NOT_OBSERVED`; cleanup failure preserves earlier history but makes evidence
+inconclusive and backend unhealthy. No operational failure or inconsistent pair
+can automatically become a demonstrated defect.
+
+Stable environment profile excludes timestamps and attempt/resource IDs.
+BASE/HEAD attempts bind the same profile through distinct observations that must
+show no stable-field drift. V1 performs no automatic cross-attempt result reuse;
+old results remain historical evidence only.
 
 ### Keep execution authority outside reviewed content
 
@@ -89,6 +102,16 @@ rule, or limit can grant authority.
 Checks run only against disposable reconstruction of the exact frozen snapshot.
 They never run in the user's mutable checkout. Author-provided logs retain
 author provenance and cannot populate `RUNNER_OBSERVED` result fields.
+
+Raw stdout/stderr remains private local evidence. Before any model delivery, a
+separate artifact undergoes exact secret/disclosure scanning, deterministic
+non-secret control escaping, and admission against per-tool plus cumulative
+evidence, token, conversation, call, and remaining mandatory-stage budgets. V1
+rejects transmission on any secret/disclosure match, ambiguous encoding,
+incomplete scan, cleanup failure, or admission failure; it does not redact
+secrets. Admitted output binds exact transmitted bytes/digest inside fixed
+runner-owned untrusted-evidence framing. Hostile repository output cannot grant
+execution authority or bypass provider request admission.
 
 ### Separate acquisition from execution
 
@@ -119,12 +142,13 @@ not a trigger.
 
 ### Preserve strict BASE/HEAD comparison
 
-Regression evidence uses same check-spec digest and environment ID against
-independently reconstructed BASE and HEAD. BASE-pass/HEAD-assertion-failure may
-support a validated regression. Both-fail, any setup/timeout/cancellation/
-unsupported outcome, or flaky evidence is inconclusive. New features may use an
-explicit `HEAD_ONLY_NEW_FEATURE` mode and retained non-comparability reason;
-they cannot manufacture a BASE control.
+Regression evidence uses same check-spec digest and stable environment ID
+against independently reconstructed BASE and HEAD, with distinct per-attempt
+observations proving no stable drift. Completed BASE-pass/HEAD-fail may support
+a validated regression. Both-fail, cleanup failure, any non-completed execution,
+or flaky evidence is inconclusive. New features may use an explicit
+`HEAD_ONLY_NEW_FEATURE` mode and retained non-comparability reason; they cannot
+manufacture a BASE control.
 
 ## Alternatives considered
 

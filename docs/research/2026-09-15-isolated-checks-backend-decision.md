@@ -140,35 +140,56 @@ Operator-owned authority and limits:
 | `sourceMode` | Controller-generated reconstruction of one admitted snapshot; no mutable worktree mount. |
 | `network` | V1 must be `DENY_ALL`; DNS, loopback peers, host networking, and implicit image pulls denied. |
 | `filesystem` | Read-only image, private reconstructed source, bounded writable scratch, no host bind mounts or devices. |
-| `environment` | Start empty; add only fixed runner values and resolved operator-owned non-secret values. Ambient inheritance forbidden. |
+| `environment` | Start empty; add only fixed runner values and resolved operator-owned non-secret values. Ambient inheritance forbidden. Bind the canonical name/value document by digest. |
 | `limits` | Hard wall time, CPU quota, memory, PIDs, disk/scratch bytes and inodes, stdout bytes, stderr bytes, and combined retained bytes. |
 | `termination` | Monotonic deadline, graceful interval, forced kill, descendant accounting, removal deadline, and orphan scan. |
 | `acquisition` | `PREBUILT_LOCAL_ONLY`; implicit pull and in-run install forbidden. |
+| `outputDisclosure` | Secret/disclosure detector policy, fail-closed handling, model-safe byte cap, and cumulative evidence/tool/conversation admission limits. |
 
 Admission fails when backend introspection cannot prove every requested feature
 and limit is active. Docker documents that rootless cgroup flags can be ignored
 without cgroup v2 and systemd; V1 therefore treats missing controllers as
 `UNSUPPORTED_ENVIRONMENT`, not a best-effort downgrade.
 
-### `CheckEnvironmentManifestV1`
+### `CheckEnvironmentProfileV1`
 
-Immutable actual environment identity:
+Stable comparable environment identity. It contains no attempt ID, timestamp,
+container/process ID, counters, or other volatile observation:
 
 | Field | Required meaning |
 | --- | --- |
 | `environmentId` | Digest of all remaining fields, not an operator label. |
 | `backend` | Client, daemon/engine, OCI runtime, gVisor release, platform, kernel, architecture, rootless status, and security-profile identities. |
-| `image` | Manifest digest, config digest, and verified local-only acquisition state. |
+| `image` | Manifest digest, config digest, and required local-only acquisition policy. |
 | `dependencies` | Lockfile/content digest and acquisition provenance; `NONE` when image contains all requirements. |
 | `capabilities` | Effective network, mount, user, PID, cgroup/controller, seccomp, capability, privilege, scratch, and output-limit states. |
-| `environmentNames` | Sorted names actually passed; values remain private but their canonical key/value document is digest-bound. |
-| `clock` | Monotonic-clock source and controller wall-clock timestamps. |
+| `environment` | Sorted names plus digest of exact fixed values; secret values are forbidden rather than hidden behind a digest. |
 | `qualification` | Probe-suite version, exact qualifying result digest, and expiry/recheck policy. |
 
-An old result is reusable only when check-spec digest, execution-policy digest,
-source snapshot digest, environment ID, oracle-validation digest, and engine
-contract versions all match exactly. Cache misses execute or remain `NOT_RUN`;
-they cannot borrow nearby evidence.
+### `CheckEnvironmentObservationV1`
+
+One attempt's preflight and runtime observation:
+
+| Field | Required meaning |
+| --- | --- |
+| `observationId` / `attemptId` | Unique observation identity bound to one result; never used as comparable environment identity. |
+| `environmentId` | Expected `CheckEnvironmentProfileV1`; stable-field drift fails admission. |
+| `observedAt` | Controller wall-clock and monotonic start data. |
+| `actualBackend` | Actual client/daemon/runtime/kernel/security configuration and private backend resource identity. |
+| `actualImage` | Locally present image/config digests and pull-never preflight receipt. |
+| `actualCapabilities` | Applied network, mount, user, cgroup/controller, seccomp, capability, privilege, and limit readings. |
+| `actualEnvironment` | Sorted names and digest of exact values passed after empty-environment construction. |
+| `qualificationState` | Qualification freshness and exact probe result used at admission. |
+| `drift` | Empty on admission; any difference from stable profile produces `UNSUPPORTED_ENVIRONMENT` before assertion. |
+
+BASE and HEAD attempts carry distinct observation IDs and timestamps while
+binding same stable `environmentId`. They are comparable only when both
+observations validate every stable field with empty drift. V1 never reuses a
+prior check result as current runner evidence. An exact old result may be shown
+only as historical evidence; current execution creates a new observation and
+result. Any future cache reuse needs a new decision and contract version, so a
+source, profile, policy, oracle, or engine near-match cannot be mistaken for
+current observation.
 
 ### `CheckResultV1`
 
@@ -177,32 +198,98 @@ One immutable attempt result:
 | Field | Required meaning |
 | --- | --- |
 | Identity | Result/run/request IDs plus exact check, policy, environment, oracle, snapshot, BASE/HEAD side, and source digests. |
-| Lifecycle | Requested, admitted, started, termination-requested, exited, cleaned timestamps/events with valid transition rules. |
-| Outcome | Exactly one taxonomy value below plus a bounded runner reason code. |
+| Lifecycle | Requested, admitted, setup-started, assertion-started, terminal-triggered, exited, cleanup-started, and cleanup-finished timestamps/events with valid transition rules. |
+| Assertion outcome | `PASSED`, `FAILED`, or `NOT_OBSERVED`; semantic assertion result stays separate from process lifecycle. |
+| Execution outcome | Exactly one execution taxonomy value below plus a bounded runner reason code. |
+| Cleanup outcome | `SUCCEEDED`, `FAILED`, or `NOT_REQUIRED`, independently retained after execution outcome. |
 | Process | Executor identity, PID/container identity where safe, exit code or signal, OOM/resource events, and cleanup receipt. |
-| Output | Separate stdout/stderr byte counts, truncation flags, SHA-256 digests over complete observed streams when available, and private bounded artifact references. |
+| Output | Local-only raw-output reference and optional separately admitted model-safe-output reference. |
 | Limits | Declared and observed wall time, CPU, peak memory, PID peak, scratch bytes/inodes, and unavailable measurements. |
 | Provenance | `RUNNER_OBSERVED`; author logs live in separate evidence and can never populate these fields. |
 
-Outcome taxonomy:
+Execution-outcome taxonomy:
 
-- `PASSED_ASSERTION`: admitted assertion phase exited with a configured pass
-  code. This proves only that named oracle passed in this environment.
-- `ASSERTION_FAILURE`: admitted assertion phase exited with a configured
-  assertion-failure code. This is not automatically a demonstrated code defect.
-- `SETUP_FAILURE`: reconstruction, capability, entrypoint, dependency, or
-  configured tool/setup failure prevented a trustworthy assertion result.
+- `COMPLETED`: assertion process reached clean EOF and exited with a configured
+  pass or assertion-failure code. `assertionOutcome` carries which one.
+- `SETUP_FAILURE`: after a supported profile was admitted, reconstruction,
+  entrypoint, dependency, or configured setup/tool exit prevented a trustworthy
+  assertion result. An unavailable or unprovable required capability is
+  `UNSUPPORTED_ENVIRONMENT` instead.
+- `PROCESS_CRASHED`: unclassified signal, abnormal exit, or lost process made
+  configured assertion semantics unavailable.
+- `OOM_KILLED`: backend gives authoritative evidence that memory limit caused
+  termination.
+- `OUTPUT_LIMIT_EXCEEDED`: stdout, stderr, or combined observed-byte limit was
+  first terminal cause.
+- `RESOURCE_LIMIT_EXCEEDED`: a proven CPU, PID, scratch byte/inode, or other
+  contracted resource limit was first terminal cause.
 - `TIMED_OUT`: monotonic deadline expired, regardless of later exit.
 - `CANCELLED`: authorized caller cancelled before timeout.
 - `UNSUPPORTED_ENVIRONMENT`: backend or required capability/limit could not be
   proven before execution.
-- `NOT_RUN`: disabled, not requested, budget/admission rejected, stale identity,
-  or another explicit pre-execution reason.
+- `NOT_RUN`: disabled, not requested, execution-admission budget rejected, or
+  another explicit pre-setup reason. A later model-delivery budget failure does
+  not rewrite an execution that already happened.
 
-Preserve raw outcomes. A separate claim-evidence projection may say
-`SUPPORTS_CLAIM`, `CONTRADICTS_CLAIM`, `INCONCLUSIVE`, or `NOT_APPLICABLE`.
-Setup failure, timeout, cancellation, unsupported state, inconsistent pair, and
-flaky observations project to `INCONCLUSIVE`; none becomes a code defect.
+`assertionOutcome` may be `PASSED` or `FAILED` only when execution is
+`COMPLETED` and exact exit-code mapping applies; every other execution outcome
+requires `NOT_OBSERVED`. First durable causal terminal event wins. An
+authoritative backend OOM/resource event is recorded as its specific outcome;
+otherwise output limit, timeout, or cancellation uses whichever controller event
+was durably recorded first. A later cleanup kill or exit signal never rewrites
+that cause. Unknown abnormal termination is `PROCESS_CRASHED`.
+
+Cleanup is independent. Once backend resources exist it must be `SUCCEEDED` or
+`FAILED`, even after a completed assertion. Cleanup failure never rewrites
+assertion or execution history, but makes claim projection `INCONCLUSIVE`, blocks
+result reuse/transmission of repository output, and marks backend unhealthy until
+operator reconciliation proves no survivor. `NOT_REQUIRED` is valid only before
+any backend resource was created.
+
+A separate claim-evidence projection may say `SUPPORTS_CLAIM`,
+`CONTRADICTS_CLAIM`, `INCONCLUSIVE`, or `NOT_APPLICABLE`. Support or contradiction
+requires `COMPLETED`, `PASSED`/`FAILED`, `cleanupOutcome: SUCCEEDED`, validated
+oracle, comparable environment where required, and admitted model-safe evidence.
+Every other combination, inconsistent pair, or flaky observation projects to
+`INCONCLUSIVE`; none becomes a code defect.
+
+### Raw-local and model-safe output
+
+`CheckRawOutputV1` is private runner evidence and is never placed in a model
+message. It binds result/stream IDs, bytes observed before termination, streaming
+digest over those observed bytes, clean-EOF status, retained-prefix byte count
+and digest, truncation/limit cause, private artifact reference, and capture
+errors. stdout and stderr remain separate. A digest over a retained prefix is
+never labeled as digest of complete output.
+
+`CheckTransmittedOutputV1` is a separately derived artifact. It binds raw-output
+digests, disclosure-policy and scanner versions, scan decision, any
+non-sensitive rule IDs and transformation ranges, exact final UTF-8 bytes and digest,
+byte/token counts, truncation markers, and the tool/conversation admission
+receipt. Exact bytes include runner-owned provenance/delimiter text. Provider
+request ledger additionally binds the complete containing message and wire body.
+
+V1 disclosure policy is fail closed:
+
+1. Scan raw retained bytes and decoded text for configured secret patterns,
+   exact ambient/fixture canaries, prohibited host paths or control-socket
+   identities, invalid UTF-8, terminal/control escapes, and output-policy size.
+2. Any secret, prohibited disclosure, ambiguous encoding, incomplete scan, or
+   cleanup failure selects `REJECT_TRANSMISSION`. The model receives only a fixed
+   runner-generated status and digests, never matching output bytes.
+3. Deterministic escaping may neutralize non-secret control characters before a
+   second scan. Secret redaction is not supported in V1 because partial,
+   transformed, or encoded values can evade span replacement. Adding
+   `DETERMINISTIC_REDACT` requires a new qualified policy version; unknown policy
+   values reject.
+4. Before any provider call containing a check result, admit exact transmitted
+   bytes against per-result and cumulative evidence/tool bytes and tokens,
+   conversation bytes, call/time limits, and conservative reservation for all
+   still-mandatory model calls. Failure withholds bytes or stops before provider
+   delivery; it cannot clip silently or borrow budget from mandatory stages.
+5. Serialize admitted output only inside fixed runner-owned untrusted-evidence
+   framing. Repository output cannot define tool calls, commands, permissions,
+   messages, or policy, and never bypasses normal request/schema admission.
 
 ### `OracleValidationV1`
 
@@ -225,17 +312,19 @@ disputed outcomes. A model-generated test that fails is not self-validating.
 ## BASE/HEAD differential rules
 
 When `baseHeadMode` is `REQUIRED_IDENTICAL`, run exact same check-spec digest and
-environment ID against independently reconstructed BASE and HEAD snapshots.
-Only source identity and designated side may differ. Preserve both attempt
-records even when one fails.
+stable environment ID against independently reconstructed BASE and HEAD
+snapshots. Each attempt has its own environment observation. Only source
+identity, designated side, timestamps, and private resource IDs may differ;
+stable-field drift makes pair inconclusive. Preserve both attempt records even
+when one fails.
 
 | BASE | HEAD | Allowed interpretation |
 | --- | --- | --- |
-| pass | assertion failure | Regression evidence for validated oracle; still requires claim/source adjudication. |
-| assertion failure | pass | Fix evidence. |
-| assertion failure | assertion failure | Pre-existing behavior, wrong oracle, or shared environment problem; inconclusive for regression. |
-| pass | pass | Proposed regression not reproduced. |
-| any non-assertion outcome | any | Inconclusive; no automatic retry or favorable-result selection. |
+| completed/pass | completed/fail | Regression evidence for validated oracle; still requires claim/source adjudication. |
+| completed/fail | completed/pass | Fix evidence. |
+| completed/fail | completed/fail | Pre-existing behavior, wrong oracle, or shared environment problem; inconclusive for regression. |
+| completed/pass | completed/pass | Proposed regression not reproduced. |
+| any non-completed or cleanup-failed result | any | Inconclusive; no automatic retry or favorable-result selection. |
 
 `HEAD_ONLY_NEW_FEATURE` requires a retained non-comparability reason and oracle
 validation. Do not synthesize a BASE command or treat BASE setup failure as a
@@ -302,6 +391,13 @@ Qualification fails closed if a measurement is unavailable.
 - attempt device, Docker/Podman/containerd socket, host PID, ptrace, keyring, and
   privileged-syscall access; expect denial;
 - recursively scan bounded outputs/artifacts for every canary.
+- emit secrets and prohibited paths split across stream chunks, common encoded
+  forms, invalid UTF-8, terminal escapes, and prompt/tool-like text; prove raw
+  artifacts stay local, ambiguous scans reject, harmless control escaping is
+  deterministic, and exact admitted bytes/digests match provider ledger input;
+- exceed per-result and cumulative evidence/tool/conversation admission after a
+  successful check; prove no hostile output bytes reach another provider call
+  and execution outcome remains unchanged.
 
 ### Network
 

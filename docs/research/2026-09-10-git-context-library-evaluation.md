@@ -74,7 +74,7 @@ Primary source index:
 
 | Option | Evidence | Repository fit | Decision |
 | --- | --- | --- | --- |
-| `execa` | Mature subprocess API supports argument arrays, byte buffers, timeouts, cancellation, and non-throwing exits. Environment extension is enabled by default. | Owns commodity lifecycle mechanics while a small adapter retains `extendEnv: false`, Git environment, output, and exit policy. | Adopt in next maintenance slice. |
+| `execa` | Mature subprocess API supports argument arrays, byte buffers, timeouts, cancellation, and non-throwing exits. Environment extension is enabled by default. | Capable, but does not remove product-owned environment, output, backend reconciliation, persistence, or classification policy; no measured current-wrapper gap remains. | Superseded by ADR-019; retain Node and revisit only on its objective triggers. |
 | `simple-git` | High-level Git wrapper; complex plumbing still uses raw commands and some parsers depend on porcelain text. | Current capture intentionally uses NUL-delimited plumbing and byte output. Wrapper enlarges parser and dependency surface without replacing core logic. | Reject for capture. |
 | `isomorphic-git` | Pure-JavaScript object/database implementation with status, blob, and merge-base APIs. | Missing required parity for attributes, native diff/rename behavior, and current cumulative working-tree semantics. `statusMatrix` refresh can update index metadata unless disabled. | Reject for current pipeline. |
 | `parse-diff` | Small, zero-dependency parser for native unified patches. | Native Git renders frozen temporary BASE/HEAD files; parser validates one-file output and supplies structured hunks/statistics. Manifest still owns identity. | Adopted at exact version `0.12.0`. |

@@ -593,13 +593,25 @@ the configured repository environment supports it. It does not run a requested
 check in the user's mutable checkout merely because the command appears
 non-mutating.
 
-If dependencies or the required isolation cannot be made available, it returns
-a structured `UNAVAILABLE` result. The report distinguishes:
+If dependencies or required isolation cannot be proven, execution outcome is
+`UNSUPPORTED_ENVIRONMENT`. Assertion, execution, and cleanup outcomes remain
+separate: a crash, OOM, output/resource limit, timeout, cancellation, or cleanup
+failure cannot be presented as an assertion failure. The report distinguishes:
 
 - `AUTHOR_CLAIMED`: described by the author but not observed by this runner;
 - `RUNNER_OBSERVED`: command, environment, exit status, and output observed;
-- `REQUESTED_UNAVAILABLE`: requested but not safely executable; and
+- `UNSUPPORTED_ENVIRONMENT`: requested but not safely executable; and
 - `NOT_REQUESTED`: relevant check not requested within the review.
+
+`RUNNER_OBSERVED` is provenance, not a claim that assertion succeeded: report
+must retain assertion, execution, and cleanup states together.
+
+Raw check output is private runner evidence. Only a separately derived artifact
+that passes secret/disclosure policy and exact evidence/tool/conversation budget
+admission may enter a provider message. It binds exact transmitted bytes and
+digest inside runner-owned untrusted-evidence framing. Secret-bearing,
+disclosure-rejected, cleanup-failed, ambiguously encoded, or over-budget output
+is not transmitted.
 
 Universal environment construction is deferred. Initial fixtures may use a
 small repository whose named checks need no network or dependency installation.

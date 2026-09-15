@@ -119,7 +119,7 @@ flowchart TD
 | UX-170 | [#170](https://github.com/dills122/independent-reviewer/issues/170) | CLI presentation worker | Stable B selection semantics preferred | Opt-in deterministic compact view; complete report, verdict, digest, exit status, uncertainty, and machine output unchanged | P3; schedule after B-PROJECTION |
 | C1 | [#162](https://github.com/dills122/independent-reviewer/issues/162) | ADR, then serialized evidence workers | A-GATE, B-FINAL | Inventory/citation-role ADR; declaration expansion; offline frozen service; provider tool loop only after offline qualification | Later critical path |
 | C2 | [#163](https://github.com/dills122/independent-reviewer/issues/163) | Frozen adapter worker | C1; D backend for build-dependent producer | Pure reverse-reference baseline first; semantic producer only with source identity, honest unsupported states, and measured benefit | Later |
-| D-RESEARCH | [#164](https://github.com/dills122/independent-reviewer/issues/164), [#113](https://github.com/dills122/independent-reviewer/issues/113), [#116](https://github.com/dills122/independent-reviewer/issues/116) | Research worker | None | Threat boundary and platform spike cover secrets, network, resources, descendants, setup failure, and cleanup | Ready in parallel; no runtime claim |
+| D-RESEARCH | [#164](https://github.com/dills122/independent-reviewer/issues/164), [#113](https://github.com/dills122/independent-reviewer/issues/113), [#116](https://github.com/dills122/independent-reviewer/issues/116) | Research worker | None | Threat boundary and platform spike cover secrets, network, resources, descendants, setup failure, and cleanup | In review/remediation on `codex/isolated-checks-backend-decision`; no runtime claim and not complete until PR |
 | E-RESEARCH | [#165](https://github.com/dills122/independent-reviewer/issues/165) | Research worker | None | Define dimensions, obligations, evidence, and mode-compatible outcomes; no new pass ships without measured benefit | Ready in parallel; no runtime claim |
 
 ## Parallel waves and integration order
@@ -127,9 +127,10 @@ flowchart TD
 1. SYNC-172 is complete, and this execution-index branch is rebased on resulting
    `main`.
 2. A-FOUNDATION, B-ADR, OPS-169, and FO-5B have been dispatched as independent
-   worktrees. B-ADR and OPS-169 are complete. D-RESEARCH and E-RESEARCH remain
-   ready parallel lanes after active implementation capacity frees. Each worker
-   owns only its listed area and must not edit shared roadmap status.
+   worktrees. B-ADR and OPS-169 are complete. D-RESEARCH is in review/remediation;
+   E-RESEARCH remains a ready parallel lane after active implementation capacity
+   frees. Each worker owns only its listed area and must preserve concurrent
+   status and paid-checkpoint updates.
 3. After A-FOUNDATION freezes evaluator contracts, dispatch A-SCORER, A-CORPUS,
    and A-LEAK in parallel. Lead owns A-GATE integration.
 4. Serialize B-PROJECTION then B-FINAL because both touch claim/report schemas

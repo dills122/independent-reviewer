@@ -428,7 +428,7 @@ cannot determine how many tokens this repository's useful review requires.
 | JSON parse or schema failure with a complete response | Preserve invalid candidate; permit at most one concise repair call if reserved | `FAILED` |
 | Semantic, lifecycle, or evidence-anchor validation failure | One bounded correction request listing exact violations; revalidate whole object | `FAILED` or `UNABLE_TO_VERIFY` |
 | Invalid or denied tool request | Return structured denial without execution; consume tool-attempt budget | `UNABLE_TO_VERIFY` after limit |
-| Named verification unavailable | Record `REQUESTED_UNAVAILABLE`; do not improvise a command | final limitation or `UNABLE_TO_VERIFY` |
+| Named verification environment unsupported | Record `UNSUPPORTED_ENVIRONMENT`; do not improvise a command | final limitation or `UNABLE_TO_VERIFY` |
 | Refusal or content-policy block | Preserve category; do not camouflage content or silently switch models | `UNABLE_TO_VERIFY` or operator action |
 | Budget cannot reserve a final/limitation result | Stop optional work; request limitation result only if already reserved | local `UNABLE_TO_VERIFY` diagnostic |
 | Provider/model unavailable under explicit routing | Do not silently widen provider or privacy policy | resumable `FAILED` |
