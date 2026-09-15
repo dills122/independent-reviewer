@@ -26,6 +26,7 @@ export const EvaluationScorerPolicyV1Schema = z.strictObject({
     excessPrecision: z.literal("REJECT_V1"),
     aggregation: z.literal("FIXED_SCALE_INTEGER_SUM_UTF16_ARTIFACT_ID_ORDER_V1"),
   }),
+  rawArtifactOrder: z.literal("TYPE_ID_REFERENCE_UTF16_V1"),
   interval: z.strictObject({
     method: z.literal("CONSERVATIVE_BOUNDS_V1"),
     confidenceLevel: z.literal(0.95),
@@ -53,6 +54,7 @@ export const EVALUATION_SCORER_POLICY_V1 = EvaluationScorerPolicyV1Schema.parse(
     excessPrecision: "REJECT_V1",
     aggregation: "FIXED_SCALE_INTEGER_SUM_UTF16_ARTIFACT_ID_ORDER_V1",
   },
+  rawArtifactOrder: "TYPE_ID_REFERENCE_UTF16_V1",
   interval: {
     method: "CONSERVATIVE_BOUNDS_V1",
     confidenceLevel: 0.95,

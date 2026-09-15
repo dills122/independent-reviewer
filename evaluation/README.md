@@ -120,6 +120,7 @@ so boundaries such as `0.1 + 0.2 <= 0.3` remain exact without masking a one-unit
 Graph validation receives artifact locations independently from score under validation. Registry must
 cover every case, split, experiment, attempt, and adjudication exactly once; one location cannot
 alias multiple artifacts. Score type, ID, location, and recomputed digest must match registry entry.
+Raw references use UTF-16 ordering by artifact type, then ID, then reference location.
 
 `scorer-policy.ts` retains canonical policy bytes, scorer version, and their SHA-256 digest. Every
 experiment and score must claim those exact values. Separate raw-artifact reference is unnecessary:

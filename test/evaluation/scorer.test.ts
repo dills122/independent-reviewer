@@ -19,6 +19,7 @@ import {
   EVALUATION_SCORER_VERSION_V1,
 } from "../../evaluation/scorer-policy.js";
 import { sha256BytesDigestV1 } from "../../src/contracts/json-document.js";
+import { compareUtf16 } from "../../src/contracts/primitives.js";
 import { makeEvaluationGraph } from "./artifact-fixtures.js";
 
 function artifactReferences(graph: ReturnType<typeof makeEvaluationGraph>) {
@@ -755,9 +756,27 @@ describe("evaluation scorer", () => {
       EVALUATION_SCORER_POLICY_DIGEST_V1,
       sha256BytesDigestV1(Buffer.from(EVALUATION_SCORER_POLICY_DOCUMENT_V1, "utf8")),
     );
+    const retainedPolicy = JSON.parse(EVALUATION_SCORER_POLICY_DOCUMENT_V1);
     assert.equal(
-      JSON.parse(EVALUATION_SCORER_POLICY_DOCUMENT_V1).aggregation,
+      retainedPolicy.aggregation,
       "MAGNITUDE_VALUE_UTF16_ARTIFACT_ID_ORDER_NEUMAIER_SUM_V1",
+    );
+    assert.deepEqual(retainedPolicy.usd, {
+      aggregation: "FIXED_SCALE_INTEGER_SUM_UTF16_ARTIFACT_ID_ORDER_V1",
+      decimalPlaces: 9,
+      excessPrecision: "REJECT_V1",
+    });
+    assert.equal(retainedPolicy.rawArtifactOrder, "TYPE_ID_REFERENCE_UTF16_V1");
+
+    const orderedScore = scoreGraph(makeEvaluationGraph());
+    assert.deepEqual(
+      orderedScore.rawArtifactReferences,
+      [...orderedScore.rawArtifactReferences].sort(
+        (left, right) =>
+          compareUtf16(left.type, right.type) ||
+          compareUtf16(left.id, right.id) ||
+          compareUtf16(left.reference, right.reference),
+      ),
     );
 
     const wrongVersion = makeEvaluationGraph();
