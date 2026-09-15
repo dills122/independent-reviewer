@@ -91,9 +91,28 @@ describe("evaluation artifact graph", () => {
 
     const wrongRoot = makeEvaluationGraph();
     first(wrongRoot.adjudications).matchedRootId = "root_other";
+    assert.throws(() => validateEvaluationArtifactGraphV1(wrongRoot), /case-oracle semantic root/i);
+
+    const missingFalseRoot = makeEvaluationGraph();
+    const invalid = first(
+      missingFalseRoot.adjudications.filter(({ label }) => label === "INVALID_DEFECT"),
+    );
+    Object.assign(invalid, { matchedRootId: null });
     assert.throws(
-      () => validateEvaluationArtifactGraphV1(wrongRoot),
-      /does not belong to case oracle/i,
+      () => validateEvaluationArtifactGraphV1(missingFalseRoot),
+      /INVALID_DEFECT requires matched root ID/i,
+    );
+
+    const oracleFalseRoot = makeEvaluationGraph();
+    const oracleInvalid = first(
+      oracleFalseRoot.adjudications.filter(
+        ({ caseId, label }) => caseId === "case_defect" && label === "INVALID_DEFECT",
+      ),
+    );
+    oracleInvalid.matchedRootId = "root_double_conversion";
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(oracleFalseRoot),
+      /invalid defect.*non-oracle semantic root/i,
     );
   });
 
@@ -116,8 +135,7 @@ describe("evaluation artifact graph", () => {
 
     const wrongKind = makeEvaluationGraph();
     const adjudication = first(wrongKind.adjudications);
-    adjudication.label = "USEFUL_RECOMMENDATION";
-    adjudication.matchedRootId = null;
+    Object.assign(adjudication, { label: "USEFUL_RECOMMENDATION", matchedRootId: null });
     assert.throws(
       () => validateEvaluationArtifactGraphV1(wrongKind),
       /claim kind DEFECT cannot use adjudication label USEFUL_RECOMMENDATION/i,
@@ -174,12 +192,14 @@ describe("evaluation artifact graph", () => {
     persistedAttempt.findingClaims.push({
       ...falseClaim,
       findingReference: `${falseClaim.findingReference}_final`,
+      claimDigest: sha("9"),
       emittedAtStage: "FINAL",
     });
     const persistedFalse = {
       ...preliminaryFalse,
       adjudicationId: "adjudication_persisted_false",
       findingReference: `${falseClaim.findingReference}_final`,
+      claimDigest: sha("9"),
       adjudicatedAt: "2026-09-15T12:06:00.000Z",
     };
     const notRemoved = deriveEvaluationAttemptMetricCountsV1(
@@ -202,7 +222,31 @@ describe("evaluation artifact graph", () => {
     duplicate.label = "MATCHED_DEFECT";
     assert.throws(
       () => validateEvaluationArtifactGraphV1(doubleCredit),
-      /more than one final recall credit/i,
+      /more than one semantic-root credit in FINAL/i,
+    );
+  });
+
+  it("scores exhaustive zero-root controls as clean without pair metadata", () => {
+    const graph = makeEvaluationGraph();
+    const cleanCase = first(graph.cases.filter(({ caseId }) => caseId === "case_clean"));
+    const cleanAttempt = first(
+      graph.attempts.filter(
+        ({ caseId, variantId }) => caseId === cleanCase.caseId && variantId === "variant_baseline",
+      ),
+    );
+    Object.assign(cleanCase, { pair: null });
+
+    const counts = deriveEvaluationAttemptMetricCountsV1(
+      EvaluationAttemptRecordV1Schema.parse(cleanAttempt),
+      EvaluationCaseManifestV1Schema.parse(cleanCase),
+      graph.adjudications
+        .filter(({ attemptId }) => attemptId === cleanAttempt.attemptId)
+        .map((value) => EvaluationAdjudicationRecordV1Schema.parse(value)),
+    );
+
+    assert.deepEqual(
+      counts.find(({ metric }) => metric === "CLEAN_FALSE_POSITIVE_RATE"),
+      { metric: "CLEAN_FALSE_POSITIVE_RATE", numerator: 1, denominator: 1 },
     );
   });
 
@@ -223,6 +267,28 @@ describe("evaluation artifact graph", () => {
     assert.throws(
       () => validateEvaluationArtifactGraphV1(badVariant),
       /different candidate variant/i,
+    );
+  });
+
+  it("binds every raw artifact location to an independent unambiguous registry", () => {
+    const wrongLocation = makeEvaluationGraph();
+    first(wrongLocation.score.rawArtifactReferences).reference = "moved/case.json";
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(wrongLocation),
+      /raw reference.*location/i,
+    );
+
+    const ambiguous = makeEvaluationGraph();
+    const reusedReference = first(ambiguous.references.cases).reference;
+    const attemptLocation = first(ambiguous.references.attempts);
+    attemptLocation.reference = reusedReference;
+    const rawAttempt = first(
+      ambiguous.score.rawArtifactReferences.filter(({ type }) => type === "ATTEMPT"),
+    );
+    rawAttempt.reference = reusedReference;
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(ambiguous),
+      /ambiguous raw artifact location/i,
     );
   });
 
@@ -331,6 +397,22 @@ describe("evaluation artifact graph", () => {
     assert.throws(
       () => validateEvaluationArtifactGraphV1(earlyScore),
       /score generation cannot precede adjudication/i,
+    );
+  });
+
+  it("rejects graphs claiming an unimplemented scorer version or policy", () => {
+    const wrongVersion = makeEvaluationGraph();
+    wrongVersion.experiment.scorerVersion = "evaluation-scorer-spoofed";
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(wrongVersion),
+      /unsupported scorer version/i,
+    );
+
+    const wrongPolicy = makeEvaluationGraph();
+    wrongPolicy.experiment.scorerPolicyDigest = sha("0");
+    assert.throws(
+      () => validateEvaluationArtifactGraphV1(wrongPolicy),
+      /unsupported scorer policy digest/i,
     );
   });
 });

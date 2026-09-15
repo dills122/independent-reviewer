@@ -8,6 +8,11 @@ import {
   EvaluationFamilySplitManifestV1Schema,
   EvaluationSourceIdentityV1Schema,
 } from "../../evaluation/artifact-contracts.js";
+import {
+  EVALUATION_SCORER_POLICY_DIGEST_V1,
+  EVALUATION_SCORER_POLICY_V1,
+  EVALUATION_SCORER_VERSION_V1,
+} from "../../evaluation/scorer-policy.js";
 
 export const sha = (value: string) => ({ algorithm: "SHA256" as const, value: value.repeat(64) });
 
@@ -76,22 +81,24 @@ const metricNames = [
   "STAGE_RETENTION_RATE",
 ] as const;
 
-const interval = {
-  method: "Wilson score",
-  confidenceLevel: 0.95,
-  lower: 0,
-  upper: 1,
-  independentUnit: "CASE",
-};
 type MetricName = (typeof metricNames)[number];
 type Count = { metric: MetricName; numerator: number; denominator: number };
-const scoredMetrics = (counts: readonly Count[]) =>
+const scoredMetrics = (counts: readonly Count[], independentUnit: "CASE" | "FAMILY") =>
   counts.map(({ metric, numerator, denominator }) => ({
     metric,
     numerator,
     denominator,
     value: denominator === 0 ? null : numerator / denominator,
-    interval: denominator === 0 ? null : interval,
+    interval:
+      denominator === 0
+        ? null
+        : {
+            method: EVALUATION_SCORER_POLICY_V1.interval.method,
+            confidenceLevel: EVALUATION_SCORER_POLICY_V1.interval.confidenceLevel,
+            lower: EVALUATION_SCORER_POLICY_V1.interval.lower,
+            upper: EVALUATION_SCORER_POLICY_V1.interval.upper,
+            independentUnit,
+          },
   }));
 const attemptCounts = (defect: boolean): Count[] => [
   {
@@ -156,8 +163,8 @@ export function makeEvaluationGraph() {
     experimentId: "experiment_baseline",
     corpusVersion: "corpus_v1",
     splitManifestDigest: digestEvaluationArtifactV1(EvaluationFamilySplitManifestV1Schema, split),
-    scorerVersion: "scorer_v1",
-    scorerPolicyDigest: sha("3"),
+    scorerVersion: EVALUATION_SCORER_VERSION_V1,
+    scorerPolicyDigest: EVALUATION_SCORER_POLICY_DIGEST_V1,
     engine: { commit, sourceTreeDigest: sha("4"), dirtyStateDigest: null },
     caseIds: cases.map(({ caseId }) => caseId),
     variants: ["baseline", "candidate"].map((name) => ({
@@ -319,7 +326,11 @@ export function makeEvaluationGraph() {
         findingReference: claim.findingReference,
         claimDigest: claim.claimDigest,
         label,
-        matchedRootId: supported ? "root_double_conversion" : null,
+        matchedRootId: supported
+          ? "root_double_conversion"
+          : defect
+            ? "root_false_scenario"
+            : "root_false_clean_control",
         causalEvidence: supported
           ? [{ source: "CASE_INPUT", reference: sourceInput.reference, digest: sourceInput.digest }]
           : [],
@@ -340,6 +351,19 @@ export function makeEvaluationGraph() {
       };
     });
   });
+  const references = {
+    cases: cases.map(({ caseId }) => ({ caseId, reference: `cases/${caseId}.json` })),
+    split: "split.json",
+    experiment: "experiment.json",
+    attempts: attempts.map(({ attemptId }) => ({
+      attemptId,
+      reference: `attempts/${attemptId}.json`,
+    })),
+    adjudications: adjudications.map(({ adjudicationId }) => ({
+      adjudicationId,
+      reference: `adjudications/${adjudicationId}.json`,
+    })),
+  };
   const rawArtifactReferences = [
     ...cases.map((value) => ({
       type: "CASE",
@@ -382,6 +406,7 @@ export function makeEvaluationGraph() {
     generatedAt: "2026-09-15T12:10:00.000Z",
     metrics: scoredMetrics(
       addCounts(attempts.map((attempt) => attemptCounts(attempt.caseId === "case_defect"))),
+      "FAMILY",
     ),
     adjudicationCoverage: {
       totalClaims: 10,
@@ -400,6 +425,7 @@ export function makeEvaluationGraph() {
             .filter(({ caseId }) => caseId === value.caseId)
             .map(() => attemptCounts(value.caseId === "case_defect")),
         ),
+        "CASE",
       ),
     })),
     familyBreakdowns: [
@@ -408,6 +434,7 @@ export function makeEvaluationGraph() {
         split: "DEVELOPMENT",
         metrics: scoredMetrics(
           addCounts(attempts.map((attempt) => attemptCounts(attempt.caseId === "case_defect"))),
+          "CASE",
         ),
       },
     ],
@@ -479,5 +506,5 @@ export function makeEvaluationGraph() {
     },
     rawArtifactReferences,
   };
-  return { cases, split, experiment, attempts, adjudications, score };
+  return { cases, split, experiment, attempts, adjudications, score, references };
 }

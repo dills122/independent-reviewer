@@ -1,3 +1,4 @@
+import { compareUtf16 } from "../src/contracts/primitives.js";
 import {
   digestEvaluationArtifactV1,
   EvaluationAdjudicationRecordV1Schema,
@@ -11,6 +12,8 @@ import {
   EvaluationSourceIdentityV1Schema,
   validateEvaluationFamilySplitV1,
 } from "./artifact-contracts.js";
+import { assertEvaluationScorerIdentityV1, EVALUATION_SCORER_POLICY_V1 } from "./scorer-policy.js";
+import { evaluationUsdToUnitsV1, sumEvaluationUsdV1 } from "./usd.js";
 
 export interface EvaluationArtifactGraphInputV1 {
   experiment: unknown;
@@ -18,11 +21,91 @@ export interface EvaluationArtifactGraphInputV1 {
   cases: readonly unknown[];
   attempts: readonly unknown[];
   adjudications: readonly unknown[];
+  references: EvaluationArtifactReferencesV1;
   score: unknown;
+}
+
+export interface EvaluationArtifactReferencesV1 {
+  cases: readonly { caseId: string; reference: string }[];
+  split: string;
+  experiment: string;
+  attempts: readonly { attemptId: string; reference: string }[];
+  adjudications: readonly { adjudicationId: string; reference: string }[];
 }
 
 function assertEqual(actual: string | number, expected: string | number, message: string): void {
   if (actual !== expected) throw new TypeError(message);
+}
+
+function bindArtifactLocations(
+  references: EvaluationArtifactReferencesV1,
+  expectedIds: {
+    cases: readonly string[];
+    split: string;
+    experiment: string;
+    attempts: readonly string[];
+    adjudications: readonly string[];
+  },
+): Map<string, string> {
+  const locations = new Map<string, string>();
+  const owners = new Map<string, string>();
+  const add = (type: string, id: string, reference: string): void => {
+    const key = `${type}:${id}`;
+    if (locations.has(key)) throw new TypeError(`duplicate raw artifact location ${key}`);
+    if (typeof reference !== "string" || reference.trim().length === 0) {
+      throw new TypeError(`raw artifact location ${key} must be nonempty`);
+    }
+    const priorOwner = owners.get(reference);
+    if (priorOwner !== undefined) {
+      throw new TypeError(
+        `ambiguous raw artifact location ${reference} for ${priorOwner} and ${key}`,
+      );
+    }
+    locations.set(key, reference);
+    owners.set(reference, key);
+  };
+  for (const entry of references.cases) add("CASE", entry.caseId, entry.reference);
+  add("SPLIT", expectedIds.split, references.split);
+  add("EXPERIMENT", expectedIds.experiment, references.experiment);
+  for (const entry of references.attempts) add("ATTEMPT", entry.attemptId, entry.reference);
+  for (const entry of references.adjudications)
+    add("ADJUDICATION", entry.adjudicationId, entry.reference);
+
+  const expectedKeys = [
+    ...expectedIds.cases.map((id) => `CASE:${id}`),
+    `SPLIT:${expectedIds.split}`,
+    `EXPERIMENT:${expectedIds.experiment}`,
+    ...expectedIds.attempts.map((id) => `ATTEMPT:${id}`),
+    ...expectedIds.adjudications.map((id) => `ADJUDICATION:${id}`),
+  ];
+  if (locations.size !== expectedKeys.length || expectedKeys.some((key) => !locations.has(key))) {
+    throw new TypeError("raw artifact locations must cover exact graph artifact set");
+  }
+  return locations;
+}
+
+export interface EvaluationNumericContributionV1 {
+  artifactId: string;
+  value: number;
+}
+
+export function sumEvaluationNumbersV1(
+  contributions: readonly EvaluationNumericContributionV1[],
+): number {
+  const sorted = [...contributions].sort(
+    (left, right) =>
+      Math.abs(left.value) - Math.abs(right.value) ||
+      left.value - right.value ||
+      compareUtf16(left.artifactId, right.artifactId),
+  );
+  let sum = 0;
+  let correction = 0;
+  for (const { value } of sorted) {
+    const next = sum + value;
+    correction += Math.abs(sum) >= Math.abs(value) ? sum - next + value : value - next + sum;
+    sum = next;
+  }
+  return sum + correction;
 }
 
 function summarize(values: readonly number[]): {
@@ -118,13 +201,17 @@ export function deriveEvaluationAttemptMetricCountsV1(
       label === "MATCHED_DEFECT" && matchedRootId !== null ? [matchedRootId] : [],
     ),
   );
-  const supported = finalDefects.filter(
-    ({ label }) => label === "MATCHED_DEFECT" || label === "NOVEL_VALID_DEFECT",
-  ).length;
+  const supportedRoots = new Set(
+    finalDefects.flatMap(({ label, matchedRootId }) =>
+      (label === "MATCHED_DEFECT" || label === "NOVEL_VALID_DEFECT") && matchedRootId !== null
+        ? [matchedRootId]
+        : [],
+    ),
+  );
   const invalid = finalDefects.filter(({ label }) => label === "INVALID_DEFECT").length;
   const unresolved = finalDefects.filter(({ label }) => label === "UNRESOLVED").length;
   const duplicates = finalDefects.filter(({ label }) => label === "DUPLICATE").length;
-  const clean = caseManifest.pair?.role === "CLEAN";
+  const clean = caseManifest.oracleInventory.labelsExhaustive && expectedRoots.size === 0;
   const completeEvidence = caseManifest.oracleInventory.expectedUncertainties.length === 0;
   const expectedUncertainties = new Set(
     caseManifest.oracleInventory.expectedUncertainties.map(({ uncertaintyId }) => uncertaintyId),
@@ -147,26 +234,27 @@ export function deriveEvaluationAttemptMetricCountsV1(
   });
   const preliminaryRoots = new Set(
     preliminaryDefects.flatMap(({ label, matchedRootId }) =>
-      label === "MATCHED_DEFECT" && matchedRootId !== null ? [matchedRootId] : [],
+      (label === "MATCHED_DEFECT" || label === "NOVEL_VALID_DEFECT") && matchedRootId !== null
+        ? [matchedRootId]
+        : [],
     ),
   );
-  const retainedRoots = [...preliminaryRoots].filter((rootId) => matchedFinalRoots.has(rootId));
+  const retainedRoots = [...preliminaryRoots].filter((rootId) => supportedRoots.has(rootId));
   const preliminaryFalseRoots = new Set(
-    preliminaryDefects.flatMap(({ findingReference, label }) => {
-      const digest = claimByReference.get(findingReference)?.claimDigest.value;
-      return label === "INVALID_DEFECT" && digest !== undefined ? [digest] : [];
-    }),
+    preliminaryDefects.flatMap(({ label, matchedRootId }) =>
+      label === "INVALID_DEFECT" && matchedRootId !== null ? [matchedRootId] : [],
+    ),
   );
-  const finalDefectDigests = new Set(
-    finalDefects.flatMap(({ findingReference }) => {
-      const digest = claimByReference.get(findingReference)?.claimDigest.value;
-      return digest === undefined ? [] : [digest];
-    }),
+  const finalFalseRoots = new Set(
+    finalDefects.flatMap(({ label, matchedRootId }) =>
+      label === "INVALID_DEFECT" && matchedRootId !== null ? [matchedRootId] : [],
+    ),
   );
   const removedFalseRoots = [...preliminaryFalseRoots].filter(
-    (digest) => !finalDefectDigests.has(digest),
+    (rootId) => !finalFalseRoots.has(rootId),
   );
   const expectedRootCount = expectedRoots.size;
+  const supported = supportedRoots.size;
   return [
     {
       metric: "KNOWN_DEFECT_RECALL_COMPLETED",
@@ -216,8 +304,8 @@ export function deriveEvaluationAttemptMetricCountsV1(
     { metric: "DELIVERY_RATE", numerator: completed ? 1 : 0, denominator: 1 },
     {
       metric: "STAGE_RETENTION_RATE",
-      numerator: retainedRoots.length + removedFalseRoots.length,
-      denominator: preliminaryRoots.size + preliminaryFalseRoots.size,
+      numerator: completed ? retainedRoots.length + removedFalseRoots.length : 0,
+      denominator: completed ? preliminaryRoots.size + preliminaryFalseRoots.size : 0,
     },
   ];
 }
@@ -250,6 +338,51 @@ function assertMetricCounts(
   }
 }
 
+function assertMetricIntervals(
+  actual: readonly {
+    metric: string;
+    interval: {
+      method: string;
+      confidenceLevel: number;
+      lower: number;
+      upper: number;
+      independentUnit: "CASE" | "FAMILY";
+    } | null;
+  }[],
+  independentUnit: "CASE" | "FAMILY",
+  label: string,
+): void {
+  const expected = {
+    method: EVALUATION_SCORER_POLICY_V1.interval.method,
+    confidenceLevel: EVALUATION_SCORER_POLICY_V1.interval.confidenceLevel,
+    lower: EVALUATION_SCORER_POLICY_V1.interval.lower,
+    upper: EVALUATION_SCORER_POLICY_V1.interval.upper,
+    independentUnit,
+  };
+  for (const metric of actual) {
+    if (metric.interval === null) continue;
+    for (const field of [
+      "method",
+      "confidenceLevel",
+      "lower",
+      "upper",
+      "independentUnit",
+    ] as const) {
+      if (metric.interval[field] !== expected[field]) {
+        const fieldLabel =
+          field === "confidenceLevel"
+            ? "confidence"
+            : field === "independentUnit"
+              ? "unit"
+              : field === "lower" || field === "upper"
+                ? `${field} bound`
+                : field;
+        throw new TypeError(`score ${label} interval ${fieldLabel} does not match scorer policy`);
+      }
+    }
+  }
+}
+
 function metricValue(count: MetricCount): number | null {
   return count.denominator === 0 ? null : count.numerator / count.denominator;
 }
@@ -257,12 +390,18 @@ function metricValue(count: MetricCount): number | null {
 export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraphInputV1): void {
   const experiment = EvaluationExperimentManifestV1Schema.parse(input.experiment);
   const split = EvaluationFamilySplitManifestV1Schema.parse(input.split);
-  const cases = input.cases.map((value) => EvaluationCaseManifestV1Schema.parse(value));
-  const attempts = input.attempts.map((value) => EvaluationAttemptRecordV1Schema.parse(value));
-  const adjudications = input.adjudications.map((value) =>
-    EvaluationAdjudicationRecordV1Schema.parse(value),
-  );
+  const cases = input.cases
+    .map((value) => EvaluationCaseManifestV1Schema.parse(value))
+    .sort((left, right) => compareUtf16(left.caseId, right.caseId));
+  const attempts = input.attempts
+    .map((value) => EvaluationAttemptRecordV1Schema.parse(value))
+    .sort((left, right) => compareUtf16(left.attemptId, right.attemptId));
+  const adjudications = input.adjudications
+    .map((value) => EvaluationAdjudicationRecordV1Schema.parse(value))
+    .sort((left, right) => compareUtf16(left.adjudicationId, right.adjudicationId));
   const score = EvaluationScoreReportV1Schema.parse(input.score);
+
+  assertEvaluationScorerIdentityV1(experiment);
 
   validateEvaluationFamilySplitV1(split, cases);
   const splitDigest = digestEvaluationArtifactV1(EvaluationFamilySplitManifestV1Schema, split);
@@ -380,12 +519,19 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     );
     if (adjudication.matchedRootId !== null) {
       const caseManifest = caseById.get(adjudication.caseId);
+      const isOracleRoot = caseManifest?.oracleInventory.expectedRoots.some(
+        ({ rootId }) => rootId === adjudication.matchedRootId,
+      );
+      if (adjudication.label === "MATCHED_DEFECT" && !isOracleRoot) {
+        throw new TypeError("matched defect must reference a case-oracle semantic root");
+      }
       if (
-        !caseManifest?.oracleInventory.expectedRoots.some(
-          ({ rootId }) => rootId === adjudication.matchedRootId,
-        )
+        (adjudication.label === "NOVEL_VALID_DEFECT" || adjudication.label === "INVALID_DEFECT") &&
+        isOracleRoot
       ) {
-        throw new TypeError("adjudication matched root does not belong to case oracle");
+        throw new TypeError(
+          `${adjudication.label.toLowerCase().replaceAll("_", " ")} must reference a non-oracle semantic root`,
+        );
       }
     }
     if (adjudication.matchedUncertaintyId !== null) {
@@ -455,31 +601,35 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     const claimByReference = new Map(
       attempt.findingClaims.map((claim) => [claim.findingReference, claim]),
     );
-    const creditedFinalRoots = new Set<string>();
-    for (const adjudication of attemptAdjudications) {
-      if (
-        claimByReference.get(adjudication.findingReference)?.emittedAtStage === "FINAL" &&
-        adjudication.label === "MATCHED_DEFECT" &&
-        adjudication.matchedRootId !== null
-      ) {
-        if (creditedFinalRoots.has(adjudication.matchedRootId)) {
+    for (const stage of ["PRELIMINARY", "FINDING_VERIFICATION", "FINAL"] as const) {
+      const stageAdjudications = attemptAdjudications.filter(
+        ({ findingReference }) => claimByReference.get(findingReference)?.emittedAtStage === stage,
+      );
+      const creditedRoots = new Set<string>();
+      for (const adjudication of stageAdjudications) {
+        if (
+          (adjudication.label === "MATCHED_DEFECT" ||
+            adjudication.label === "NOVEL_VALID_DEFECT") &&
+          adjudication.matchedRootId !== null
+        ) {
+          if (creditedRoots.has(adjudication.matchedRootId)) {
+            throw new TypeError(
+              `semantic root cannot receive more than one semantic-root credit in ${stage} per attempt`,
+            );
+          }
+          creditedRoots.add(adjudication.matchedRootId);
+        }
+      }
+      for (const adjudication of stageAdjudications) {
+        if (
+          adjudication.label === "DUPLICATE" &&
+          adjudication.matchedRootId !== null &&
+          !creditedRoots.has(adjudication.matchedRootId)
+        ) {
           throw new TypeError(
-            "known root cannot receive more than one final recall credit per attempt",
+            `duplicate must reference a credited semantic root in ${stage} for same attempt`,
           );
         }
-        creditedFinalRoots.add(adjudication.matchedRootId);
-      }
-    }
-    for (const adjudication of attemptAdjudications) {
-      if (
-        claimByReference.get(adjudication.findingReference)?.emittedAtStage === "FINAL" &&
-        adjudication.label === "DUPLICATE" &&
-        adjudication.matchedRootId !== null &&
-        !creditedFinalRoots.has(adjudication.matchedRootId)
-      ) {
-        throw new TypeError(
-          "final duplicate adjudication must reference a credited final root in same attempt",
-        );
       }
     }
   }
@@ -599,47 +749,91 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     aggregateMetricCounts([...contributionByAttempt.values()]),
     "global",
   );
+  assertMetricIntervals(score.metrics, "FAMILY", "global");
   assertEqual(
     score.resources.providerAttempts,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.providerAttempts, 0),
+    sumEvaluationNumbersV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.providerAttempts,
+      })),
+    ),
     "score provider-attempt total does not match attempts",
   );
   assertEqual(
     score.resources.evidenceBytes,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.evidenceBytes, 0),
+    sumEvaluationNumbersV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.evidenceBytes,
+      })),
+    ),
     "score evidence-byte total does not match attempts",
   );
   assertEqual(
     score.resources.outputBytes,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.outputBytes, 0),
+    sumEvaluationNumbersV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.outputBytes,
+      })),
+    ),
     "score output-byte total does not match attempts",
   );
   assertEqual(
     score.cost.reportedCostUsd,
-    attempts.reduce((sum, attempt) => sum + (attempt.usage.knownCostUsd ?? 0), 0),
+    sumEvaluationUsdV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.knownCostUsd ?? 0,
+      })),
+    ),
     "score reported cost does not match attempts",
   );
   assertEqual(
     score.cost.knownCostAttempts,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.knownCostAttempts, 0),
+    sumEvaluationNumbersV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.knownCostAttempts,
+      })),
+    ),
     "score known-cost total does not match attempts",
   );
   assertEqual(
     score.cost.unknownCostAttempts,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.unknownCostAttempts, 0),
+    sumEvaluationNumbersV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.unknownCostAttempts,
+      })),
+    ),
     "score unknown-cost total does not match attempts",
   );
   assertEqual(
     score.cost.conservativeChargeUsd,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.conservativeChargeUsd, 0),
+    sumEvaluationUsdV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.conservativeChargeUsd,
+      })),
+    ),
     "score conservative charge does not match attempts",
   );
   assertEqual(
     score.cost.admittedCeilingUsd,
-    attempts.reduce((sum, attempt) => sum + attempt.usage.admittedCeilingUsd, 0),
+    sumEvaluationUsdV1(
+      attempts.map((attempt) => ({
+        artifactId: attempt.attemptId,
+        value: attempt.usage.admittedCeilingUsd,
+      })),
+    ),
     "score admitted ceiling does not match attempts",
   );
-  if (score.cost.admittedCeilingUsd > experiment.budgets.maxTotalCostUsd) {
+  if (
+    evaluationUsdToUnitsV1(score.cost.admittedCeilingUsd) >
+    evaluationUsdToUnitsV1(experiment.budgets.maxTotalCostUsd)
+  ) {
     throw new TypeError("score admitted ceiling exceeds experiment budget");
   }
   assertDistribution(
@@ -697,6 +891,7 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
       ),
       `case ${caseManifest.caseId}`,
     );
+    assertMetricIntervals(breakdown.metrics, "CASE", "case");
   }
   const expectedFamilies = new Map<string, "DEVELOPMENT" | "HOLDOUT">();
   for (const assignment of split.assignments)
@@ -721,6 +916,7 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
       ),
       `family ${breakdown.familyId}`,
     );
+    assertMetricIntervals(breakdown.metrics, "CASE", "family");
   }
   const pairIds = new Set(cases.flatMap(({ pair }) => (pair === null ? [] : [pair.pairId])));
   const expectedDeltaKeys = new Set<string>();
@@ -844,36 +1040,59 @@ export function validateEvaluationArtifactGraphV1(input: EvaluationArtifactGraph
     throw new TypeError("score enforcement coverage does not match adjudications");
   }
 
-  const expectedArtifacts = new Map<string, string>();
+  const expectedLocations = bindArtifactLocations(input.references, {
+    cases: cases.map(({ caseId }) => caseId),
+    split: split.splitVersion,
+    experiment: experiment.experimentId,
+    attempts: attempts.map(({ attemptId }) => attemptId),
+    adjudications: adjudications.map(({ adjudicationId }) => adjudicationId),
+  });
+  const expectedArtifacts = new Map<string, { digest: string; reference: string }>();
   for (const caseManifest of cases)
-    expectedArtifacts.set(
-      `CASE:${caseManifest.caseId}`,
-      digestEvaluationArtifactV1(EvaluationCaseManifestV1Schema, caseManifest).value,
-    );
-  expectedArtifacts.set(`SPLIT:${split.splitVersion}`, splitDigest.value);
-  expectedArtifacts.set(`EXPERIMENT:${experiment.experimentId}`, experimentDigest.value);
+    expectedArtifacts.set(`CASE:${caseManifest.caseId}`, {
+      digest: digestEvaluationArtifactV1(EvaluationCaseManifestV1Schema, caseManifest).value,
+      reference: expectedLocations.get(`CASE:${caseManifest.caseId}`) as string,
+    });
+  expectedArtifacts.set(`SPLIT:${split.splitVersion}`, {
+    digest: splitDigest.value,
+    reference: expectedLocations.get(`SPLIT:${split.splitVersion}`) as string,
+  });
+  expectedArtifacts.set(`EXPERIMENT:${experiment.experimentId}`, {
+    digest: experimentDigest.value,
+    reference: expectedLocations.get(`EXPERIMENT:${experiment.experimentId}`) as string,
+  });
   for (const attempt of attempts)
-    expectedArtifacts.set(
-      `ATTEMPT:${attempt.attemptId}`,
-      digestEvaluationArtifactV1(EvaluationAttemptRecordV1Schema, attempt).value,
-    );
+    expectedArtifacts.set(`ATTEMPT:${attempt.attemptId}`, {
+      digest: digestEvaluationArtifactV1(EvaluationAttemptRecordV1Schema, attempt).value,
+      reference: expectedLocations.get(`ATTEMPT:${attempt.attemptId}`) as string,
+    });
   for (const adjudication of adjudications)
-    expectedArtifacts.set(
-      `ADJUDICATION:${adjudication.adjudicationId}`,
-      digestEvaluationArtifactV1(EvaluationAdjudicationRecordV1Schema, adjudication).value,
-    );
+    expectedArtifacts.set(`ADJUDICATION:${adjudication.adjudicationId}`, {
+      digest: digestEvaluationArtifactV1(EvaluationAdjudicationRecordV1Schema, adjudication).value,
+      reference: expectedLocations.get(`ADJUDICATION:${adjudication.adjudicationId}`) as string,
+    });
   const actualArtifacts = new Map(
-    score.rawArtifactReferences.map((entry) => [`${entry.type}:${entry.id}`, entry.digest.value]),
+    score.rawArtifactReferences.map((entry) => [
+      `${entry.type}:${entry.id}`,
+      { digest: entry.digest.value, reference: entry.reference },
+    ]),
   );
   assertEqual(
     actualArtifacts.size,
     expectedArtifacts.size,
     "score raw references must cover exact graph artifacts",
   );
-  for (const [key, digest] of expectedArtifacts)
+  for (const [key, expected] of expectedArtifacts) {
+    const actual = actualArtifacts.get(key);
     assertEqual(
-      actualArtifacts.get(key) ?? "",
-      digest,
+      actual?.digest ?? "",
+      expected.digest,
       `score raw reference has wrong or missing digest for ${key}`,
     );
+    assertEqual(
+      actual?.reference ?? "",
+      expected.reference,
+      `score raw reference has wrong or missing location for ${key}`,
+    );
+  }
 }
