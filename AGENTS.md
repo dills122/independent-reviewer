@@ -2,7 +2,7 @@
 
 ## Purpose and current phase
 
-Build an external engineering review engine using OpenRouter, starting with a local CLI and later an optional MR/PR adapter. The first local TypeScript/Node.js 24 release is implemented: cumulative Git capture, deterministic packets, two-stage orchestration, OpenRouter transport, validated reports, conservative pre-call token admission, and a durable run-attempt ledger. Live provider smoke testing and the deliberately deferred protocol extensions remain.
+Build an external engineering review engine using OpenRouter, starting with a local CLI and later an optional MR/PR adapter. The first local TypeScript/Node.js 24 release is implemented: cumulative Git capture, deterministic packets, two-stage orchestration, OpenRouter transport, validated reports, conservative pre-call token admission, and a durable run-attempt ledger. Controlled live smoke testing is complete; further explicitly authorized qualification and the deliberately deferred protocol extensions remain.
 
 Read `docs/architecture-and-roadmap.md`, `.codex/steering/repository-steering.md`, `.codex/steering/testing-quality-gates-steering.md`, and `.codex/steering/javascript-typescript-resolution.md` before implementation. `docs/ai-central-integration.md` explains local skills and the retained baseline.
 

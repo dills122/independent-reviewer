@@ -13,8 +13,8 @@ without provider calls; live runs compare validated final reports with hidden ex
 | `full` | 20 | Broad requirements, standards, adversarial, cross-file, and multilingual coverage | $0.40 |
 
 Ceilings use the committed configuration's $0.02 per-case limit. Provider-reported charges are
-usually lower, but admission always reserves the full ceiling. Paid runs are deliberately absent
-from `npm run check`.
+usually lower, but admission always reserves the full ceiling. Both `matrix:dry` and `matrix:live`
+are separate from `npm run check`; live runs additionally require explicit paid confirmation.
 
 List all cases:
 
@@ -64,5 +64,6 @@ provider bills.
 - Run `npm run matrix:dry -- --suite full --run-label <label>` before paying for new or changed
   cases.
 
-Corpus expansion and scored quality gates continue under GitHub issue #160. This first slice owns
-reproducible selection, fixture construction, paid admission, and result accounting.
+Corpus expansion and scored quality gates continue under
+[GitHub issue #160](https://github.com/dills122/independent-reviewer/issues/160). This first slice
+owns reproducible selection, fixture construction, paid admission, and result accounting.
