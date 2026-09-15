@@ -198,6 +198,12 @@ compatibility, license, resource, and quality spike.
 
 ## Stage D — observed checks
 
+Proposed contracts, backend choice, platform states, and qualification probes
+are retained in
+[ADR-019](../decisions/019-use-gvisor-backed-linux-check-workers.md) and its
+[research report](../research/2026-09-15-isolated-checks-backend-decision.md).
+No execution backend is implemented or supported yet.
+
 Execution policy is operator-owned and outside reviewed content. Named checks
 resolve to bounded argument arrays and a qualified backend; provider text cannot
 grant command permissions. A subprocess wrapper is not a sandbox.

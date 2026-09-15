@@ -571,6 +571,11 @@ is exposed to the reviewer.
 
 ## Local verification executor
 
+Proposed V1 check, policy, environment, result, and oracle contracts plus the
+first Linux backend qualification target are specified in
+[ADR-019](decisions/019-use-gvisor-backed-linux-check-workers.md). No backend is
+currently implemented or supported.
+
 Review configuration declares a catalog of named checks. A reviewer chooses an
 ID, never a shell string. Each entry defines:
 
@@ -580,21 +585,96 @@ ID, never a shell string. Each entry defines:
 - timeout and output-byte limit;
 - network policy;
 - required environment variable names, never their secret values;
+- operator-owned non-empty ordered repetition plan with digest-bound unique
+  indexed entries, non-empty seeds, and fixed runner-owned seed channel;
 - expected isolation level; and
 - whether the check is enabled for external request.
+
+Before first attempt or backend creation, runner durably syncs immutable
+`CheckExecutionRequestV1` with exact spec, policy, stable environment, oracle,
+engine, snapshot target(s), exact canonical repetition-plan snapshot/digest, and
+complete ordered expected attempt keys. Reviewer, repository, provider, retry
+code, and prior outcomes cannot alter plan. Every result binds request/plan
+digest, entry index/seed digest, and target key. Validator requires exactly one
+terminal result per key and no missing, duplicate, reordered, or extra key.
+Results never cause early stop or replacement retry. A fatal safety condition
+creates explicit `NOT_RUN` results for unstarted keys when durable state remains
+trustworthy; otherwise request is invalid and no comparison or provider
+projection exists.
 
 The executor runs against a disposable reconstruction of the frozen target when
 the configured repository environment supports it. It does not run a requested
 check in the user's mutable checkout merely because the command appears
 non-mutating.
 
-If dependencies or the required isolation cannot be made available, it returns
-a structured `UNAVAILABLE` result. The report distinguishes:
+If dependencies or required isolation cannot be proven, execution outcome is
+`UNSUPPORTED_ENVIRONMENT`. Assertion, execution, and cleanup outcomes remain
+separate: a crash, OOM, output/resource limit, timeout, cancellation,
+controller capture/persistence/reconciliation failure, or cleanup failure cannot
+be presented as an assertion failure. A broken trusted observation chain is
+`EXECUTOR_FAILURE`, forces `NOT_OBSERVED`, and produces no check-status delivery
+or claim projection. The report distinguishes:
 
 - `AUTHOR_CLAIMED`: described by the author but not observed by this runner;
 - `RUNNER_OBSERVED`: command, environment, exit status, and output observed;
-- `REQUESTED_UNAVAILABLE`: requested but not safely executable; and
+- `UNSUPPORTED_ENVIRONMENT`: requested but not safely executable; and
 - `NOT_REQUESTED`: relevant check not requested within the review.
+
+`RUNNER_OBSERVED` is provenance, not a claim that assertion succeeded: report
+must retain assertion, execution, and cleanup states together.
+
+Raw check output, decoded text, counts, artifact references, and raw-derived
+digests are private runner evidence. V1 provider delivery contains only a closed
+`CheckProviderStatusV1` schema of runner-generated status, normalized exit, and
+resource facts. Exact serialized status bytes must pass per-artifact and
+cumulative evidence/tool/token/conversation/call/time admission with mandatory
+later-call reserves; request ledger binds exact status-message bytes and complete
+wire-body digest. Repository-controlled stdout/stderr never enters the provider
+message. `EXECUTOR_FAILURE`, cleanup failure, incomplete durable state, or
+admission failure suppresses check-status delivery.
+
+Richer output is deferred. A later version may expose only exact worker-visible
+frozen bytes whose remote-disclosure and budget admission completed before
+execution. Generated stdout/stderr and post-execution redaction remain
+ineligible without a new versioned decision and leak-corpus qualification.
+
+Backend resources use crash-durable, unpredictable runner-owned identities and
+leases. Creation intent is durably synced before create and an identity-bound
+receipt before use. Startup reconciliation and an independently supervised
+janitor block new admission until expired, uncertain, cleanup-failed, or
+ledger-divergent resources are removed or explicitly reconciled. Manual recovery
+targets one exact ID, requires confirmation, and appends an audit event; wildcard
+or global prune is forbidden. In-process child spawning is controller machinery,
+not a crash cleanup guarantee.
+
+`REQUIRED_IDENTICAL` differential evidence uses one private, versioned
+comparison artifact binding ordered BASE/HEAD result digests, shared
+check/policy/environment/oracle identities, execution-request and plan digests,
+and complete operator-owned repetition/seed set. Provider projection is atomic:
+never disclose one side or select a favorable repetition. Missing, duplicate,
+reordered, extra, or identity-mismatched inputs invalidate comparison and
+suppress projection.
+
+For each valid complete seed pair, validator applies ordered first match:
+terminal `EXECUTOR_FAILURE` -> `INCONCLUSIVE_EXECUTOR_FAILURE`; cleanup failure ->
+`INCONCLUSIVE_CLEANUP_FAILURE`; failed comparability -> `NOT_COMPARABLE`;
+unsupported side -> `INCONCLUSIVE_UNSUPPORTED_ENVIRONMENT`; any other
+non-completed/not-observed side -> `INCONCLUSIVE_EXECUTION`; otherwise BASE/HEAD
+pass/fail maps to `REGRESSION_REPRODUCED`, `FIX_REPRODUCED`, `NO_DIFFERENCE`, or
+`PRE_EXISTING_OR_SHARED_FAILURE`. Across non-empty pair set, same safety
+precedence applies; one uniform semantic class survives, and every other
+semantic mixture is `INCONCLUSIVE_MIXED_OR_FLAKY`. Validator derives outcome;
+caller cannot supply it.
+
+`HEAD_ONLY_NEW_FEATURE` and `SINGLE_TARGET` create no comparison artifact and
+cannot support regression, fix, or other differential claims. Both preserve
+every planned result and use executor, cleanup, unsupported, then
+other-execution precedence; pair comparability does not apply. Remaining sets
+derive `ALL_PASSED`, `ALL_FAILED`, or `MIXED_OR_FLAKY`. Operator report lists
+every entry; eligible provider status is one atomic ordered attempt set with no
+omitted row.
+`SINGLE_TARGET` identifies one exact arbitrary snapshot rather than implying
+HEAD.
 
 Universal environment construction is deferred. Initial fixtures may use a
 small repository whose named checks need no network or dependency installation.

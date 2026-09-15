@@ -57,6 +57,10 @@ limitations is recorded in
 [ADR-016](decisions/016-verify-every-verdict-affecting-review-claim.md).
 Isolating capture from developer Git configuration is recorded in
 [ADR-017](decisions/017-isolate-capture-from-developer-git-configuration.md).
+Proposed isolated named-check contracts, Linux backend qualification, and the
+retained Node process-controller decision are recorded in
+[ADR-019](decisions/019-use-gvisor-backed-linux-check-workers.md). No execution
+backend is currently implemented or supported.
 
 ## Planned operator experience
 
@@ -432,11 +436,12 @@ while retaining its original fresh-task workflow as a fallback.
 
 ### Deferred until requested
 
-The correctness and engineering review track now requests planning for focused
-quality evaluation, frozen evidence access, and isolated named checks. These
-remain runtime extensions pending their versioned contract and acceptance gates;
-the linked delivery plan owns their proposed order. Broader model comparisons
-and hosting remain outside that track's first implementation batch.
+The correctness and engineering review track now requests focused quality
+evaluation, frozen evidence access, and isolated named checks. Named-check V1
+contracts and a first Linux qualification candidate are proposed in ADR-019;
+runtime and platform qualification remain pending. The linked delivery plan owns
+their proposed order. Broader model comparisons and hosting remain outside that
+track's first implementation batch.
 
 - an evidence service serving bounded file reads, searches, and diff context from the
   frozen snapshot on request (see ADR-005: the brief carries no capability
