@@ -3,6 +3,11 @@
 Status: accepted protocol; staged local release implemented and smoke-tested,
 with explicitly listed interactive and command-execution extensions deferred.
 
+Planning for those extensions and broader claim adjudication is tracked in the
+[correctness and engineering review plan](plans/2026-09-14-correctness-engineering-review-plan.md).
+Its proposed capabilities require explicit contract versions and acceptance
+gates before runtime adoption; this specification's shipped boundary is unchanged.
+
 This specification turns the independent-review workflow in
 [`docs/architecture-and-roadmap.md`](architecture-and-roadmap.md) into an
 enforceable local protocol. It defines the first implementation slice; it does

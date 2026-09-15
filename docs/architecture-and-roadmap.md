@@ -17,6 +17,18 @@ Normative discovery, secret, ordering, budget, and author-absence decisions are
 grounded in the
 [steering contract research](research/2026-09-11-steering-and-author-absence-contract.md).
 
+Next planned capability track: measurable correctness and comprehensive
+engineering review, tracked by [#159](https://github.com/dills122/independent-reviewer/issues/159)
+and the [delivery plan](plans/2026-09-14-correctness-engineering-review-plan.md).
+Start with a reproducible quality corpus and complete claim adjudication; then
+qualify frozen evidence access, reverse references, isolated checks, and explicit
+engineering dimensions. The [evaluation protocol](plans/2026-09-14-review-quality-evaluation-protocol.md)
+defines quality gates, and [deep research](research/2026-09-14-engineering-review-deep-research.md)
+records evidence and alternatives. This is planned work, not a change to shipped
+review modes or accepted runtime contracts. Friendly operations continues as a
+bounded usability track. Build-dependent semantic indexers require execution
+isolation before qualification.
+
 The staged lifecycle, evidence surface, verification boundary, and efficiency
 requirements are refined in the
 [review protocol technical specification](review-protocol-spec.md). The
@@ -414,6 +426,12 @@ skill now routes explicitly authorized external reviews through this command
 while retaining its original fresh-task workflow as a fallback.
 
 ### Deferred until requested
+
+The correctness and engineering review track now requests planning for focused
+quality evaluation, frozen evidence access, and isolated named checks. These
+remain runtime extensions pending their versioned contract and acceptance gates;
+the linked delivery plan owns their proposed order. Broader model comparisons
+and hosting remain outside that track's first implementation batch.
 
 - an evidence service serving bounded file reads, searches, and diff context from the
   frozen snapshot on request (see ADR-005: the brief carries no capability
