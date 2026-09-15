@@ -13,7 +13,8 @@ base plus staged, unstaged, and selected untracked changes.
 One successful run has two mandatory model stages and one conditional stage:
 
 1. Blind preliminary review sees frozen changes and canonical requirements or standards.
-2. Fresh finding verification runs only when the preliminary contains findings.
+2. Fresh verification runs when the preliminary contains findings, evidence
+   gaps, or limitations.
 3. Final reconciliation receives the persisted assessment, verification ledger, and author input.
 
 The reviewer never receives the implementation conversation or local agent
@@ -85,15 +86,10 @@ The simple flow automatically captures BASE-owned
 `.independent-reviewer/rules.md` when present. It also discovers Codex
 `AGENTS.md`/`AGENTS.override.md` from repository root through each changed
 file's parent, with one file selected per directory and override precedence.
-It also selects Claude ancestor `CLAUDE.md`, root `.claude/CLAUDE.md`, and
-applicable `.claude/rules/**/*.md` files using bounded YAML `paths` frontmatter.
-Applicable `CLAUDE.md` files expand relative, repository-internal `@path`
-imports from frozen BASE through at most four hops, including bounded internal
-symlink chains. Missing, cyclic, absolute, repository-escaping, secret, empty,
-or over-limit imports stop before provider access. Imports in `.claude/rules`
-are not expanded in v1. Gemini, Kiro, Copilot, and Cursor discovery plus
-interactive author input remain planned. During this transition, pass
-`--standards` and `--author` to each standards-mode review:
+Claude, Gemini, Kiro, Copilot, and Cursor repository conventions are also
+discovered automatically. Interactive author input remains planned, so pass
+`--standards` and `--author` to each simple-settings review until that workflow
+ships:
 
 ```sh
 node dist/src/cli.js review \
@@ -118,6 +114,34 @@ provider access. Admission warns at 32 KiB and stops at 64 KiB, and also applies
 Keep this file focused on reviewer-specific priorities and hard-stop concerns;
 use ordinary repository steering for broader development guidance.
 
+### Repository guidance discovery
+
+Discovery follows each harness's repository convention instead of treating all
+Markdown alike:
+
+| Family | Automatically considered from frozen BASE | Key applicability behavior |
+| --- | --- | --- |
+| Codex | Ancestor `AGENTS.override.md`, otherwise `AGENTS.md` | One file per directory, root to changed-file parent |
+| Claude | Ancestor `CLAUDE.md`, root `.claude/CLAUDE.md`, `.claude/rules/**/*.md` | Rule `paths` frontmatter scopes content; applicable `CLAUDE.md` files expand bounded relative `@path` imports |
+| Gemini | `GEMINI.md` context files and safe basename overrides from `.gemini/settings.json` | Root-started directory scope; BASE Git/Gemini ignores honored when configured; bounded relative `@path` imports |
+| Kiro | Ancestor `AGENTS.md`, `.kiro/steering/**/*.md` | Missing/`always` steering applies broadly; `fileMatch` scopes content; bounded `#[[file:...]]` references |
+| Copilot | `.github/copilot-instructions.md`, `.github/instructions/**/*.instructions.md`, supported ancestor agent files | `applyTo` scopes modular instructions; `excludeAgent: code-review` excludes them; supported direct files expand bounded relative `@path` imports |
+| Cursor | Root or nested `.cursor/rules/**/*.mdc` | `alwaysApply` or `globs` selects project rules; bounded relative `@filename` references |
+
+All selected content is BASE-owned, target-aware, size-bounded, and checked by
+the snapshot secret policy before artifacts or provider requests are created.
+Repository harness families are semantic peers; deterministic presentation order
+does not create authority between them. `.independent-reviewer/rules.md` is the
+only higher-priority reviewer-specific tier. When multiple families recognize
+the same file, content is rendered once with complete provenance.
+
+Home-directory, user, team, cloud, manual, agent-selected, and HEAD-only sources
+are excluded. Unsupported dynamic selection is never guessed. Missing, cyclic,
+absolute, repository-escaping, secret, empty, invalid, or over-limit applicable
+guidance fails closed before provider access. Exact source order, import limits,
+ignore behavior, and exclusions are specified in
+[ADR-014](decisions/014-discover-repository-markdown-steering.md).
+
 ## 4. Prepare standards-mode inputs
 
 Standards mode needs three files:
@@ -131,6 +155,16 @@ Standards mode needs three files:
 Keep these files outside the target repository or ensure they do not contain
 secrets. The CLI excludes the selected config, standards, and author files from
 ordinary changed-file evidence.
+
+Bundled starting points:
+
+- [`review-config.gpt-oss-120b.json`](../examples/review-config.gpt-oss-120b.json)
+  is the availability-oriented advanced policy.
+- [`review-config.pinned-endpoint.json`](../examples/review-config.pinned-endpoint.json)
+  deliberately narrows routing for endpoint diagnosis and is not the normal
+  reliability shape.
+- [`standards.javascript-typescript.json`](../examples/standards.javascript-typescript.json)
+  is an example policy to copy and adapt.
 
 ### Review configuration
 

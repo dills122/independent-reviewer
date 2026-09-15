@@ -15,8 +15,8 @@ Source: sibling `../ai-central`, initially at `33bd2293f0682bde71938f2b2ad14a4f3
 The engineering bundle includes some adjacent skills (browser, UI,
 infrastructure) as part of its maintained selection. They are available on
 demand, not mandatory workflows. No custom agent preset is selected. The
-JavaScript/TypeScript profile follows the accepted TypeScript 6 and Node.js 24
-runtime.
+JavaScript/TypeScript profile follows the accepted TypeScript and Node.js 24
+runtime; `package.json` owns the exact compiler version.
 
 ## Retained independent-review baseline
 
