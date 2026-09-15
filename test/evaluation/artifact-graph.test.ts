@@ -234,7 +234,10 @@ describe("evaluation artifact graph", () => {
         ({ caseId, variantId }) => caseId === cleanCase.caseId && variantId === "variant_baseline",
       ),
     );
-    Object.assign(cleanCase, { pair: null });
+    Object.assign(cleanCase, {
+      pair: null,
+      controlRole: "IRRELEVANT_MISSING_CONTEXT",
+    });
 
     const counts = deriveEvaluationAttemptMetricCountsV1(
       EvaluationAttemptRecordV1Schema.parse(cleanAttempt),

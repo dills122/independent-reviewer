@@ -13,7 +13,7 @@ import {
   ReviewRunConfigV3Schema,
 } from "../src/contracts/review-run-config.js";
 import type { RunRecordEventV1 } from "../src/contracts/run-record.js";
-import { StandardsReportV2Schema } from "../src/contracts/standards-results.js";
+import { StandardsReportV3Schema } from "../src/contracts/standards-results.js";
 import { readStrictJsonFileV1 } from "../src/contracts/strict-json.js";
 import { readRunRecordEventsV1 } from "../src/orchestrator/run-record.js";
 import { prepareEvaluationCaseV1 } from "./fixture-builder.js";
@@ -262,7 +262,7 @@ async function readVerdictV1(
       source: `evaluation report ${testCase.id}`,
     });
     return testCase.reviewMode === "standards"
-      ? StandardsReportV2Schema.parse(value).verdict
+      ? StandardsReportV3Schema.parse(value).verdict
       : FinalReviewReportV1Schema.parse(value).verdict;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
