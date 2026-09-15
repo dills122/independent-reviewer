@@ -18,6 +18,57 @@ import { ReviewRequestV1Schema } from "../../src/contracts/review-request.js";
 
 const exec = promisify(execFile);
 
+function withExpectedOracleIdentifier(
+  testCase: EvaluationCaseV1,
+  field: "expectedUncertaintyIds" | "expectedRecommendationIds",
+  identifier: string,
+): EvaluationCaseV1 {
+  return {
+    ...testCase,
+    oracle: { ...testCase.oracle, [field]: [identifier] },
+  };
+}
+
+function requirementsReviewerLeaks(
+  testCase: EvaluationCaseV1,
+  identifier: string,
+): readonly EvaluationCaseV1[] {
+  assert.equal(testCase.reviewer.kind, "requirements");
+  const reviewer = testCase.reviewer;
+  return [
+    { ...testCase, reviewer: { ...reviewer, requirements: identifier } },
+    { ...testCase, reviewer: { ...reviewer, implementationPlan: identifier } },
+    { ...testCase, reviewer: { ...reviewer, authorIntent: identifier } },
+    { ...testCase, reviewer: { ...reviewer, authorApproach: identifier } },
+    { ...testCase, reviewer: { ...reviewer, componentPaths: [identifier] } },
+    { ...testCase, reviewer: { ...reviewer, challengePoints: [identifier] } },
+  ];
+}
+
+function standardsReviewerLeaks(
+  testCase: EvaluationCaseV1,
+  identifier: string,
+): readonly EvaluationCaseV1[] {
+  assert.equal(testCase.reviewer.kind, "standards");
+  const reviewer = testCase.reviewer;
+  return [
+    { ...testCase, reviewer: { ...reviewer, profile: { ...reviewer.profile, name: identifier } } },
+    { ...testCase, reviewer: { ...reviewer, authorOverview: identifier } },
+  ];
+}
+
+async function assertReviewerOracleLeaksRejected(
+  root: string,
+  cases: readonly EvaluationCaseV1[],
+): Promise<void> {
+  for (const [index, testCase] of cases.entries()) {
+    await assert.rejects(
+      () => prepareEvaluationCaseV1(testCase, join(root, `leak-${index}`)),
+      /oracle identifier/i,
+    );
+  }
+}
+
 describe("evaluation fixture reconstruction", () => {
   it("disables system Git attributes in the exact reconstruction environment", async () => {
     const root = await mkdtemp(join(tmpdir(), "review-evaluation-"));
@@ -191,6 +242,98 @@ describe("evaluation fixture reconstruction", () => {
       assert.notEqual(
         sha256BytesDigestV1(Buffer.from(baselineAuthor.content, "utf8")).value,
         sha256BytesDigestV1(Buffer.from(changedAuthor.content, "utf8")).value,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects uncertainty identifiers from every reviewer and author input field", async () => {
+    const root = await mkdtemp(join(tmpdir(), "review-evaluation-"));
+    try {
+      const requirementsCase = EVALUATION_CASES_V1.find(({ id }) => id === "case_018");
+      const standardsCase = EVALUATION_CASES_V1.find(({ id }) => id === "case_011");
+      assert.ok(requirementsCase);
+      assert.ok(standardsCase);
+      const identifier = "root_011_conflicting_mandatory_rules";
+      const cases = [
+        ...requirementsReviewerLeaks(
+          withExpectedOracleIdentifier(requirementsCase, "expectedUncertaintyIds", identifier),
+          identifier,
+        ),
+        ...standardsReviewerLeaks(
+          withExpectedOracleIdentifier(standardsCase, "expectedUncertaintyIds", identifier),
+          identifier,
+        ),
+      ];
+      await assertReviewerOracleLeaksRejected(root, cases);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects recommendation identifiers from every reviewer and author input field", async () => {
+    const root = await mkdtemp(join(tmpdir(), "review-evaluation-"));
+    try {
+      const requirementsCase = EVALUATION_CASES_V1.find(({ id }) => id === "case_018");
+      const standardsCase = EVALUATION_CASES_V1.find(({ id }) => id === "case_010");
+      assert.ok(requirementsCase);
+      assert.ok(standardsCase);
+      const identifier = "root_010_advisory_export_name";
+      const cases = [
+        ...requirementsReviewerLeaks(
+          withExpectedOracleIdentifier(requirementsCase, "expectedRecommendationIds", identifier),
+          identifier,
+        ),
+        ...standardsReviewerLeaks(
+          withExpectedOracleIdentifier(standardsCase, "expectedRecommendationIds", identifier),
+          identifier,
+        ),
+      ];
+      await assertReviewerOracleLeaksRejected(root, cases);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("allows benign reviewer text near oracle identifiers without false positives", async () => {
+    const root = await mkdtemp(join(tmpdir(), "review-evaluation-"));
+    try {
+      const requirementsCase = EVALUATION_CASES_V1.find(({ id }) => id === "case_018");
+      const standardsCase = EVALUATION_CASES_V1.find(({ id }) => id === "case_010");
+      assert.ok(requirementsCase);
+      assert.ok(standardsCase);
+      assert.equal(requirementsCase.reviewer.kind, "requirements");
+      assert.equal(standardsCase.reviewer.kind, "standards");
+      const uncertaintyId = "root_011_conflicting_mandatory_rules";
+      const recommendationId = "root_010_advisory_export_name";
+      const benignRequirements = withExpectedOracleIdentifier(
+        {
+          ...requirementsCase,
+          reviewer: {
+            ...requirementsCase.reviewer,
+            authorApproach: "Discusses conflicting mandatory rules without an evaluator label.",
+          },
+        },
+        "expectedUncertaintyIds",
+        uncertaintyId,
+      );
+      const benignStandards = withExpectedOracleIdentifier(
+        {
+          ...standardsCase,
+          reviewer: {
+            ...standardsCase.reviewer,
+            authorOverview: "Discusses an advisory export name without an evaluator label.",
+          },
+        },
+        "expectedRecommendationIds",
+        recommendationId,
+      );
+      await assert.doesNotReject(() =>
+        prepareEvaluationCaseV1(benignRequirements, join(root, "benign-requirements")),
+      );
+      await assert.doesNotReject(() =>
+        prepareEvaluationCaseV1(benignStandards, join(root, "benign-standards")),
       );
     } finally {
       await rm(root, { recursive: true, force: true });

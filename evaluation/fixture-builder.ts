@@ -100,8 +100,13 @@ function assertOracleSeparated(testCase: EvaluationCaseV1): void {
     repository: testCase.repository,
     reviewer: testCase.reviewer,
   });
-  for (const rootId of testCase.oracle.expectedRootIds) {
-    if (reviewerData.includes(rootId)) {
+  const oracleIds = [
+    ...testCase.oracle.expectedRootIds,
+    ...testCase.oracle.expectedUncertaintyIds,
+    ...testCase.oracle.expectedRecommendationIds,
+  ];
+  for (const oracleId of oracleIds) {
+    if (reviewerData.includes(oracleId)) {
       throw new Error(`Evaluator oracle identifier leaked into reviewer data for ${testCase.id}.`);
     }
   }
