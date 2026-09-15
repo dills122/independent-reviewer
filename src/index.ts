@@ -21,7 +21,10 @@ export type { CapturedGeminiGuidanceV1 } from "./guidance/gemini-discovery.js";
 export { captureGeminiGuidanceV1 } from "./guidance/gemini-discovery.js";
 export type { CapturedKiroGuidanceV1 } from "./guidance/kiro-discovery.js";
 export { captureKiroGuidanceV1 } from "./guidance/kiro-discovery.js";
-export { renderGuidancePromptPresentationV1 } from "./guidance/presentation.js";
+export {
+  renderGuidancePromptPresentationV1,
+  renderGuidancePromptPresentationV2,
+} from "./guidance/presentation.js";
 export type { CapturedRepositoryGuidanceV1 } from "./guidance/repository-guidance.js";
 export { captureRepositoryGuidanceV1 } from "./guidance/repository-guidance.js";
 export type {

@@ -68,8 +68,11 @@ export {
   GUIDANCE_GRAPH_V1_JSON_SCHEMA,
   GuidanceDiagnosticV1Schema,
   GuidanceGraphV1Schema,
+  GuidanceImportSyntaxKindV1Schema,
   GuidanceTargetV1Schema,
   guidanceGraphDigestV1,
+  isGuidanceImportSyntaxForFamilyV1,
+  isGuidanceSourceKindForFamilyV1,
   MAX_GUIDANCE_APPLICABILITY_PAIRS_V1,
   MAX_GUIDANCE_APPLICABILITY_PATHS_V1,
   MAX_GUIDANCE_DIAGNOSTICS_V1,
@@ -83,12 +86,20 @@ export {
   projectGuidanceTargetsV1,
   verifyGuidanceGraphIdentityV1,
 } from "./guidance-graph.js";
-export type { GuidancePromptPresentationV1 } from "./guidance-presentation.js";
+export type {
+  GuidancePromptPresentation,
+  GuidancePromptPresentationV1,
+  GuidancePromptPresentationV2,
+} from "./guidance-presentation.js";
 export {
+  CanonicalGuidancePresentationSchema,
   CanonicalGuidancePresentationV1Schema,
   GuidanceGraphBindingV1Schema,
   GuidancePresentationSourceV1Schema,
+  GuidancePresentationSourceV2Schema,
+  GuidancePromptPresentationSchema,
   GuidancePromptPresentationV1Schema,
+  GuidancePromptPresentationV2Schema,
 } from "./guidance-presentation.js";
 export type { InspectionReportV1 } from "./inspection-report.js";
 export {

@@ -87,16 +87,35 @@ export const GuidanceSourceNodeV1Schema = z.strictObject({
   directRecognitions: z.array(DirectRecognitionV1Schema).max(MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1),
 });
 
+export const GuidanceImportSyntaxKindV1Schema = z.enum([
+  "CLAUDE_AT_PATH",
+  "GEMINI_AT_PATH",
+  "KIRO_FILE_REFERENCE",
+  "COPILOT_AT_PATH",
+  "CURSOR_AT_FILENAME",
+]);
+
+const GUIDANCE_IMPORT_SYNTAX_FAMILY_V1: Readonly<
+  Record<z.infer<typeof GuidanceImportSyntaxKindV1Schema>, z.infer<typeof GuidanceFamilyV1Schema>>
+> = {
+  CLAUDE_AT_PATH: "CLAUDE",
+  GEMINI_AT_PATH: "GEMINI",
+  KIRO_FILE_REFERENCE: "KIRO",
+  COPILOT_AT_PATH: "COPILOT",
+  CURSOR_AT_FILENAME: "CURSOR",
+};
+
+export function isGuidanceImportSyntaxForFamilyV1(
+  familyId: z.infer<typeof GuidanceFamilyV1Schema>,
+  syntaxKind: z.infer<typeof GuidanceImportSyntaxKindV1Schema>,
+): boolean {
+  return GUIDANCE_IMPORT_SYNTAX_FAMILY_V1[syntaxKind] === familyId;
+}
+
 export const GuidanceOccurrenceV1Schema = z.strictObject({
   occurrenceId: prefixedIdentifier("guidance_occurrence"),
   familyId: GuidanceFamilyV1Schema,
-  syntaxKind: z.enum([
-    "CLAUDE_AT_PATH",
-    "GEMINI_AT_PATH",
-    "KIRO_FILE_REFERENCE",
-    "COPILOT_AT_PATH",
-    "CURSOR_AT_FILENAME",
-  ]),
+  syntaxKind: GuidanceImportSyntaxKindV1Schema,
   importerSourceId: prefixedIdentifier("guidance_source"),
   requestedSpecifier: z
     .string()
@@ -270,6 +289,13 @@ const FAMILY_SOURCE_KINDS: Readonly<
   INDEPENDENT_REVIEWER: ["REVIEWER_RULES"],
 };
 
+export function isGuidanceSourceKindForFamilyV1(
+  familyId: z.infer<typeof GuidanceFamilyV1Schema>,
+  sourceKind: z.infer<typeof GuidanceSourceKindV1Schema>,
+): boolean {
+  return FAMILY_SOURCE_KINDS[familyId].includes(sourceKind);
+}
+
 function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context: z.RefinementCtx) {
   if (!alreadyCanonical(graph.targets, targetOrder))
     context.addIssue({
@@ -342,7 +368,7 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         message: "must be canonical and unique",
       });
     node.directRecognitions.forEach((recognition, recognitionIndex) => {
-      if (!FAMILY_SOURCE_KINDS[recognition.familyId].includes(recognition.sourceKind))
+      if (!isGuidanceSourceKindForFamilyV1(recognition.familyId, recognition.sourceKind))
         context.addIssue({
           code: "custom",
           path: ["nodes", index, "directRecognitions", recognitionIndex, "sourceKind"],
@@ -411,13 +437,6 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
       message: `must contain at most ${MAX_GUIDANCE_APPLICABILITY_PAIRS_V1} applicability pairs`,
     });
 
-  const syntaxFamily = {
-    CLAUDE_AT_PATH: "CLAUDE",
-    GEMINI_AT_PATH: "GEMINI",
-    KIRO_FILE_REFERENCE: "KIRO",
-    COPILOT_AT_PATH: "COPILOT",
-    CURSOR_AT_FILENAME: "CURSOR",
-  } as const;
   graph.occurrences.forEach((occurrence, index) => {
     if (occurrence.endUtf16 <= occurrence.startUtf16)
       context.addIssue({
@@ -431,7 +450,7 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         path: ["occurrences", index, "importerSourceId"],
         message: "must identify a source",
       });
-    if (syntaxFamily[occurrence.syntaxKind] !== occurrence.familyId)
+    if (!isGuidanceImportSyntaxForFamilyV1(occurrence.familyId, occurrence.syntaxKind))
       context.addIssue({
         code: "custom",
         path: ["occurrences", index, "familyId"],
