@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -19,6 +19,52 @@ import {
 import { EVALUATION_CASES_V1 } from "../../evaluation/matrix-selection.js";
 
 const exec = promisify(execFile);
+
+const HOSTILE_GIT_KEYS = [
+  "GIT_AUTHOR_NAME",
+  "GIT_AUTHOR_EMAIL",
+  "GIT_COMMITTER_NAME",
+  "GIT_COMMITTER_EMAIL",
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_CONFIG_COUNT",
+  "GIT_CONFIG_KEY_0",
+  "GIT_CONFIG_VALUE_0",
+  "GIT_CONFIG_KEY_1",
+  "GIT_CONFIG_VALUE_1",
+] as const;
+
+async function withHostileGitEnvironment<T>(root: string, callback: () => Promise<T>): Promise<T> {
+  const hostileGitDirectory = join(root, "hostile.git");
+  const hostileWorkTree = join(root, "hostile-worktree");
+  const hostileHooks = join(root, "hostile-hooks");
+  const previous = new Map(HOSTILE_GIT_KEYS.map((key) => [key, process.env[key]]));
+  await mkdir(hostileGitDirectory);
+  await mkdir(hostileWorkTree);
+  await mkdir(hostileHooks);
+  await writeFile(join(hostileHooks, "pre-commit"), "#!/bin/sh\nexit 91\n", { mode: 0o755 });
+  Object.assign(process.env, {
+    GIT_AUTHOR_NAME: "Ambient Author",
+    GIT_AUTHOR_EMAIL: "ambient-author@example.invalid",
+    GIT_COMMITTER_NAME: "Ambient Committer",
+    GIT_COMMITTER_EMAIL: "ambient-committer@example.invalid",
+    GIT_DIR: hostileGitDirectory,
+    GIT_WORK_TREE: hostileWorkTree,
+    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_KEY_0: "core.hooksPath",
+    GIT_CONFIG_VALUE_0: hostileHooks,
+    GIT_CONFIG_KEY_1: "commit.gpgsign",
+    GIT_CONFIG_VALUE_1: "true",
+  });
+  try {
+    return await callback();
+  } finally {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
 
 describe("evaluation corpus reconstruction", () => {
   it("reconstructs one case with stable source and manifest identities", async () => {
@@ -129,6 +175,39 @@ describe("evaluation corpus reconstruction", () => {
           manifest.source.provenance.includes('"licenseStatus": "NO_LICENSE_FILE"'),
         ),
       );
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("isolates every Git operation in single-case reconstruction from ambient authority", async () => {
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "evaluation-corpus-"));
+    try {
+      const testCase = EVALUATION_CASES_V1.find(({ id }) => id === "case_018");
+      const definition = EVALUATION_CORPUS_V1.cases.find(({ caseId }) => caseId === "case_018");
+      assert.ok(testCase);
+      assert.ok(definition);
+
+      await withHostileGitEnvironment(temporaryRoot, async () => {
+        const reconstructed = await reconstructEvaluationCorpusCaseV1(
+          testCase,
+          definition,
+          join(temporaryRoot, "single"),
+        );
+        assert.match(reconstructed.manifest.source.baseCommit, /^[0-9a-f]{40}$/);
+      });
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("isolates every Git operation in full-corpus reconstruction from ambient authority", async () => {
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "evaluation-corpus-"));
+    try {
+      await withHostileGitEnvironment(temporaryRoot, async () => {
+        const reconstructed = await reconstructEvaluationCorpusV1(join(temporaryRoot, "full"));
+        assert.equal(reconstructed.cases.length, 30);
+      });
     } finally {
       await rm(temporaryRoot, { recursive: true, force: true });
     }

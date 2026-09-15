@@ -1,7 +1,5 @@
-import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
 
 import { jsonDocument, sha256BytesDigestV1 } from "../src/contracts/json-document.js";
 import { compareUtf16 } from "../src/contracts/primitives.js";
@@ -19,11 +17,9 @@ import {
   type EvaluationCorpusCaseDefinitionV1,
   validateEvaluationCorpusDefinitionV1,
 } from "./corpus.js";
-import { prepareEvaluationCaseV1 } from "./fixture-builder.js";
+import { prepareEvaluationCaseV1, runEvaluationFixtureGitV1 } from "./fixture-builder.js";
 import { EVALUATION_CASES_V1 } from "./matrix-selection.js";
 import type { EvaluationCaseV1, PreparedEvaluationCaseV1 } from "./matrix-types.js";
-
-const exec = promisify(execFile);
 
 function digestText(content: string) {
   return sha256BytesDigestV1(Buffer.from(content, "utf8"));
@@ -117,7 +113,7 @@ export async function reconstructEvaluationCorpusCaseV1(
   }
 
   const prepared = await prepareEvaluationCaseV1(testCase, caseRoot);
-  const { stdout } = await exec("git", ["-C", prepared.repositoryPath, "rev-parse", "main"]);
+  const baseCommit = await runEvaluationFixtureGitV1(prepared.repositoryPath, "rev-parse", "main");
   const evaluatorRoot = join(caseRoot, "evaluator");
   const oracleDirectory = join(evaluatorRoot, "oracles", "v1", testCase.id);
   const hiddenTest = await writePrivateArtifact(evaluatorRoot, definition.evaluatorOnly.hiddenTest);
@@ -138,7 +134,7 @@ export async function reconstructEvaluationCorpusCaseV1(
       identityVersion: 1,
       kind: "CUMULATIVE_SNAPSHOT",
       repository: `synthetic://${testCase.id}`,
-      baseCommit: stdout.trim(),
+      baseCommit: baseCommit.trim(),
       baseTreeDigest: repositoryStateDigest(testCase, "base"),
       snapshotDigest: repositoryStateDigest(testCase, "head"),
       provenance: jsonDocument({

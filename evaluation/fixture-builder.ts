@@ -61,8 +61,11 @@ async function materializeFile(
   await writeFile(destination, content, "utf8");
 }
 
-async function git(repositoryPath: string, ...arguments_: string[]): Promise<void> {
-  await exec(
+export async function runEvaluationFixtureGitV1(
+  repositoryPath: string,
+  ...arguments_: string[]
+): Promise<string> {
+  const { stdout } = await exec(
     "git",
     [
       "-c",
@@ -75,8 +78,10 @@ async function git(repositoryPath: string, ...arguments_: string[]): Promise<voi
     ],
     {
       env: FIXTURE_GIT_ENV,
+      encoding: "utf8",
     },
   );
+  return stdout;
 }
 
 function assertOracleSeparated(testCase: EvaluationCaseV1): void {
@@ -181,15 +186,20 @@ export async function prepareEvaluationCaseV1(
     throw new Error(`Evaluation case ${testCase.id} must contain baseline content.`);
   }
 
-  await git(repositoryPath, "init", "--initial-branch=main");
-  await git(repositoryPath, "config", "user.name", "Evaluation Fixture");
-  await git(repositoryPath, "config", "user.email", "fixture@example.invalid");
-  await git(repositoryPath, "config", "commit.gpgsign", "false");
+  await runEvaluationFixtureGitV1(repositoryPath, "init", "--initial-branch=main");
+  await runEvaluationFixtureGitV1(repositoryPath, "config", "user.name", "Evaluation Fixture");
+  await runEvaluationFixtureGitV1(
+    repositoryPath,
+    "config",
+    "user.email",
+    "fixture@example.invalid",
+  );
+  await runEvaluationFixtureGitV1(repositoryPath, "config", "commit.gpgsign", "false");
   for (const file of testCase.repository.files) {
     await materializeFile(repositoryPath, file, file.base);
   }
-  await git(repositoryPath, "add", ".");
-  await git(repositoryPath, "commit", "-m", "Fixture baseline");
+  await runEvaluationFixtureGitV1(repositoryPath, "add", ".");
+  await runEvaluationFixtureGitV1(repositoryPath, "commit", "-m", "Fixture baseline");
   for (const file of testCase.repository.files) {
     await materializeFile(repositoryPath, file, file.head);
   }
