@@ -6,6 +6,7 @@ import {
   type AuthorPacketV1,
   assembleFindingVerificationV3,
   assertFindingVerificationScopeV3,
+  type DigestV1,
   FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
   FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
   type FinalReviewReportV1,
@@ -26,6 +27,7 @@ import {
   type ReviewUnitPlanV1,
   ReviewUnitPlanV1Schema,
   type RunRecordEventPayloadV1,
+  type RunRecordEventV1,
   resolveSnapshotSourceContentV1,
   sha256Utf8,
   verifyReviewUnitPlanIdentityV1,
@@ -2502,6 +2504,488 @@ async function writeReportMetadataV1(
  * Explicitly retries only a final call that received a definite provider 429.
  * The persisted blind assessment and exact run configuration are reused.
  */
+/**
+ * Refuses a resume whose persisted run would answer a different question than this invocation.
+ *
+ * The prompt and schema names pin the protocol the first call was made under, and the config
+ * triple pins what it was permitted to spend; a resume reuses the persisted preliminary and
+ * verification verbatim, so any drift here would splice two incompatible runs together.
+ */
+function assertResumeProtocolV1(
+  started: Extract<RunRecordEventV1, { type: "RUN_STARTED" }>,
+  packet: InspectedSnapshotPacket,
+  config: ReviewRunConfigV3,
+  expectedConfigDigest: DigestV1,
+): void {
+  if (
+    started.promptVersion !==
+      (packet.guidanceGraph
+        ? STANDARDS_GUIDANCE_POLICY_VERSION_V1
+        : "standards" in packet.canonicalInputs
+          ? STANDARDS_POLICY_VERSION
+          : REVIEW_PROMPT_VERSION_V1) ||
+    JSON.stringify(started.guidanceGraphDigest) !== JSON.stringify(packet.guidanceGraphDigest) ||
+    started.finalSchema !==
+      ("standards" in packet.canonicalInputs
+        ? "standards_candidate_v3"
+        : "final_review_candidate_v3") ||
+    started.findingVerificationSchema !== "finding_verification_candidate_v3" ||
+    started.findingVerificationPromptVersion !== FINDING_VERIFICATION_POLICY_VERSION_V3
+  ) {
+    throw new Error(
+      "The persisted run uses an incompatible final response protocol; start a new review.",
+    );
+  }
+  if (
+    started.configId !== config.configId ||
+    JSON.stringify(started.configDigest) !== JSON.stringify(expectedConfigDigest) ||
+    JSON.stringify(started.requestedModels) !== JSON.stringify(permittedModelsV1(config))
+  ) {
+    throw new Error("The resume configuration must exactly match the original review run.");
+  }
+}
+
+/**
+ * Re-derives the brief and plan from the frozen packet and requires the persisted copies to match
+ * byte for byte.
+ *
+ * Reading them back is not enough: the resume reuses a preliminary assessment that was written
+ * against these exact inputs, so an identical-looking rebuild is the only evidence that the packet
+ * on disk still means what it meant when that assessment was produced.
+ */
+async function verifyPersistedReviewInputsV1(
+  packetPath: string,
+  paths: ReviewOutputPathsV1,
+  config: ReviewRunConfigV3,
+  packet: InspectedSnapshotPacket,
+  started: Extract<RunRecordEventV1, { type: "RUN_STARTED" }>,
+  guidanceRepositoryPath: string | undefined,
+): Promise<{ brief: ReviewBrief; plan: ReviewUnitPlanV1 }> {
+  const briefValue = await readStrictJsonFileV1(paths.briefPath, {
+    maxBytes: MAX_PERSISTED_REVIEW_JSON_BYTES_V1,
+    source: "persisted neutral review brief",
+  });
+  if (!verifyReviewBriefIdentity(briefValue)) {
+    throw new Error("The persisted neutral review brief identity is invalid.");
+  }
+  const brief = ReviewBriefSchema.parse(briefValue);
+  const rebuiltBrief = await buildReviewBrief(
+    packetPath,
+    config.budgets.maxInitialEvidenceBytes,
+    guidanceRepositoryPath,
+  );
+  if (
+    JSON.stringify(brief) !== JSON.stringify(rebuiltBrief) ||
+    JSON.stringify(started.snapshotDigest) !==
+      JSON.stringify(brief.snapshotManifest.snapshotDigest) ||
+    JSON.stringify(started.briefDigest) !== JSON.stringify(brief.briefDigest)
+  ) {
+    throw new Error("The persisted final-stage inputs no longer match the frozen packet.");
+  }
+
+  const planValue = await readStrictJsonFileV1(paths.planPath, {
+    maxBytes: MAX_PERSISTED_REVIEW_JSON_BYTES_V1,
+    source: "persisted review unit plan",
+  });
+  if (!verifyReviewUnitPlanIdentityV1(planValue)) {
+    throw new Error("The persisted review unit plan identity is invalid.");
+  }
+  const plan = ReviewUnitPlanV1Schema.parse(planValue);
+  const rebuiltPlan = planReviewUnitsV1(brief, packet.contextMap, {
+    policyVersion: REVIEW_UNIT_POLICY_VERSION_V1,
+    maxSupportingBytesPerUnit: config.budgets.maxInitialEvidenceBytes,
+  });
+  if (
+    JSON.stringify(plan) !== JSON.stringify(rebuiltPlan) ||
+    JSON.stringify(started.contextMapDigest) !==
+      JSON.stringify(packet.contextMap.contextMapDigest) ||
+    JSON.stringify(started.planDigest) !== JSON.stringify(plan.planDigest)
+  ) {
+    throw new Error("The persisted review unit plan no longer matches the frozen packet.");
+  }
+  return { brief, plan };
+}
+
+type ResumeShapeV1 = Extract<ReturnType<typeof evaluateResumeShapeV1>, { eligible: true }>["shape"];
+type StoredProviderResponseV1 = z.infer<typeof StoredProviderResponseV1Schema>;
+
+/**
+ * Reads the stored preliminary completions, in ledger order, and proves each is the response the
+ * run record says was accepted.
+ *
+ * A repaired preliminary leaves two artifacts, so the artifact name recorded at persistence must
+ * name the last of them; the per-response model and usage checks keep a hand-edited artifact from
+ * silently replacing what the provider actually returned.
+ */
+async function readVerifiedPreliminaryResponsesV1(
+  paths: ReviewOutputPathsV1,
+  config: ReviewRunConfigV3,
+  preliminarySucceededCalls: ResumeShapeV1["preliminarySucceededCalls"],
+  preliminaryPersisted: ResumeShapeV1["preliminaryPersisted"],
+): Promise<StoredProviderResponseV1[]> {
+  const providerPaths =
+    preliminarySucceededCalls.length === 2
+      ? [paths.preliminaryProviderPath, paths.preliminaryRepairProviderPath]
+      : [paths.preliminaryProviderPath];
+  if (preliminaryPersisted?.responseArtifact !== (providerPaths.at(-1)?.split("/").at(-1) ?? "")) {
+    throw new Error("The persisted preliminary response artifact is inconsistent with the ledger.");
+  }
+  const responses = await Promise.all(
+    providerPaths.map(async (path, index) =>
+      StoredProviderResponseV1Schema.parse(
+        await readStrictJsonFileV1(path, {
+          maxBytes: MAX_STORED_PROVIDER_RESPONSE_BYTES_V1,
+          source: `stored preliminary provider response ${index + 1}`,
+        }),
+      ),
+    ),
+  );
+  responses.forEach((response, index) => {
+    const succeeded = preliminarySucceededCalls[index];
+    if (
+      response.model !== succeeded?.returnedModel ||
+      (response.model !== null && !permittedModelsV1(config).includes(response.model)) ||
+      JSON.stringify(succeeded?.usage) !== JSON.stringify(response.usage)
+    ) {
+      throw new Error(
+        "A persisted preliminary response does not match the requested model or ledger.",
+      );
+    }
+  });
+  return responses;
+}
+
+/**
+ * Returns the stored finding-verification completion, or undefined when the stage was resolved
+ * locally.
+ *
+ * A preliminary with nothing adverse to check never calls the provider, so the two shapes are
+ * mutually exclusive and each is proven against the ledger: a call must name its artifact and
+ * re-parse to exactly the persisted verification, and a local resolution must have left no
+ * artifact and no succeeded call behind.
+ */
+async function readVerifiedFindingVerificationResponseV1(
+  paths: ReviewOutputPathsV1,
+  config: ReviewRunConfigV3,
+  brief: ReviewBrief,
+  preliminary: ReviewPreliminary,
+  findingVerification: FindingVerificationV3 | null,
+  succeededCalls: ResumeShapeV1["findingVerificationSucceededCalls"],
+  persisted: ResumeShapeV1["findingVerificationPersisted"],
+): Promise<StoredProviderResponseV1 | undefined> {
+  const hasAdverseClaims =
+    preliminary.findings.length > 0 ||
+    preliminary.evidenceGaps.length > 0 ||
+    preliminary.limitations.length > 0;
+  if (!hasAdverseClaims) {
+    if (
+      persisted?.providerCall !== false ||
+      persisted.responseArtifact !== null ||
+      succeededCalls.length !== 0
+    ) {
+      throw new Error("An adverse-claim-free preliminary must use local empty verification.");
+    }
+    return undefined;
+  }
+
+  const succeeded = succeededCalls[0];
+  if (
+    persisted?.providerCall !== true ||
+    persisted.responseArtifact !== "finding-verification-provider-response.json" ||
+    succeeded === undefined ||
+    succeeded.attemptNumber !== persisted.acceptedAttemptNumber
+  ) {
+    throw new Error("The persisted finding verification is inconsistent with the ledger.");
+  }
+  const response = StoredProviderResponseV1Schema.parse(
+    await readStrictJsonFileV1(paths.findingVerificationProviderPath, {
+      maxBytes: MAX_STORED_PROVIDER_RESPONSE_BYTES_V1,
+      source: "stored finding verification provider response",
+    }),
+  );
+  if (
+    response.model !== succeeded.returnedModel ||
+    (response.model !== null && !permittedModelsV1(config).includes(response.model)) ||
+    JSON.stringify(response.usage) !== JSON.stringify(succeeded.usage) ||
+    JSON.stringify(
+      parseFindingVerificationCandidate(
+        parseStrictJsonV1(response.rawContent, {
+          maxBytes: MAX_STORED_PROVIDER_RESPONSE_BYTES_V1,
+          source: "stored finding verification raw completion",
+        }),
+        preliminary,
+        brief,
+      ),
+    ) !== JSON.stringify(findingVerification)
+  ) {
+    throw new Error("The persisted finding-verification response is invalid.");
+  }
+  return response;
+}
+
+/**
+ * Reconstructs the input-token reservation each preliminary call was charged against.
+ *
+ * A repaired preliminary billed two calls whose second request this invocation never saw, so the
+ * repair request is rebuilt from the rejected artifact and its persisted validation error and
+ * matched against the input digest the run record stored. Without that match the resume would
+ * charge the ledger for a request nobody can prove was made.
+ */
+function replayPreliminaryInputReservationsV1(
+  config: ReviewRunConfigV3,
+  brief: ReviewBrief,
+  events: readonly RunRecordEventV1[],
+  startedCalls: ResumeShapeV1["startedCalls"],
+  acceptedAttemptNumber: ResumeShapeV1["acceptedAttemptNumber"],
+  blindMessages: ReviewMessageV1[],
+  preliminaryResponseSchema: unknown,
+  preliminaryProviders: readonly StoredProviderResponseV1[],
+): number[] {
+  const reservations = [conservativeInputTokenUpperBound(blindMessages, preliminaryResponseSchema)];
+  if (preliminaryProviders.length !== 2) return reservations;
+
+  const rejected = events.find((event) => event.type === "PRELIMINARY_CANDIDATE_REJECTED");
+  if (typeof rejected?.validationError !== "string") {
+    throw new Error("The preliminary repair is missing its persisted validation error.");
+  }
+  const rejectedProvider = preliminaryProviders[0];
+  if (rejectedProvider === undefined) {
+    throw new Error("The rejected preliminary response artifact is unavailable.");
+  }
+  const repairMessages = preliminaryRepairMessagesV1(
+    blindMessages,
+    rejectedProvider.rawContent,
+    rejected.validationError,
+    transmittedLineEvidenceV1(brief),
+  );
+  const repairRequest = {
+    stage: "PRELIMINARY" as const,
+    models: [rejectedProvider.model ?? config.model],
+    maxOutputTokens: config.budgets.maxOutputTokensPerCall,
+    timeoutMs: config.budgets.timeoutMs,
+    messages: repairMessages,
+    responseSchema: {
+      name: isStandardsBrief(brief) ? "standards_preliminary_v2" : "preliminary_assessment_v1",
+      schema: preliminaryResponseSchema,
+    },
+  };
+  const repairStarted = startedCalls.find(
+    (event) => event.stage === "PRELIMINARY" && event.attemptNumber === acceptedAttemptNumber,
+  );
+  if (
+    JSON.stringify(repairStarted?.inputDigest) !==
+    JSON.stringify(sha256Utf8(JSON.stringify(repairRequest)))
+  ) {
+    throw new Error("The persisted preliminary repair does not match its input digest.");
+  }
+  reservations.push(conservativeInputTokenUpperBound(repairMessages, preliminaryResponseSchema));
+  return reservations;
+}
+
+/**
+ * Rebuilds the finding-verification request to confirm the persisted call, and returns what it
+ * spent.
+ *
+ * Reservation rather than reported usage is the fallback for call tokens: a provider that omitted
+ * usage must not make the resume look cheaper than the ceiling the original call was admitted
+ * under. A locally resolved stage spent nothing and reports zero.
+ */
+function replayFindingVerificationSpendV1(
+  config: ReviewRunConfigV3,
+  brief: ReviewBrief,
+  preliminary: ReviewPreliminary,
+  blindEvidence: unknown,
+  startedCalls: ResumeShapeV1["startedCalls"],
+  succeededCalls: ResumeShapeV1["findingVerificationSucceededCalls"],
+  provider: StoredProviderResponseV1 | undefined,
+  callReservation: number,
+): { inputTokens: number; callTokens: number } {
+  if (!provider) return { inputTokens: 0, callTokens: 0 };
+
+  const constrained = constrainFindingVerificationCandidateSchemaV3(
+    FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
+    preliminary.findings.length,
+    preliminary.evidenceGaps.length + preliminary.limitations.length,
+    {
+      snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
+      briefDigest: brief.briefDigest.value,
+    },
+  );
+  const request = {
+    stage: "FINDING_VERIFICATION" as const,
+    models: permittedModelsV1(config),
+    maxOutputTokens: config.budgets.maxOutputTokensPerCall,
+    timeoutMs: config.budgets.timeoutMs,
+    messages: findingVerificationMessagesV3(blindEvidence, preliminary),
+    responseSchema: {
+      name: "finding_verification_candidate_v3",
+      schema: constrained.schema,
+    },
+  };
+  const succeeded = succeededCalls[0];
+  const started = startedCalls.find(
+    (event) =>
+      event.stage === "FINDING_VERIFICATION" && event.attemptNumber === succeeded?.attemptNumber,
+  );
+  if (
+    started?.promptVersion !== FINDING_VERIFICATION_POLICY_VERSION_V3 ||
+    JSON.stringify(started.inputDigest) !== JSON.stringify(sha256Utf8(JSON.stringify(request)))
+  ) {
+    throw new Error("The persisted finding-verification request is invalid.");
+  }
+  return {
+    inputTokens: callReservation - config.budgets.maxOutputTokensPerCall,
+    callTokens: chargedTokens({ usage: provider.usage }) ?? callReservation,
+  };
+}
+
+interface ResumeSpendInputsV1 {
+  preliminaryProviders: readonly StoredProviderResponseV1[];
+  preliminaryInputReservations: readonly number[];
+  findingVerificationProvider: StoredProviderResponseV1 | undefined;
+  findingVerificationInputTokens: number;
+  findingVerificationCallTokens: number;
+  finalCallReservation: number;
+}
+
+/**
+ * Rebuilds the run's spend so far so the resumed final call is admitted against the run's ceiling
+ * rather than a fresh one.
+ *
+ * The ceiling covers the whole review, not one invocation of the CLI, so every earlier call is
+ * re-charged here: the persisted preliminaries, the finding verification if it called out, each
+ * retry's recorded charge, and the failed final attempt at its reserved price ceiling. A call that
+ * reported no usage falls back to its reservation, which is why a resume can never look cheaper
+ * than the run it continues.
+ */
+function replayRunSpendV1(
+  config: ReviewRunConfigV3,
+  events: readonly RunRecordEventV1[],
+  spend: ResumeSpendInputsV1,
+): { costLedger: RunCostLedgerV1; firstCallTokens: number } {
+  const {
+    preliminaryProviders,
+    preliminaryInputReservations,
+    findingVerificationProvider,
+    findingVerificationInputTokens,
+    findingVerificationCallTokens,
+    finalCallReservation,
+  } = spend;
+  const failedFinalInputTokens = finalCallReservation - config.budgets.maxOutputTokensPerCall;
+  const preliminaryCallTokens = preliminaryProviders.reduce(
+    (total, response, index) =>
+      total +
+      (chargedTokens({ usage: response.usage }) ??
+        (preliminaryInputReservations[index] as number) + config.budgets.maxOutputTokensPerCall),
+    0,
+  );
+
+  let chargedFailedTokens = 0;
+  let chargedFailedCostUsd = 0;
+  for (const retry of events.filter((event) => event.type === "PROVIDER_RETRY_REQUESTED")) {
+    if (
+      !Number.isSafeInteger(retry.chargedFailedTokens) ||
+      (retry.chargedFailedTokens as number) < 0 ||
+      typeof retry.chargedFailedCostUsd !== "number" ||
+      !Number.isFinite(retry.chargedFailedCostUsd) ||
+      retry.chargedFailedCostUsd < 0
+    ) {
+      throw new Error("The persisted provider-retry charge is invalid.");
+    }
+    chargedFailedTokens += retry.chargedFailedTokens as number;
+    chargedFailedCostUsd += retry.chargedFailedCostUsd;
+  }
+
+  const costLedger = new RunCostLedgerV1(config.budgets.maxTotalCostUsd);
+  preliminaryProviders.forEach((response, index) => {
+    costLedger.record(
+      callCostUsd(
+        { ...response, value: null },
+        config,
+        preliminaryInputReservations[index] as number,
+      ),
+    );
+  });
+  if (findingVerificationProvider) {
+    costLedger.record(
+      callCostUsd(
+        { ...findingVerificationProvider, value: null },
+        config,
+        findingVerificationInputTokens,
+      ),
+    );
+  }
+  costLedger.record(chargedFailedCostUsd);
+  costLedger.record(
+    priceCeilingCostUsd(failedFinalInputTokens, config.budgets.maxOutputTokensPerCall, config),
+  );
+  return {
+    costLedger,
+    firstCallTokens:
+      preliminaryCallTokens +
+      findingVerificationCallTokens +
+      chargedFailedTokens +
+      // A deferred manual retry inherits conservative spend for its failed predecessor.
+      finalCallReservation,
+  };
+}
+
+/**
+ * Takes the one permitted final-stage resume, repairs a torn run record, and opens the new attempt.
+ *
+ * The claim file is written with O_EXCL first and deliberately: it is the only thing standing
+ * between two concurrent resumes and a double charge, so it must be won before any repair or event
+ * append. Tail recovery then re-reads the record and refuses if anything moved since inspection,
+ * because every gate above was decided against the bytes read at that time.
+ */
+async function claimFinalResumeV1(
+  paths: ReviewOutputPathsV1,
+  runRecord: ReadRunRecordResultV1,
+  expectedConfigDigest: DigestV1,
+  failedAttemptNumber: number,
+  resumedAttemptNumber: number,
+): Promise<void> {
+  try {
+    await writeFile(
+      paths.finalResumeClaimPath,
+      jsonDocument({
+        schemaVersion: 1,
+        stage: "FINAL",
+        failedAttemptNumber,
+        claimedAttemptNumber: resumedAttemptNumber,
+        configDigest: expectedConfigDigest,
+      }),
+      { flag: "wx", mode: 0o600 },
+    );
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw new Error("The one permitted final-stage resume has already been claimed.");
+    }
+    throw error;
+  }
+  if (runRecord.tailBytes > 0) {
+    const confirmed = await readRunEventsV1(paths.runRecordPath);
+    if (
+      confirmed.completeBytes !== runRecord.completeBytes ||
+      confirmed.tailBytes !== runRecord.tailBytes ||
+      JSON.stringify(confirmed.events) !== JSON.stringify(runRecord.events)
+    ) {
+      throw new Error("The review run record changed after it was inspected; refusing recovery.");
+    }
+    await recoverRunRecordTailV1(paths.runRecordPath, runRecord);
+    await appendRunEvent(paths.runRecordPath, {
+      type: "RUN_RECORD_TAIL_RECOVERED",
+      discardedBytes: runRecord.tailBytes,
+    });
+  }
+  await appendRunEvent(paths.runRecordPath, {
+    type: "RUN_RESUMED",
+    stage: "FINAL",
+    failedAttemptNumber,
+    nextAttemptNumber: resumedAttemptNumber,
+  });
+}
+
 export async function resumeFinalReview(
   packetPath: string,
   configValue: unknown,
@@ -2523,15 +3007,9 @@ export async function resumeFinalReview(
   const paths = reviewOutputPathsV1(packetPath);
   const {
     reviewDirectory,
-    briefPath,
-    planPath,
     preliminaryPath,
     findingVerificationPath,
-    findingVerificationProviderPath,
-    preliminaryProviderPath,
-    preliminaryRepairProviderPath,
     finalProviderPath,
-    finalResumeClaimPath,
     finalPath,
     markdownPath,
     reportMetadataPath,
@@ -2555,110 +3033,24 @@ export async function resumeFinalReview(
     finalStarted,
     acceptedAttemptNumber,
   } = eligibility.shape;
-  if (
-    started.promptVersion !==
-      (packet.guidanceGraph
-        ? STANDARDS_GUIDANCE_POLICY_VERSION_V1
-        : "standards" in packet.canonicalInputs
-          ? STANDARDS_POLICY_VERSION
-          : REVIEW_PROMPT_VERSION_V1) ||
-    JSON.stringify(started.guidanceGraphDigest) !== JSON.stringify(packet.guidanceGraphDigest) ||
-    started.finalSchema !==
-      ("standards" in packet.canonicalInputs
-        ? "standards_candidate_v3"
-        : "final_review_candidate_v3") ||
-    started.findingVerificationSchema !== "finding_verification_candidate_v3" ||
-    started.findingVerificationPromptVersion !== FINDING_VERIFICATION_POLICY_VERSION_V3
-  ) {
-    throw new Error(
-      "The persisted run uses an incompatible final response protocol; start a new review.",
-    );
-  }
-
   const expectedConfigDigest = sha256Utf8(JSON.stringify(config));
-  if (
-    started.configId !== config.configId ||
-    JSON.stringify(started.configDigest) !== JSON.stringify(expectedConfigDigest) ||
-    JSON.stringify(started.requestedModels) !== JSON.stringify(permittedModelsV1(config))
-  ) {
-    throw new Error("The resume configuration must exactly match the original review run.");
-  }
+  assertResumeProtocolV1(started, packet, config, expectedConfigDigest);
 
-  const briefValue = await readStrictJsonFileV1(briefPath, {
-    maxBytes: MAX_PERSISTED_REVIEW_JSON_BYTES_V1,
-    source: "persisted neutral review brief",
-  });
-  if (!verifyReviewBriefIdentity(briefValue)) {
-    throw new Error("The persisted neutral review brief identity is invalid.");
-  }
-  const brief = ReviewBriefSchema.parse(briefValue);
-  const rebuiltBrief = await buildReviewBrief(
+  const { brief, plan } = await verifyPersistedReviewInputsV1(
     packetPath,
-    config.budgets.maxInitialEvidenceBytes,
+    paths,
+    config,
+    packet,
+    started,
     guidanceRepositoryPath,
   );
-  if (
-    JSON.stringify(brief) !== JSON.stringify(rebuiltBrief) ||
-    JSON.stringify(started?.snapshotDigest) !==
-      JSON.stringify(brief.snapshotManifest.snapshotDigest) ||
-    JSON.stringify(started?.briefDigest) !== JSON.stringify(brief.briefDigest)
-  ) {
-    throw new Error("The persisted final-stage inputs no longer match the frozen packet.");
-  }
-  const planValue = await readStrictJsonFileV1(planPath, {
-    maxBytes: MAX_PERSISTED_REVIEW_JSON_BYTES_V1,
-    source: "persisted review unit plan",
-  });
-  if (!verifyReviewUnitPlanIdentityV1(planValue)) {
-    throw new Error("The persisted review unit plan identity is invalid.");
-  }
-  const plan = ReviewUnitPlanV1Schema.parse(planValue);
-  const rebuiltPlan = planReviewUnitsV1(brief, packet.contextMap, {
-    policyVersion: REVIEW_UNIT_POLICY_VERSION_V1,
-    maxSupportingBytesPerUnit: config.budgets.maxInitialEvidenceBytes,
-  });
-  if (
-    JSON.stringify(plan) !== JSON.stringify(rebuiltPlan) ||
-    JSON.stringify(started?.contextMapDigest) !==
-      JSON.stringify(packet.contextMap.contextMapDigest) ||
-    JSON.stringify(started?.planDigest) !== JSON.stringify(plan.planDigest)
-  ) {
-    throw new Error("The persisted review unit plan no longer matches the frozen packet.");
-  }
 
-  const preliminaryProviderPaths =
-    preliminarySucceededCalls.length === 2
-      ? [preliminaryProviderPath, preliminaryRepairProviderPath]
-      : [preliminaryProviderPath];
-  if (
-    preliminaryPersisted?.responseArtifact !==
-    (preliminaryProviderPaths.at(-1)?.split("/").at(-1) ?? "")
-  ) {
-    throw new Error("The persisted preliminary response artifact is inconsistent with the ledger.");
-  }
-  const preliminaryProviders = await Promise.all(
-    preliminaryProviderPaths.map(async (path, index) =>
-      StoredProviderResponseV1Schema.parse(
-        await readStrictJsonFileV1(path, {
-          maxBytes: MAX_STORED_PROVIDER_RESPONSE_BYTES_V1,
-          source: `stored preliminary provider response ${index + 1}`,
-        }),
-      ),
-    ),
+  const preliminaryProviders = await readVerifiedPreliminaryResponsesV1(
+    paths,
+    config,
+    preliminarySucceededCalls,
+    preliminaryPersisted,
   );
-  preliminaryProviders.forEach((providerResponse, index) => {
-    const succeeded = preliminarySucceededCalls[index];
-    if (
-      providerResponse.model !== succeeded?.returnedModel ||
-      (providerResponse.model !== null &&
-        !permittedModelsV1(config).includes(providerResponse.model)) ||
-      JSON.stringify(succeeded?.usage) !== JSON.stringify(providerResponse.usage)
-    ) {
-      throw new Error(
-        "A persisted preliminary response does not match the requested model or ledger.",
-      );
-    }
-  });
   const preliminaryProvider = preliminaryProviders.at(-1);
   if (preliminaryProvider === undefined) {
     throw new Error("The accepted preliminary provider response is unavailable.");
@@ -2704,53 +3096,15 @@ export async function resumeFinalReview(
     throw new Error("The persisted preliminary or author-stage identity is invalid.");
   }
 
-  let findingVerificationProvider: z.infer<typeof StoredProviderResponseV1Schema> | undefined;
-  if (
-    preliminary.findings.length > 0 ||
-    preliminary.evidenceGaps.length > 0 ||
-    preliminary.limitations.length > 0
-  ) {
-    const succeeded = findingVerificationSucceededCalls[0];
-    if (
-      findingVerificationPersisted?.providerCall !== true ||
-      findingVerificationPersisted.responseArtifact !==
-        "finding-verification-provider-response.json" ||
-      succeeded === undefined ||
-      succeeded.attemptNumber !== findingVerificationPersisted.acceptedAttemptNumber
-    ) {
-      throw new Error("The persisted finding verification is inconsistent with the ledger.");
-    }
-    findingVerificationProvider = StoredProviderResponseV1Schema.parse(
-      await readStrictJsonFileV1(findingVerificationProviderPath, {
-        maxBytes: MAX_STORED_PROVIDER_RESPONSE_BYTES_V1,
-        source: "stored finding verification provider response",
-      }),
-    );
-    if (
-      findingVerificationProvider.model !== succeeded.returnedModel ||
-      (findingVerificationProvider.model !== null &&
-        !permittedModelsV1(config).includes(findingVerificationProvider.model)) ||
-      JSON.stringify(findingVerificationProvider.usage) !== JSON.stringify(succeeded.usage) ||
-      JSON.stringify(
-        parseFindingVerificationCandidate(
-          parseStrictJsonV1(findingVerificationProvider.rawContent, {
-            maxBytes: MAX_STORED_PROVIDER_RESPONSE_BYTES_V1,
-            source: "stored finding verification raw completion",
-          }),
-          preliminary,
-          brief,
-        ),
-      ) !== JSON.stringify(findingVerification)
-    ) {
-      throw new Error("The persisted finding-verification response is invalid.");
-    }
-  } else if (
-    findingVerificationPersisted?.providerCall !== false ||
-    findingVerificationPersisted.responseArtifact !== null ||
-    findingVerificationSucceededCalls.length !== 0
-  ) {
-    throw new Error("An adverse-claim-free preliminary must use local empty verification.");
-  }
+  const findingVerificationProvider = await readVerifiedFindingVerificationResponseV1(
+    paths,
+    config,
+    brief,
+    preliminary,
+    findingVerification,
+    findingVerificationSucceededCalls,
+    findingVerificationPersisted,
+  );
 
   await Promise.all([
     assertFileAbsent(finalProviderPath),
@@ -2759,264 +3113,64 @@ export async function resumeFinalReview(
     assertFileAbsent(reportMetadataPath),
   ]);
 
-  const blindEvidence = blindReviewEvidence(brief, plan, packet.contextMap);
-  const blindMessages: ReviewMessageV1[] = [
-    {
-      role: "system",
-      content: systemPolicyForBrief(brief),
-    },
-    {
-      role: "user",
-      content: JSON.stringify(blindEvidence),
-    },
-  ];
-  const authorMessage = authorReleaseMessageV1(brief, releasedAuthorContext);
+  // Identical inputs must produce the identical call shape, so a resume derives its messages,
+  // constrained schemas and reservations from the same builder the original run used rather than
+  // from a second copy of it. The budget assertions inside cannot newly fire: the config, brief
+  // and plan were each proven above to match the run that already passed them.
+  const {
+    blindEvidence,
+    blindMessages,
+    authorMessage,
+    preliminaryResponseSchema,
+    finalConstrained,
+    findingVerificationCallReservation,
+    finalCallReservation,
+  } = prepareReviewCalls(brief, releasedAuthorContext, config, plan, packet.contextMap);
   const finalMessages: ReviewMessageV1[] = [
     ...blindMessages,
     { role: "assistant", content: preliminaryProvider.rawContent },
     { role: "user", content: findingVerificationEnvelope(findingVerification) },
     { role: "user", content: authorMessage },
   ];
-  const evidencePaths = transmittedEvidencePathsV1(brief);
-  const changedPaths = brief.snapshotManifest.paths.map((entry) => entry.path).sort();
-  const canonicalInputIds = brief.snapshotManifest.canonicalInputs.map((entry) => entry.id).sort();
-  const finalConstrained = constrainResponseSchemaV1(
-    isStandardsBrief(brief)
-      ? STANDARDS_CANDIDATE_V3_JSON_SCHEMA
-      : FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
-    {
-      evidencePaths,
-      changedPaths,
-      canonicalInputIds,
-      identities: {
-        snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
-        briefDigest: brief.briefDigest.value,
-      },
-      authorVerificationClaims: releasedAuthorContext.claimedVerification,
-      ...(isStandardsBrief(brief)
-        ? { ruleIds: selectedRules(brief.canonicalInputs).map((rule) => rule.id) }
-        : {}),
-    },
-  );
-  const preliminaryConstrained = constrainResponseSchemaV1(
-    isStandardsBrief(brief)
-      ? STANDARDS_PRELIMINARY_V2_JSON_SCHEMA
-      : PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
-    {
-      evidencePaths,
-      changedPaths,
-      canonicalInputIds,
-      identities: {
-        snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
-        briefDigest: brief.briefDigest.value,
-      },
-      authorVerificationClaims: releasedAuthorContext.claimedVerification,
-      ...(isStandardsBrief(brief)
-        ? { ruleIds: selectedRules(brief.canonicalInputs).map((rule) => rule.id) }
-        : {}),
-    },
-  );
-  const preliminaryResponseSchema = preliminaryConstrained.schema;
-  const findingVerificationReservationSchema = constrainFindingVerificationCandidateSchemaV3(
-    FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
-    findingVerificationReservationCountV1(),
-    findingVerificationConcernReservationCountV1(),
-    {
-      snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
-      briefDigest: brief.briefDigest.value,
-    },
-  ).schema;
-  const { findingVerificationCallReservation, finalCallReservation } =
-    requiredReviewTokenReservations(
-      blindMessages,
-      blindEvidence,
-      authorMessage,
-      config.budgets.maxOutputTokensPerCall,
-      preliminaryResponseSchema,
-      findingVerificationReservationSchema,
-      finalConstrained.schema,
-    );
-  const preliminaryInputTokens = conservativeInputTokenUpperBound(
+  const preliminaryInputReservations = replayPreliminaryInputReservationsV1(
+    config,
+    brief,
+    events,
+    startedCalls,
+    acceptedAttemptNumber,
     blindMessages,
     preliminaryResponseSchema,
+    preliminaryProviders,
   );
-  const preliminaryInputReservations = [preliminaryInputTokens];
-  if (preliminaryProviders.length === 2) {
-    const rejected = events.find((event) => event.type === "PRELIMINARY_CANDIDATE_REJECTED");
-    if (typeof rejected?.validationError !== "string") {
-      throw new Error("The preliminary repair is missing its persisted validation error.");
-    }
-    const rejectedProvider = preliminaryProviders[0];
-    if (rejectedProvider === undefined) {
-      throw new Error("The rejected preliminary response artifact is unavailable.");
-    }
-    const repairMessages = preliminaryRepairMessagesV1(
-      blindMessages,
-      rejectedProvider.rawContent,
-      rejected.validationError,
-      transmittedLineEvidenceV1(brief),
+  const { inputTokens: findingVerificationInputTokens, callTokens: findingVerificationCallTokens } =
+    replayFindingVerificationSpendV1(
+      config,
+      brief,
+      preliminary,
+      blindEvidence,
+      startedCalls,
+      findingVerificationSucceededCalls,
+      findingVerificationProvider,
+      findingVerificationCallReservation,
     );
-    const repairRequest = {
-      stage: "PRELIMINARY" as const,
-      models: [rejectedProvider.model ?? config.model],
-      maxOutputTokens: config.budgets.maxOutputTokensPerCall,
-      timeoutMs: config.budgets.timeoutMs,
-      messages: repairMessages,
-      responseSchema: {
-        name: isStandardsBrief(brief) ? "standards_preliminary_v2" : "preliminary_assessment_v1",
-        schema: preliminaryResponseSchema,
-      },
-    };
-    const repairStarted = startedCalls.find(
-      (event) => event.stage === "PRELIMINARY" && event.attemptNumber === acceptedAttemptNumber,
-    );
-    if (
-      JSON.stringify(repairStarted?.inputDigest) !==
-      JSON.stringify(sha256Utf8(JSON.stringify(repairRequest)))
-    ) {
-      throw new Error("The persisted preliminary repair does not match its input digest.");
-    }
-    preliminaryInputReservations.push(
-      conservativeInputTokenUpperBound(repairMessages, preliminaryResponseSchema),
-    );
-  }
-  let findingVerificationInputTokens = 0;
-  let findingVerificationCallTokens = 0;
-  if (findingVerificationProvider) {
-    const findingVerificationConstrained = constrainFindingVerificationCandidateSchemaV3(
-      FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
-      preliminary.findings.length,
-      preliminary.evidenceGaps.length + preliminary.limitations.length,
-      {
-        snapshotDigest: brief.snapshotManifest.snapshotDigest.value,
-        briefDigest: brief.briefDigest.value,
-      },
-    );
-    const findingVerificationMessages = findingVerificationMessagesV3(blindEvidence, preliminary);
-    findingVerificationInputTokens =
-      findingVerificationCallReservation - config.budgets.maxOutputTokensPerCall;
-    const findingVerificationRequest = {
-      stage: "FINDING_VERIFICATION" as const,
-      models: permittedModelsV1(config),
-      maxOutputTokens: config.budgets.maxOutputTokensPerCall,
-      timeoutMs: config.budgets.timeoutMs,
-      messages: findingVerificationMessages,
-      responseSchema: {
-        name: "finding_verification_candidate_v3",
-        schema: findingVerificationConstrained.schema,
-      },
-    };
-    const succeeded = findingVerificationSucceededCalls[0];
-    const findingVerificationStarted = startedCalls.find(
-      (event) =>
-        event.stage === "FINDING_VERIFICATION" && event.attemptNumber === succeeded?.attemptNumber,
-    );
-    if (
-      findingVerificationStarted?.promptVersion !== FINDING_VERIFICATION_POLICY_VERSION_V3 ||
-      JSON.stringify(findingVerificationStarted.inputDigest) !==
-        JSON.stringify(sha256Utf8(JSON.stringify(findingVerificationRequest)))
-    ) {
-      throw new Error("The persisted finding-verification request is invalid.");
-    }
-    findingVerificationCallTokens =
-      chargedTokens({ usage: findingVerificationProvider.usage }) ??
-      findingVerificationCallReservation;
-  }
-  const failedFinalInputTokens = finalCallReservation - config.budgets.maxOutputTokensPerCall;
-  // A deferred manual retry inherits conservative spend for its failed predecessor.
-  const failedFinalTokens = finalCallReservation;
-  const preliminaryCallTokens = preliminaryProviders.reduce(
-    (total, providerResponse, index) =>
-      total +
-      (chargedTokens({ usage: providerResponse.usage }) ??
-        (preliminaryInputReservations[index] as number) + config.budgets.maxOutputTokensPerCall),
-    0,
-  );
-  const retryCharges = events.filter((event) => event.type === "PROVIDER_RETRY_REQUESTED");
-  let chargedFailedTokens = 0;
-  let chargedFailedCostUsd = 0;
-  for (const retry of retryCharges) {
-    if (
-      !Number.isSafeInteger(retry.chargedFailedTokens) ||
-      (retry.chargedFailedTokens as number) < 0 ||
-      typeof retry.chargedFailedCostUsd !== "number" ||
-      !Number.isFinite(retry.chargedFailedCostUsd) ||
-      retry.chargedFailedCostUsd < 0
-    ) {
-      throw new Error("The persisted provider-retry charge is invalid.");
-    }
-    chargedFailedTokens += retry.chargedFailedTokens as number;
-    chargedFailedCostUsd += retry.chargedFailedCostUsd;
-  }
-  const firstCallTokens =
-    preliminaryCallTokens + findingVerificationCallTokens + chargedFailedTokens + failedFinalTokens;
-  // A resume inherits the spend of the persisted preliminary call; the ceiling covers the run,
-  // not one invocation of the CLI.
-  const costLedger = new RunCostLedgerV1(config.budgets.maxTotalCostUsd);
-  preliminaryProviders.forEach((providerResponse, index) => {
-    costLedger.record(
-      callCostUsd(
-        { ...providerResponse, value: null },
-        config,
-        preliminaryInputReservations[index] as number,
-      ),
-    );
+  const { costLedger, firstCallTokens } = replayRunSpendV1(config, events, {
+    preliminaryProviders,
+    preliminaryInputReservations,
+    findingVerificationProvider,
+    findingVerificationInputTokens,
+    findingVerificationCallTokens,
+    finalCallReservation,
   });
-  if (findingVerificationProvider) {
-    costLedger.record(
-      callCostUsd(
-        { ...findingVerificationProvider, value: null },
-        config,
-        findingVerificationInputTokens,
-      ),
-    );
-  }
-  costLedger.record(chargedFailedCostUsd);
-  costLedger.record(
-    priceCeilingCostUsd(failedFinalInputTokens, config.budgets.maxOutputTokensPerCall, config),
-  );
   const failedFinalAttemptNumber = finalStarted.attemptNumber;
   const resumedAttemptNumber = failedFinalAttemptNumber + 1;
 
-  try {
-    await writeFile(
-      finalResumeClaimPath,
-      jsonDocument({
-        schemaVersion: 1,
-        stage: "FINAL",
-        failedAttemptNumber: failedFinalAttemptNumber,
-        claimedAttemptNumber: resumedAttemptNumber,
-        configDigest: expectedConfigDigest,
-      }),
-      { flag: "wx", mode: 0o600 },
-    );
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new Error("The one permitted final-stage resume has already been claimed.");
-    }
-    throw error;
-  }
-  if (runRecord.tailBytes > 0) {
-    const confirmed = await readRunEventsV1(runRecordPath);
-    if (
-      confirmed.completeBytes !== runRecord.completeBytes ||
-      confirmed.tailBytes !== runRecord.tailBytes ||
-      JSON.stringify(confirmed.events) !== JSON.stringify(runRecord.events)
-    ) {
-      throw new Error("The review run record changed after it was inspected; refusing recovery.");
-    }
-    await recoverRunRecordTailV1(runRecordPath, runRecord);
-    await appendRunEvent(runRecordPath, {
-      type: "RUN_RECORD_TAIL_RECOVERED",
-      discardedBytes: runRecord.tailBytes,
-    });
-  }
-  await appendRunEvent(runRecordPath, {
-    type: "RUN_RESUMED",
-    stage: "FINAL",
-    failedAttemptNumber: failedFinalAttemptNumber,
-    nextAttemptNumber: resumedAttemptNumber,
-  });
+  await claimFinalResumeV1(
+    paths,
+    runRecord,
+    expectedConfigDigest,
+    failedFinalAttemptNumber,
+    resumedAttemptNumber,
+  );
   try {
     const candidateReport = await completeFinalStageV1(
       packetPath,
