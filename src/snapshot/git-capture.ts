@@ -888,19 +888,146 @@ function isUnderExcludedPath(path: string, excludedPaths: ReadonlySet<string>): 
   return false;
 }
 
-async function collectState(
-  repositoryPath: string,
-  baseCommit: string,
-  headCommit: string,
-  captureWorkingTree: boolean,
-  includeUntracked: boolean,
-  maxFileBytes: number,
-  maxReferencedSourceBytes: number,
+type SnapshotPathEntryV1 = SnapshotManifestIdentityInputV1["paths"][number];
+
+/**
+ * Builds the manifest entry for one admitted change, enforcing which sides its change type
+ * requires.
+ *
+ * Each branch's guard is an invariant, not a degradation: by this point the path passed every
+ * exclusion gate and both reads succeeded, so a deletion without a before state or a rename
+ * without a previous path is a capture bug, and failing loudly is what keeps a silently smaller
+ * snapshot from being frozen and signed.
+ */
+function manifestPathEntryV1(
+  spec: ChangeSpec,
+  role: PathRoleV1,
+  before: CapturedSide | null,
+  after: CapturedSide | null,
+): SnapshotPathEntryV1 {
+  if (spec.changeType === "ADDED" || spec.changeType === "UNTRACKED") {
+    if (!after) {
+      throw new CaptureInvariantError("added path has no captured after state");
+    }
+    return {
+      path: spec.path,
+      role,
+      changeType: spec.changeType,
+      before: null,
+      after: after.content,
+    };
+  }
+  if (spec.changeType === "DELETED") {
+    if (!before) {
+      throw new CaptureInvariantError("deleted path has no captured before state");
+    }
+    return {
+      path: spec.path,
+      role,
+      changeType: "DELETED",
+      before: before.content,
+      after: null,
+    };
+  }
+  if (spec.changeType === "RENAMED" || spec.changeType === "COPIED") {
+    if (!before || !after || !spec.previousPath) {
+      throw new CaptureInvariantError("relocated path has incomplete captured states");
+    }
+    return {
+      path: spec.path,
+      role,
+      previousPath: spec.previousPath,
+      changeType: spec.changeType,
+      before: before.content,
+      after: after.content,
+    };
+  }
+  if (!before || !after) {
+    throw new CaptureInvariantError("modified path has incomplete captured states");
+  }
+  return {
+    path: spec.path,
+    role,
+    changeType: spec.changeType,
+    before: before.content,
+    after: after.content,
+  };
+}
+
+type SnapshotExclusionV1 = SnapshotManifestIdentityInputV1["exclusions"][number];
+
+/**
+ * Decides, from the path names alone, whether a change is excluded before anything is read.
+ *
+ * A relocation is judged on both of its names: a file moved out of an excluded directory was still
+ * excluded on the side it came from, and the exclusion names that side. Order is policy — the
+ * caller's own control-file policy outranks the built-in secret-filename list, which outranks
+ * caller-supplied patterns — so the reported reason is the strongest one that applies.
+ */
+function exclusionByPathNameV1(
+  spec: { path: string; previousPath?: string },
   excludedPaths: ReadonlySet<string>,
   excludedPatterns: readonly RegExp[],
-  roleOverrides: ReadonlyMap<string, PathRoleV1>,
-  explicitReferences: ReturnType<typeof selectedReferences>,
-): Promise<CollectedState> {
+): SnapshotExclusionV1 | undefined {
+  const relevantPaths = spec.previousPath ? [spec.previousPath, spec.path] : [spec.path];
+  const callerExcludedPath = relevantPaths.find((path) => isUnderExcludedPath(path, excludedPaths));
+  if (callerExcludedPath) {
+    return {
+      path: callerExcludedPath,
+      reason: "RUNNER_CONTROL",
+      detail: "Excluded by the caller control-file policy.",
+    };
+  }
+  const secretPath = relevantPaths.find(isSecretPathV1);
+  if (secretPath) {
+    return {
+      path: secretPath,
+      reason: "SECRET_POLICY",
+      detail: "Excluded by capture-v2 secret filename policy.",
+    };
+  }
+  const patternPath = relevantPaths.find((path) =>
+    excludedPatterns.some((pattern) => pattern.test(path)),
+  );
+  if (patternPath) {
+    return {
+      path: patternPath,
+      reason: "USER_EXCLUDED",
+      detail: "Excluded by a caller-supplied path pattern.",
+    };
+  }
+  return undefined;
+}
+
+/** Every input one capture pass reads; identical across the two passes that must agree. */
+interface CollectStateOptionsV1 {
+  repositoryPath: string;
+  baseCommit: string;
+  headCommit: string;
+  captureWorkingTree: boolean;
+  includeUntracked: boolean;
+  maxFileBytes: number;
+  maxReferencedSourceBytes: number;
+  excludedPaths: ReadonlySet<string>;
+  excludedPatterns: readonly RegExp[];
+  roleOverrides: ReadonlyMap<string, PathRoleV1>;
+  explicitReferences: ReturnType<typeof selectedReferences>;
+}
+
+async function collectState(options: CollectStateOptionsV1): Promise<CollectedState> {
+  const {
+    repositoryPath,
+    baseCommit,
+    headCommit,
+    captureWorkingTree,
+    includeUntracked,
+    maxFileBytes,
+    maxReferencedSourceBytes,
+    excludedPaths,
+    excludedPatterns,
+    roleOverrides,
+    explicitReferences,
+  } = options;
   const observedHeadCommit = captureWorkingTree
     ? await gitText(repositoryPath, ["rev-parse", "--verify", "HEAD^{commit}"])
     : headCommit;
@@ -973,36 +1100,9 @@ async function collectState(
     });
 
   for (const spec of specs) {
-    const relevantPaths = spec.previousPath ? [spec.previousPath, spec.path] : [spec.path];
-    const callerExcludedPath = relevantPaths.find((path) =>
-      isUnderExcludedPath(path, excludedPaths),
-    );
-    if (callerExcludedPath) {
-      exclusions.push({
-        path: callerExcludedPath,
-        reason: "RUNNER_CONTROL",
-        detail: "Excluded by the caller control-file policy.",
-      });
-      continue;
-    }
-    const secretPath = relevantPaths.find(isSecretPathV1);
-    if (secretPath) {
-      exclusions.push({
-        path: secretPath,
-        reason: "SECRET_POLICY",
-        detail: "Excluded by capture-v2 secret filename policy.",
-      });
-      continue;
-    }
-    const patternPath = relevantPaths.find((path) =>
-      excludedPatterns.some((pattern) => pattern.test(path)),
-    );
-    if (patternPath) {
-      exclusions.push({
-        path: patternPath,
-        reason: "USER_EXCLUDED",
-        detail: "Excluded by a caller-supplied path pattern.",
-      });
+    const nameExclusion = exclusionByPathNameV1(spec, excludedPaths, excludedPatterns);
+    if (nameExclusion) {
+      exclusions.push(nameExclusion);
       continue;
     }
     // Only the reads are guarded: a failure here is a genuine Git or filesystem error and becomes an
@@ -1126,68 +1226,17 @@ async function collectState(
         spec.changeType = "TYPE_CHANGED";
       }
     }
-    if (before) {
-      const digest = before.content.digest;
+    for (const side of [before, after]) {
+      if (!side) continue;
+      const digest = side.content.digest;
       if (!digest) {
-        throw new CaptureInvariantError("captured before state has no digest");
+        throw new CaptureInvariantError("captured state has no digest");
       }
-      blobs.set(digest.value, before.bytes);
+      blobs.set(digest.value, side.bytes);
     }
-    if (after) {
-      const digest = after.content.digest;
-      if (!digest) {
-        throw new CaptureInvariantError("captured after state has no digest");
-      }
-      blobs.set(digest.value, after.bytes);
-    }
-    if (spec.changeType === "ADDED" || spec.changeType === "UNTRACKED") {
-      if (!after) {
-        throw new CaptureInvariantError("added path has no captured after state");
-      }
-      paths.push({
-        path: spec.path,
-        role: declaredRole,
-        changeType: spec.changeType,
-        before: null,
-        after: after.content,
-      });
-      if (spec.changeType === "UNTRACKED") {
-        includedUntrackedPaths.push(spec.path);
-      }
-    } else if (spec.changeType === "DELETED") {
-      if (!before) {
-        throw new CaptureInvariantError("deleted path has no captured before state");
-      }
-      paths.push({
-        path: spec.path,
-        role: declaredRole,
-        changeType: "DELETED",
-        before: before.content,
-        after: null,
-      });
-    } else if (spec.changeType === "RENAMED" || spec.changeType === "COPIED") {
-      if (!before || !after || !spec.previousPath) {
-        throw new CaptureInvariantError("relocated path has incomplete captured states");
-      }
-      paths.push({
-        path: spec.path,
-        role: declaredRole,
-        previousPath: spec.previousPath,
-        changeType: spec.changeType,
-        before: before.content,
-        after: after.content,
-      });
-    } else {
-      if (!before || !after) {
-        throw new CaptureInvariantError("modified path has incomplete captured states");
-      }
-      paths.push({
-        path: spec.path,
-        role: declaredRole,
-        changeType: spec.changeType,
-        before: before.content,
-        after: after.content,
-      });
+    paths.push(manifestPathEntryV1(spec, declaredRole, before, after));
+    if (spec.changeType === "UNTRACKED") {
+      includedUntrackedPaths.push(spec.path);
     }
   }
 
@@ -1381,33 +1430,24 @@ export async function captureGitSnapshotV1(
   const explicitReferences =
     request.schemaVersion === 2 ? selectedReferences(request.canonicalInputs) : [];
 
+  const collectOptions: CollectStateOptionsV1 = {
+    repositoryPath,
+    baseCommit,
+    headCommit,
+    captureWorkingTree,
+    includeUntracked: request.repository.workingTree.includeUntracked,
+    maxFileBytes,
+    maxReferencedSourceBytes,
+    excludedPaths,
+    excludedPatterns,
+    roleOverrides,
+    explicitReferences,
+  };
+
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const first = await collectState(
-      repositoryPath,
-      baseCommit,
-      headCommit,
-      captureWorkingTree,
-      request.repository.workingTree.includeUntracked,
-      maxFileBytes,
-      maxReferencedSourceBytes,
-      excludedPaths,
-      excludedPatterns,
-      roleOverrides,
-      explicitReferences,
-    );
-    const second = await collectState(
-      repositoryPath,
-      baseCommit,
-      headCommit,
-      captureWorkingTree,
-      request.repository.workingTree.includeUntracked,
-      maxFileBytes,
-      maxReferencedSourceBytes,
-      excludedPaths,
-      excludedPatterns,
-      roleOverrides,
-      explicitReferences,
-    );
+    // Two passes over identical inputs; a snapshot is only frozen when they agree exactly.
+    const first = await collectState(collectOptions);
+    const second = await collectState(collectOptions);
     if (first.stateDigest.value !== second.stateDigest.value) {
       continue;
     }
