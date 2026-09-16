@@ -16,6 +16,14 @@ Ceilings use the committed configuration's $0.02 per-case limit. Provider-report
 usually lower, but admission always reserves the full ceiling. Both `matrix:dry` and `matrix:live`
 are separate from `npm run check`; live runs additionally require explicit paid confirmation.
 
+The committed live configuration keeps `openai/gpt-oss-120b` fixed and pins a
+four-endpoint ZDR/data-denied pool: CoreWeave, DeepInfra, AkashML, then DekaLLM.
+Its `$0.037/M` prompt and `$0.18/M` completion ceilings admit those endpoint
+variants while `require_parameters` retains strict structured-output routing.
+Endpoint metadata changes over time; recheck OpenRouter's official endpoint and
+ZDR registries before treating this pool as qualified beyond the recorded
+[provider-chain checkpoint](../docs/validation/2026-09-15-provider-chain-failover.md).
+
 List all cases:
 
 ```sh

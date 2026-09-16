@@ -4,13 +4,13 @@
   "model": "openai/gpt-oss-120b",
   "fallbackModels": [],
   "providerRouting": {
-    "order": ["coreweave/fp4", "deepinfra/bf16"],
+    "order": ["coreweave/fp4", "deepinfra/bf16", "akashml/bf16", "dekallm/bf16"],
     "pinToOrder": true,
     "zeroDataRetention": true,
     "denyDataCollection": true,
     "maxPrice": {
       "prompt": 0.037,
-      "completion": 0.17,
+      "completion": 0.18,
       "request": 0
     }
   },

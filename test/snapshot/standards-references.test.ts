@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
 import { StandardsReviewBriefV2Schema } from "../../src/contracts/neutral-review-brief.js";
+import { providedAuthorContextV1 } from "../../src/contracts/standards-review.js";
 import { buildReviewBrief, captureGitSnapshotV1, writeSnapshotPacketV1 } from "../../src/index.js";
 
 const exec = promisify(execFile);
@@ -70,6 +71,16 @@ function standardsRequest(repositoryPath: string, referencePath = "API_NAMES.md"
   };
 }
 
+function currentStandardsRequest(repositoryPath: string, referencePath = "API_NAMES.md") {
+  const { authorPacket, ...request } = standardsRequest(repositoryPath, referencePath);
+  return {
+    ...request,
+    schemaVersion: 3 as const,
+    authorContext: providedAuthorContextV1(authorPacket),
+    authorPacket,
+  };
+}
+
 async function repository(): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), "standards-reference-"));
   await git(path, "init", "--initial-branch=main");
@@ -126,6 +137,31 @@ test("captures unchanged declared reference as supporting context", async () => 
       }).success,
       false,
     );
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("captures unchanged declared reference for the current standards request", async () => {
+  const repo = await repository();
+  try {
+    await writeFile(join(repo, "prices.ts"), "export const calculateTax = () => 1;\n");
+    const captured = await captureGitSnapshotV1(currentStandardsRequest(repo));
+
+    assert.deepEqual(
+      captured.manifest.referencedSources.map(({ path }) => path),
+      ["API_NAMES.md"],
+    );
+    assert.deepEqual(captured.manifest.referencedSources[0]?.standardReferenceIds, [
+      "reference_api_names",
+    ]);
+
+    const packetPath = join(repo, ".review-runs", "current-packet");
+    await writeSnapshotPacketV1(packetPath, captured, currentStandardsRequest(repo));
+    const brief = await buildReviewBrief(packetPath, 64_000);
+    assert.equal(brief.schemaVersion, 2);
+    assert.equal(brief.referencedSources[0]?.path, "API_NAMES.md");
+    assert.equal(brief.referenceEvidence[0]?.captureStatus, "CAPTURED");
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
