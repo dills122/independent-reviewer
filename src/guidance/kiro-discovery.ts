@@ -1,23 +1,14 @@
 import {
-  buildGuidanceGraphV1,
   createGuidanceDiagnosticV1,
-  type DirectGuidanceSourceInputV1,
-  type GuidanceGraphV1,
-  type GuidanceImportInputV1,
   MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
-  MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
-  MAX_GUIDANCE_EDGES_V1,
-  MAX_GUIDANCE_NODES_V1,
-  MAX_GUIDANCE_OCCURRENCES_V1,
   type SnapshotManifestV1,
 } from "../contracts/index.js";
 import {
   type BaseGuidanceBlobMetadataV1,
   baseGuidanceBlobMetadataV1,
-  GuidanceCaptureError,
   listBaseGuidanceBlobMetadataV1,
+  type ResolvedBaseGuidanceBlobV1,
   readBaseGuidanceFrontmatterV1,
-  readBaseMarkdownGuidanceSourceV1,
   resolveBaseGuidanceBlobV1,
 } from "./base-markdown-source.js";
 import { compileGuidancePatternsV1 } from "./conditional-patterns.js";
@@ -25,6 +16,11 @@ import {
   createGuidanceDiscoverySessionV1,
   type GuidanceDiscoverySessionV1,
 } from "./discovery-capacity.js";
+import {
+  type CapturedGuidanceV1,
+  completeGuidanceDiscoveryV1,
+  type GuidanceFamilyDiscoveryV1,
+} from "./discovery-engine.js";
 import { guidanceAncestorDirectoriesV1, guidancePathInDirectoryV1 } from "./discovery-paths.js";
 import { parseKiroSteeringFrontmatterV1 } from "./kiro-frontmatter.js";
 import {
@@ -32,33 +28,9 @@ import {
   scanKiroFileReferenceOccurrencesV1,
 } from "./kiro-imports.js";
 
-const MAX_GUIDANCE_IMPORT_DEPTH_V1 = 5;
 const KIRO_STEERING_ROOT_V1 = ".kiro/steering";
 
-export interface CapturedKiroGuidanceV1 {
-  graph: GuidanceGraphV1;
-  blobs: ReadonlyMap<string, Uint8Array>;
-}
-
-function discoveryLimit(message: string): never {
-  throw new GuidanceCaptureError(
-    "GUIDANCE_DISCOVERY_LIMIT_EXCEEDED",
-    ".kiro/steering",
-    `Guidance discovery limit exceeded: ${message}`,
-  );
-}
-
-function importFailure(
-  code:
-    | "GUIDANCE_IMPORT_CYCLE"
-    | "GUIDANCE_IMPORT_DEPTH_LIMIT"
-    | "GUIDANCE_IMPORT_EDGE_LIMIT"
-    | "GUIDANCE_IMPORT_EMPTY"
-    | "GUIDANCE_IMPORT_UNRESOLVED",
-  path: string,
-): never {
-  throw new GuidanceCaptureError(code, path, `${path} has an invalid Kiro file-reference graph.`);
-}
+export type CapturedKiroGuidanceV1 = CapturedGuidanceV1;
 
 /** Discovers Kiro AGENTS and steering sources from frozen BASE. */
 export async function captureKiroGuidanceV1(
@@ -66,11 +38,9 @@ export async function captureKiroGuidanceV1(
   manifest: SnapshotManifestV1,
   session: GuidanceDiscoverySessionV1 = createGuidanceDiscoverySessionV1(manifest),
 ): Promise<CapturedKiroGuidanceV1> {
-  const targets = session.targets;
-
   const agentsByTarget = new Map<string, string[]>();
   const agentCandidates = new Set<string>();
-  for (const target of targets) {
+  for (const target of session.targets) {
     const candidates = guidanceAncestorDirectoriesV1(target.applicabilityPath).map((directory) =>
       guidancePathInDirectoryV1(directory, "AGENTS.md"),
     );
@@ -104,14 +74,11 @@ export async function captureKiroGuidanceV1(
     if (metadata) metadataByPath.set(path, metadata);
   }
 
-  type ResolvedSourceV1 = NonNullable<Awaited<ReturnType<typeof resolveBaseGuidanceBlobV1>>>;
-  const resolvedByDiscoveredPath = new Map<string, ResolvedSourceV1>();
+  const resolvedByDiscoveredPath = new Map<string, ResolvedBaseGuidanceBlobV1>();
   const steeringMatchers = new Map<string, ((path: string) => boolean) | undefined>();
   const excludedSteering = new Set<string>();
-  const diagnostics = [];
   for (const path of [...metadataByPath.keys()].sort()) {
-    const metadata = metadataByPath.get(path);
-    if (!metadata) throw new Error(`Kiro guidance ${path} has no BASE metadata.`);
+    if (!metadataByPath.has(path)) throw new Error(`Kiro guidance ${path} has no BASE metadata.`);
     const resolved = await resolveBaseGuidanceBlobV1(
       repositoryPath,
       manifest.source.baseCommit,
@@ -119,75 +86,22 @@ export async function captureKiroGuidanceV1(
     );
     if (!resolved) throw new Error(`Kiro guidance ${path} has no resolved BASE source.`);
     resolvedByDiscoveredPath.set(path, resolved);
-    if (steeringPaths.includes(path)) {
-      const parsed = parseKiroSteeringFrontmatterV1(
-        path,
-        await readBaseGuidanceFrontmatterV1(
-          repositoryPath,
-          resolved.resolvedPath,
-          resolved.metadata,
-        ),
-      );
-      if (parsed.inclusion === "manual" || parsed.inclusion === "auto") {
-        excludedSteering.add(path);
-        diagnostics.push(
-          createGuidanceDiagnosticV1({
-            code:
-              parsed.inclusion === "manual"
-                ? "UNSELECTED_MANUAL_MODE"
-                : "UNSELECTED_MODEL_SELECTED_MODE",
-            severity: "EXCLUSION",
-            path,
-            startUtf16: 0,
-            omittedCount: null,
-          }),
-        );
-        continue;
-      }
-      steeringMatchers.set(
-        path,
-        parsed.inclusion === "fileMatch"
-          ? compileGuidancePatternsV1(path, parsed.fileMatchPatterns ?? [])
-          : undefined,
-      );
-    }
-  }
-
-  const selectPathsForTarget = (targetId: string, applicabilityPath: string): string[] => {
-    const orderedAgents = (agentsByTarget.get(targetId) ?? []).filter((path) =>
-      resolvedByDiscoveredPath.has(path),
+    if (!steeringPaths.includes(path)) continue;
+    const parsed = parseKiroSteeringFrontmatterV1(
+      path,
+      await readBaseGuidanceFrontmatterV1(repositoryPath, resolved.resolvedPath, resolved.metadata),
     );
-    const orderedSteering = steeringPaths.filter((path) => {
-      if (excludedSteering.has(path) || !resolvedByDiscoveredPath.has(path)) return false;
-      const matcher = steeringMatchers.get(path);
-      return matcher ? matcher(applicabilityPath) : true;
-    });
-    return [...orderedAgents, ...orderedSteering];
-  };
-  const selectedPaths = new Set<string>();
-  for (const target of targets) {
-    for (const path of selectPathsForTarget(target.targetId, target.applicabilityPath))
-      selectedPaths.add(path);
-  }
-
-  const sources = new Map<string, Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>>>();
-  const directSourcesByDiscoveredPath = new Map<
-    string,
-    { resolvedPath: string; source: Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>> }
-  >();
-  for (const path of [...selectedPaths].sort()) {
-    const resolved = resolvedByDiscoveredPath.get(path);
-    if (!resolved) throw new Error(`Selected Kiro guidance ${path} was not resolved.`);
-    const source = await readBaseMarkdownGuidanceSourceV1(
-      repositoryPath,
-      resolved.resolvedPath,
-      resolved.metadata,
-    );
-    if (source.content.trim().length === 0) {
-      diagnostics.push(
+    // Only `always` and `fileMatch` steering is deterministically selected; the rest depends on a
+    // live agent's judgement, so it is recorded as an exclusion rather than silently dropped.
+    if (parsed.inclusion === "manual" || parsed.inclusion === "auto") {
+      excludedSteering.add(path);
+      session.addDiagnostic(
         createGuidanceDiagnosticV1({
-          code: "EMPTY_SOURCE",
-          severity: "WARNING",
+          code:
+            parsed.inclusion === "manual"
+              ? "UNSELECTED_MANUAL_MODE"
+              : "UNSELECTED_MODEL_SELECTED_MODE",
+          severity: "EXCLUSION",
           path,
           startUtf16: 0,
           omittedCount: null,
@@ -195,187 +109,37 @@ export async function captureKiroGuidanceV1(
       );
       continue;
     }
-    sources.set(resolved.resolvedPath, source);
-    directSourcesByDiscoveredPath.set(path, { resolvedPath: resolved.resolvedPath, source });
-  }
-
-  const directSources = new Map<string, DirectGuidanceSourceInputV1>();
-  let recognitionCount = 0;
-  for (const target of targets) {
-    const selected = selectPathsForTarget(target.targetId, target.applicabilityPath).filter(
-      (path) => directSourcesByDiscoveredPath.has(path),
-    );
-    selected.forEach((path, nativeOrder) => {
-      recognitionCount += 1;
-      if (recognitionCount > MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1)
-        discoveryLimit(
-          `more than ${MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1} recognitions were produced.`,
-        );
-      const direct = directSourcesByDiscoveredPath.get(path);
-      if (!direct) throw new Error(`Selected Kiro guidance ${path} was not loaded.`);
-      const input = directSources.get(direct.resolvedPath) ?? {
-        resolvedPath: direct.resolvedPath,
-        contentDigest: direct.source.contentDigest,
-        directRecognitions: [],
-      };
-      const recognition = {
-        familyId: "KIRO",
-        sourceKind: steeringPaths.includes(path) ? "KIRO_STEERING" : "KIRO_AGENTS",
-        nativeOrder,
-        applicableTargetId: target.targetId,
-        discoveredPath: path,
-      } as const;
-      session.claimDirectRecognition(input, recognition);
-      input.directRecognitions.push(recognition);
-      directSources.set(direct.resolvedPath, input);
-    });
-  }
-  if (directSources.size > MAX_GUIDANCE_NODES_V1)
-    discoveryLimit(`more than ${MAX_GUIDANCE_NODES_V1} applicable source nodes were selected.`);
-
-  const importTargets = new Map<
-    string,
-    { input: Omit<GuidanceImportInputV1, "applicableTargetIds">; targetIds: Set<string> }
-  >();
-  const graphSources = new Map<string, DirectGuidanceSourceInputV1>(directSources);
-  const importScans = new Map<string, ReturnType<typeof scanKiroFileReferenceOccurrencesV1>>();
-  let importEdgeCount = 0;
-  const loadImportedSource = async (path: string) => {
-    const resolved = await resolveBaseGuidanceBlobV1(
-      repositoryPath,
-      manifest.source.baseCommit,
+    steeringMatchers.set(
       path,
+      parsed.inclusion === "fileMatch"
+        ? compileGuidancePatternsV1(path, parsed.fileMatchPatterns ?? [])
+        : undefined,
     );
-    if (!resolved) importFailure("GUIDANCE_IMPORT_UNRESOLVED", path);
-    const existing = sources.get(resolved.resolvedPath);
-    if (existing) return { resolvedPath: resolved.resolvedPath, source: existing };
-    const source = await readBaseMarkdownGuidanceSourceV1(
-      repositoryPath,
-      resolved.resolvedPath,
-      resolved.metadata,
-    );
-    if (source.content.trim().length === 0)
-      importFailure("GUIDANCE_IMPORT_EMPTY", resolved.resolvedPath);
-    sources.set(resolved.resolvedPath, source);
-    return { resolvedPath: resolved.resolvedPath, source };
-  };
-  const traverseImports = async (
-    importerPath: string,
-    applicableTargetId: string,
-    depth: number,
-    ancestry: ReadonlySet<string>,
-  ): Promise<void> => {
-    const importer = sources.get(importerPath);
-    if (!importer) throw new Error(`Kiro import source ${importerPath} was not loaded.`);
-    let occurrences = importScans.get(importerPath);
-    if (!occurrences) {
-      occurrences = scanKiroFileReferenceOccurrencesV1(importerPath, importer.content);
-      importScans.set(importerPath, occurrences);
-    }
-    if (occurrences.length > 0 && depth >= MAX_GUIDANCE_IMPORT_DEPTH_V1)
-      importFailure("GUIDANCE_IMPORT_DEPTH_LIMIT", importerPath);
-    for (const occurrence of occurrences) {
-      const occurrenceKey = session.claimOccurrence({
-        familyId: "KIRO",
-        syntaxKind: "KIRO_FILE_REFERENCE",
-        importerPath,
-        importerContentDigest: importer.contentDigest,
-        requestedSpecifier: occurrence.requestedSpecifier,
-        startUtf16: occurrence.startUtf16,
-        endUtf16: occurrence.endUtf16,
-      });
-      const requestedPath = resolveKiroFileReferencePathV1(
-        importerPath,
-        occurrence.requestedSpecifier,
-      );
-      const { resolvedPath: importedPath, source: imported } =
-        await loadImportedSource(requestedPath);
-      if (ancestry.has(importedPath)) importFailure("GUIDANCE_IMPORT_CYCLE", importedPath);
-      const key = JSON.stringify([
-        importerPath,
-        importer.contentDigest.value,
-        occurrence.requestedSpecifier,
-        occurrence.startUtf16,
-        occurrence.endUtf16,
-        importedPath,
-        imported.contentDigest.value,
-      ]);
-      const accumulated = importTargets.get(key) ?? {
-        input: {
-          familyId: "KIRO" as const,
-          syntaxKind: "KIRO_FILE_REFERENCE" as const,
-          importerPath,
-          importerContentDigest: importer.contentDigest,
-          importedPath,
-          importedContentDigest: imported.contentDigest,
-          requestedSpecifier: occurrence.requestedSpecifier,
-          startUtf16: occurrence.startUtf16,
-          endUtf16: occurrence.endUtf16,
-        },
-        targetIds: new Set<string>(),
-      };
-      if (!accumulated.targetIds.has(applicableTargetId)) {
-        session.claimImportEdge(
-          occurrenceKey,
-          { resolvedPath: importedPath, contentDigest: imported.contentDigest },
-          applicableTargetId,
-        );
-        accumulated.targetIds.add(applicableTargetId);
-        importEdgeCount += 1;
-      }
-      importTargets.set(key, accumulated);
-      if (importTargets.size > MAX_GUIDANCE_OCCURRENCES_V1)
-        discoveryLimit(
-          `more than ${MAX_GUIDANCE_OCCURRENCES_V1} import occurrences were produced.`,
-        );
-      if (importEdgeCount > MAX_GUIDANCE_EDGES_V1)
-        importFailure("GUIDANCE_IMPORT_EDGE_LIMIT", importerPath);
-      const existingGraphSource = graphSources.get(importedPath);
-      graphSources.set(
-        importedPath,
-        existingGraphSource ?? {
-          resolvedPath: importedPath,
-          contentDigest: imported.contentDigest,
-          directRecognitions: [],
-        },
-      );
-      if (graphSources.size > MAX_GUIDANCE_NODES_V1)
-        discoveryLimit(`more than ${MAX_GUIDANCE_NODES_V1} applicable source nodes were selected.`);
-      await traverseImports(
-        importedPath,
-        applicableTargetId,
-        depth + 1,
-        new Set([...ancestry, importedPath]),
-      );
-    }
-  };
-
-  for (const [path, source] of directSources) {
-    const targetIds = source.directRecognitions
-      .filter(({ sourceKind }) => sourceKind === "KIRO_STEERING")
-      .map(({ applicableTargetId }) => applicableTargetId);
-    for (const applicableTargetId of targetIds) {
-      await traverseImports(path, applicableTargetId, 0, new Set([path]));
-    }
   }
-  const imports: GuidanceImportInputV1[] = [...importTargets.values()].map(
-    ({ input, targetIds }) => ({ ...input, applicableTargetIds: [...targetIds].sort() }),
-  );
 
-  for (const diagnostic of diagnostics) session.addDiagnostic(diagnostic);
-  return {
-    graph: buildGuidanceGraphV1(
-      manifest,
-      [...graphSources.values()],
-      imports,
-      session.finalizeDiagnostics(),
-    ),
-    blobs: new Map(
-      [...graphSources.keys()].map((path) => {
-        const source = sources.get(path);
-        if (!source) throw new Error(`Applicable Kiro guidance ${path} was not loaded.`);
-        return [source.contentDigest.value, Uint8Array.from(source.bytes)];
-      }),
-    ),
+  const family: GuidanceFamilyDiscoveryV1 = {
+    familyId: "KIRO",
+    label: "Kiro guidance",
+    limitPath: KIRO_STEERING_ROOT_V1,
+    importGraphLabel: "Kiro file-reference graph",
+    imports: {
+      syntaxKind: "KIRO_FILE_REFERENCE",
+      maxDepth: 5,
+      scan: scanKiroFileReferenceOccurrencesV1,
+      resolvePath: resolveKiroFileReferencePathV1,
+      seedsTraversal: ({ sourceKind }) => sourceKind === "KIRO_STEERING",
+    },
   };
+  return await completeGuidanceDiscoveryV1(repositoryPath, manifest, session, family, {
+    resolvedByDiscoveredPath,
+    selectPathsForTarget: ({ targetId, applicabilityPath }) => [
+      ...(agentsByTarget.get(targetId) ?? []).filter((path) => resolvedByDiscoveredPath.has(path)),
+      ...steeringPaths.filter((path) => {
+        if (excludedSteering.has(path) || !resolvedByDiscoveredPath.has(path)) return false;
+        const matcher = steeringMatchers.get(path);
+        return matcher ? matcher(applicabilityPath) : true;
+      }),
+    ],
+    sourceKindFor: (path) => (steeringPaths.includes(path) ? "KIRO_STEERING" : "KIRO_AGENTS"),
+  });
 }

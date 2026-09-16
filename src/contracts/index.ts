@@ -52,8 +52,11 @@ export type {
   DirectGuidanceRecognitionV1,
   DirectGuidanceSourceInputV1,
   GuidanceDiagnosticV1,
+  GuidanceFamilyV1,
   GuidanceGraphV1,
   GuidanceImportInputV1,
+  GuidanceImportSyntaxKindV1,
+  GuidanceSourceKindV1,
   GuidanceTargetV1,
 } from "./guidance-graph.js";
 export {

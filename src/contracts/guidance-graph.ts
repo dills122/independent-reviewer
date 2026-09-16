@@ -296,35 +296,33 @@ export function isGuidanceSourceKindForFamilyV1(
   return FAMILY_SOURCE_KINDS[familyId].includes(sourceKind);
 }
 
-function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context: z.RefinementCtx) {
-  if (!alreadyCanonical(graph.targets, targetOrder))
-    context.addIssue({
-      code: "custom",
-      path: ["targets"],
-      message: "must be canonical and unique",
-    });
+type GuidanceGraphBaseV1 = z.infer<typeof GuidanceGraphBaseV1Schema>;
+
+function canonicalIssue(context: z.RefinementCtx, path: PropertyKey[]): void {
+  context.addIssue({ code: "custom", path, message: "must be canonical and unique" });
+}
+
+/** Every collection is stored in one canonical order, so a reordered graph is a different graph. */
+function validateCollectionOrderV1(graph: GuidanceGraphBaseV1, context: z.RefinementCtx): void {
+  if (!alreadyCanonical(graph.targets, targetOrder)) canonicalIssue(context, ["targets"]);
   if (!alreadyCanonical(graph.nodes, (left, right) => compareUtf16(left.sourceId, right.sourceId)))
-    context.addIssue({ code: "custom", path: ["nodes"], message: "must be canonical and unique" });
+    canonicalIssue(context, ["nodes"]);
   if (
     !alreadyCanonical(graph.occurrences, (left, right) =>
       compareUtf16(left.occurrenceId, right.occurrenceId),
     )
   )
-    context.addIssue({
-      code: "custom",
-      path: ["occurrences"],
-      message: "must be canonical and unique",
-    });
+    canonicalIssue(context, ["occurrences"]);
   if (!alreadyCanonical(graph.edges, (left, right) => compareUtf16(left.edgeId, right.edgeId)))
-    context.addIssue({ code: "custom", path: ["edges"], message: "must be canonical and unique" });
+    canonicalIssue(context, ["edges"]);
   if (!alreadyCanonical(graph.diagnostics, compareGuidanceDiagnosticsV1))
-    context.addIssue({
-      code: "custom",
-      path: ["diagnostics"],
-      message: "must be canonical and unique",
-    });
+    canonicalIssue(context, ["diagnostics"]);
+}
 
-  const targetIds = new Set(graph.targets.map(({ targetId }) => targetId));
+function validateTargetIdentitiesV1(
+  graph: GuidanceGraphBaseV1,
+  context: z.RefinementCtx,
+): Set<string> {
   graph.targets.forEach((target, index) => {
     const { targetId, ...input } = target;
     if (targetId !== expectedTargetId(graph.snapshotDigest, input))
@@ -334,8 +332,22 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         message: "must match target identity",
       });
   });
-  const nodeIds = new Set(graph.nodes.map(({ sourceId }) => sourceId));
-  const occurrenceIds = new Set(graph.occurrences.map(({ occurrenceId }) => occurrenceId));
+  return new Set(graph.targets.map(({ targetId }) => targetId));
+}
+
+/**
+ * Checks each source node's identity, its recognitions, and the applicability derived from them.
+ *
+ * Two rules here are what make a graph reproducible rather than merely well-formed. One BASE path
+ * must carry one content identity, or the same discovery would describe two different trees. And a
+ * recognition slot — family, target and discovered path — must have one owner, or two adapters
+ * would be claiming to have found different things in the same place.
+ */
+function validateNodesV1(
+  graph: GuidanceGraphBaseV1,
+  context: z.RefinementCtx,
+  targetIds: ReadonlySet<string>,
+): void {
   const sourceIdentityByPath = new Map<string, string>();
   const recognitionSlots = new Map<string, string>();
   let directRecognitionCount = 0;
@@ -362,11 +374,8 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
       });
     sourceIdentityByPath.set(node.resolvedPath, sourceIdentity);
     if (!alreadyCanonical(node.directRecognitions, recognitionOrder))
-      context.addIssue({
-        code: "custom",
-        path: ["nodes", index, "directRecognitions"],
-        message: "must be canonical and unique",
-      });
+      canonicalIssue(context, ["nodes", index, "directRecognitions"]);
+
     node.directRecognitions.forEach((recognition, recognitionIndex) => {
       if (!isGuidanceSourceKindForFamilyV1(recognition.familyId, recognition.sourceKind))
         context.addIssue({
@@ -399,6 +408,7 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         });
       recognitionSlots.set(slot, owner);
     });
+
     const derivedTier = node.directRecognitions.some(
       ({ sourceKind }) => sourceKind === "REVIEWER_RULES",
     )
@@ -410,13 +420,16 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         path: ["nodes", index, "semanticTier"],
         message: "must equal derived semantic tier",
       });
-    const applicable = [
-      ...node.directRecognitions.map(({ applicableTargetId }) => applicableTargetId),
-      ...graph.edges
-        .filter(({ importedSourceId }) => importedSourceId === node.sourceId)
-        .map(({ applicableTargetId }) => applicableTargetId),
-    ].sort(compareUtf16);
-    const uniqueApplicable = [...new Set(applicable)];
+    const uniqueApplicable = [
+      ...new Set(
+        [
+          ...node.directRecognitions.map(({ applicableTargetId }) => applicableTargetId),
+          ...graph.edges
+            .filter(({ importedSourceId }) => importedSourceId === node.sourceId)
+            .map(({ applicableTargetId }) => applicableTargetId),
+        ].sort(compareUtf16),
+      ),
+    ];
     if (canonicalizeJson(node.applicableTargetIds) !== canonicalizeJson(uniqueApplicable))
       context.addIssue({
         code: "custom",
@@ -424,6 +437,7 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         message: "must equal derived applicability",
       });
   });
+
   if (directRecognitionCount > MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1)
     context.addIssue({
       code: "custom",
@@ -436,7 +450,13 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
       path: ["nodes"],
       message: `must contain at most ${MAX_GUIDANCE_APPLICABILITY_PAIRS_V1} applicability pairs`,
     });
+}
 
+function validateOccurrenceIdentitiesV1(
+  graph: GuidanceGraphBaseV1,
+  context: z.RefinementCtx,
+  nodeIds: ReadonlySet<string>,
+): void {
   graph.occurrences.forEach((occurrence, index) => {
     if (occurrence.endUtf16 <= occurrence.startUtf16)
       context.addIssue({
@@ -469,13 +489,31 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         message: "must match occurrence identity",
       });
   });
+}
+
+interface EdgeResolutionV1 {
+  /** Which source each occurrence resolved to; one occurrence may resolve to only one. */
+  resolutionByOccurrence: Map<string, string>;
+  /** Which source each occurrence/target slot resolved to, as the graph actually states it. */
+  actualEdgeSlots: Map<string, string>;
+}
+
+function validateEdgeIdentitiesV1(
+  graph: GuidanceGraphBaseV1,
+  context: z.RefinementCtx,
+  members: {
+    nodeIds: ReadonlySet<string>;
+    occurrenceIds: ReadonlySet<string>;
+    targetIds: ReadonlySet<string>;
+  },
+): EdgeResolutionV1 {
   const resolutionByOccurrence = new Map<string, string>();
   const actualEdgeSlots = new Map<string, string>();
   graph.edges.forEach((edge, index) => {
     if (
-      !occurrenceIds.has(edge.occurrenceId) ||
-      !nodeIds.has(edge.importedSourceId) ||
-      !targetIds.has(edge.applicableTargetId)
+      !members.occurrenceIds.has(edge.occurrenceId) ||
+      !members.nodeIds.has(edge.importedSourceId) ||
+      !members.targetIds.has(edge.applicableTargetId)
     )
       context.addIssue({
         code: "custom",
@@ -512,7 +550,23 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
       });
     actualEdgeSlots.set(slot, edge.importedSourceId);
   });
+  return { resolutionByOccurrence, actualEdgeSlots };
+}
 
+/**
+ * Re-derives the import closure from the direct recognitions and requires the stored edges to be
+ * exactly it — no edge missing, and none the closure does not reach.
+ *
+ * Applicability propagates per family, not globally: a target reaching a source through Claude's
+ * import syntax says nothing about whether Copilot reaches it, so the traversal key pairs source
+ * with family. Deriving the closure here rather than trusting the stored edges is what stops a
+ * hand-written graph from smuggling in guidance no adapter would ever have followed to.
+ */
+function validateDerivedImportClosureV1(
+  graph: GuidanceGraphBaseV1,
+  context: z.RefinementCtx,
+  { resolutionByOccurrence, actualEdgeSlots }: EdgeResolutionV1,
+): void {
   const applicability = new Map<string, Set<string>>();
   const occurrenceIdsByImporterFamily = new Map<string, string[]>();
   const queue: Array<{ sourceId: string; familyId: string; targetId: string }> = [];
@@ -542,6 +596,7 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         message: "must resolve to exactly one imported source",
       });
   });
+
   const expectedEdgeSlots = new Map<string, string>();
   let derivedEdgeLimitExceeded = false;
   for (let index = 0; index < queue.length && !derivedEdgeLimitExceeded; index += 1) {
@@ -567,6 +622,7 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
       addApplicability(importedSourceId, current.familyId, current.targetId);
     }
   }
+
   for (const [slot, importedSourceId] of expectedEdgeSlots) {
     if (actualEdgeSlots.get(slot) !== importedSourceId)
       context.addIssue({
@@ -583,6 +639,9 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         message: "must not include non-derived import edges",
       });
   }
+}
+
+function validateDiagnosticsV1(graph: GuidanceGraphBaseV1, context: z.RefinementCtx): void {
   graph.diagnostics.forEach((diagnostic, index) => {
     const excluded =
       diagnostic.code === "UNSELECTED_MANUAL_MODE" ||
@@ -615,6 +674,29 @@ function validateGraph(graph: z.infer<typeof GuidanceGraphBaseV1Schema>, context
         message: "must match diagnostic identity",
       });
   });
+}
+
+/**
+ * Checks a complete guidance graph against every structural rule the contract declares.
+ *
+ * The groups run in dependency order: identities before the references that point at them, and the
+ * derived import closure last, once every occurrence has a single known resolution to walk.
+ */
+function validateGraph(graph: GuidanceGraphBaseV1, context: z.RefinementCtx) {
+  validateCollectionOrderV1(graph, context);
+  const targetIds = validateTargetIdentitiesV1(graph, context);
+  const nodeIds = new Set(graph.nodes.map(({ sourceId }) => sourceId));
+  const occurrenceIds = new Set(graph.occurrences.map(({ occurrenceId }) => occurrenceId));
+
+  validateNodesV1(graph, context, targetIds);
+  validateOccurrenceIdentitiesV1(graph, context, nodeIds);
+  const edgeResolution = validateEdgeIdentitiesV1(graph, context, {
+    nodeIds,
+    occurrenceIds,
+    targetIds,
+  });
+  validateDerivedImportClosureV1(graph, context, edgeResolution);
+  validateDiagnosticsV1(graph, context);
 
   const { graphId: _graphId, ...input } = graph;
   if (graph.graphId !== identifier("guidance", input))
@@ -629,6 +711,9 @@ export const GuidanceGraphV1Schema = GuidanceGraphBaseV1Schema.superRefine(valid
 export type GuidanceGraphV1 = z.infer<typeof GuidanceGraphV1Schema>;
 export type GuidanceTargetV1 = z.infer<typeof GuidanceTargetV1Schema>;
 export type GuidanceDiagnosticV1 = z.infer<typeof GuidanceDiagnosticV1Schema>;
+export type GuidanceFamilyV1 = z.infer<typeof GuidanceFamilyV1Schema>;
+export type GuidanceSourceKindV1 = z.infer<typeof GuidanceSourceKindV1Schema>;
+export type GuidanceImportSyntaxKindV1 = z.infer<typeof GuidanceImportSyntaxKindV1Schema>;
 export type DirectGuidanceRecognitionV1 = z.infer<typeof DirectRecognitionV1Schema>;
 
 export interface DirectGuidanceSourceInputV1 {

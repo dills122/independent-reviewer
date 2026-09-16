@@ -1,23 +1,14 @@
 import {
-  buildGuidanceGraphV1,
-  createGuidanceDiagnosticV1,
-  type DirectGuidanceSourceInputV1,
-  type GuidanceGraphV1,
-  type GuidanceImportInputV1,
+  type GuidanceSourceKindV1,
   MAX_GUIDANCE_DIRECT_CANDIDATES_V1,
-  MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1,
-  MAX_GUIDANCE_EDGES_V1,
-  MAX_GUIDANCE_NODES_V1,
-  MAX_GUIDANCE_OCCURRENCES_V1,
   type SnapshotManifestV1,
 } from "../contracts/index.js";
 import {
   type BaseGuidanceBlobMetadataV1,
   baseGuidanceBlobMetadataV1,
-  GuidanceCaptureError,
   listBaseGuidanceBlobMetadataV1,
+  type ResolvedBaseGuidanceBlobV1,
   readBaseGuidanceFrontmatterV1,
-  readBaseMarkdownGuidanceSourceV1,
   resolveBaseGuidanceBlobV1,
 } from "./base-markdown-source.js";
 import { compileGuidancePatternsV1 } from "./conditional-patterns.js";
@@ -27,39 +18,20 @@ import {
   createGuidanceDiscoverySessionV1,
   type GuidanceDiscoverySessionV1,
 } from "./discovery-capacity.js";
+import {
+  type CapturedGuidanceV1,
+  completeGuidanceDiscoveryV1,
+  type GuidanceFamilyDiscoveryV1,
+} from "./discovery-engine.js";
 import { guidanceAncestorDirectoriesV1, guidancePathInDirectoryV1 } from "./discovery-paths.js";
 
-const MAX_GUIDANCE_IMPORT_DEPTH_V1 = 5;
 const REPOSITORY_PATH_V1 = ".github/copilot-instructions.md";
 const MODULAR_ROOT_V1 = ".github/instructions";
 const DOT_CLAUDE_PATH_V1 = ".claude/CLAUDE.md";
+/** Copilot reads these per-directory files in this precedence order after the repository file. */
+const ANCESTOR_FILENAMES_V1 = ["AGENTS.md", "CLAUDE.md", "GEMINI.md"] as const;
 
-export interface CapturedCopilotGuidanceV1 {
-  graph: GuidanceGraphV1;
-  blobs: ReadonlyMap<string, Uint8Array>;
-}
-
-function discoveryLimit(message: string): never {
-  throw new GuidanceCaptureError(
-    "GUIDANCE_DISCOVERY_LIMIT_EXCEEDED",
-    REPOSITORY_PATH_V1,
-    `Guidance discovery limit exceeded: ${message}`,
-  );
-}
-
-function importFailure(
-  code:
-    | "GUIDANCE_IMPORT_CYCLE"
-    | "GUIDANCE_IMPORT_DEPTH_LIMIT"
-    | "GUIDANCE_IMPORT_EDGE_LIMIT"
-    | "GUIDANCE_IMPORT_EMPTY"
-    | "GUIDANCE_IMPORT_UNRESOLVED",
-  path: string,
-): never {
-  throw new GuidanceCaptureError(code, path, `${path} has an invalid Copilot @path import graph.`);
-}
-
-type LoadedSourceV1 = Awaited<ReturnType<typeof readBaseMarkdownGuidanceSourceV1>>;
+export type CapturedCopilotGuidanceV1 = CapturedGuidanceV1;
 
 /** Discovers deterministic repository-owned Copilot guidance from frozen BASE. */
 export async function captureCopilotGuidanceV1(
@@ -67,10 +39,8 @@ export async function captureCopilotGuidanceV1(
   manifest: SnapshotManifestV1,
   session: GuidanceDiscoverySessionV1 = createGuidanceDiscoverySessionV1(manifest),
 ): Promise<CapturedCopilotGuidanceV1> {
-  const targets = session.targets;
-
   const ancestorsByTarget = new Map(
-    targets.map((target) => [
+    session.targets.map((target) => [
       target.targetId,
       guidanceAncestorDirectoriesV1(target.applicabilityPath),
     ]),
@@ -78,7 +48,7 @@ export async function captureCopilotGuidanceV1(
   const fixedCandidates = new Set<string>([REPOSITORY_PATH_V1, DOT_CLAUDE_PATH_V1]);
   for (const directories of ancestorsByTarget.values()) {
     for (const directory of directories) {
-      for (const filename of ["AGENTS.md", "CLAUDE.md", "GEMINI.md"]) {
+      for (const filename of ANCESTOR_FILENAMES_V1) {
         fixedCandidates.add(guidancePathInDirectoryV1(directory, filename));
       }
     }
@@ -110,14 +80,12 @@ export async function captureCopilotGuidanceV1(
     if (metadata) metadataByPath.set(path, metadata);
   }
 
-  type ResolvedSourceV1 = NonNullable<Awaited<ReturnType<typeof resolveBaseGuidanceBlobV1>>>;
-  const resolvedByDiscoveredPath = new Map<string, ResolvedSourceV1>();
+  const resolvedByDiscoveredPath = new Map<string, ResolvedBaseGuidanceBlobV1>();
   const modularMatchers = new Map<string, (candidatePath: string) => boolean>();
   const excludedModular = new Set<string>();
-  const diagnostics = [];
   for (const path of [...metadataByPath.keys()].sort()) {
-    const metadata = metadataByPath.get(path);
-    if (!metadata) throw new Error(`Copilot guidance source ${path} has no BASE metadata.`);
+    if (!metadataByPath.has(path))
+      throw new Error(`Copilot guidance source ${path} has no BASE metadata.`);
     const resolved = await resolveBaseGuidanceBlobV1(
       repositoryPath,
       manifest.source.baseCommit,
@@ -125,270 +93,66 @@ export async function captureCopilotGuidanceV1(
     );
     if (!resolved) throw new Error(`Copilot guidance source ${path} has no resolved BASE source.`);
     resolvedByDiscoveredPath.set(path, resolved);
-    if (modularPaths.includes(path)) {
-      const frontmatter = parseCopilotFrontmatterV1(
-        path,
-        await readBaseGuidanceFrontmatterV1(
-          repositoryPath,
-          resolved.resolvedPath,
-          resolved.metadata,
-        ),
-      );
-      if (frontmatter.excludesCodeReview) {
-        excludedModular.add(path);
-        continue;
-      }
-      modularMatchers.set(path, compileGuidancePatternsV1(path, frontmatter.applyTo));
-    }
-  }
-
-  const selectPathsForTarget = (targetId: string, applicabilityPath: string): string[] => {
-    const directories = ancestorsByTarget.get(targetId) ?? [];
-    const agents = directories.map((directory) =>
-      guidancePathInDirectoryV1(directory, "AGENTS.md"),
-    );
-    const claude = directories.map((directory) =>
-      guidancePathInDirectoryV1(directory, "CLAUDE.md"),
-    );
-    const gemini = directories.map((directory) =>
-      guidancePathInDirectoryV1(directory, "GEMINI.md"),
-    );
-    const ordered = [
-      ...(resolvedByDiscoveredPath.has(REPOSITORY_PATH_V1) ? [REPOSITORY_PATH_V1] : []),
-      ...agents.filter((path) => resolvedByDiscoveredPath.has(path)),
-      ...claude.filter((path) => resolvedByDiscoveredPath.has(path)),
-      ...(resolvedByDiscoveredPath.has(DOT_CLAUDE_PATH_V1) ? [DOT_CLAUDE_PATH_V1] : []),
-      ...gemini.filter((path) => resolvedByDiscoveredPath.has(path)),
-      ...modularPaths.filter(
-        (path) =>
-          !excludedModular.has(path) && modularMatchers.get(path)?.(applicabilityPath) === true,
-      ),
-    ];
-    return [...new Set(ordered)];
-  };
-  const selectedPaths = new Set<string>();
-  for (const target of targets) {
-    for (const path of selectPathsForTarget(target.targetId, target.applicabilityPath))
-      selectedPaths.add(path);
-  }
-
-  const sources = new Map<string, LoadedSourceV1>();
-  const directSourcesByDiscoveredPath = new Map<
-    string,
-    { resolvedPath: string; source: LoadedSourceV1 }
-  >();
-  for (const path of [...selectedPaths].sort()) {
-    const resolved = resolvedByDiscoveredPath.get(path);
-    if (!resolved) throw new Error(`Selected Copilot source ${path} was not resolved.`);
-    const source = await readBaseMarkdownGuidanceSourceV1(
-      repositoryPath,
-      resolved.resolvedPath,
-      resolved.metadata,
-    );
-    if (source.content.trim().length === 0) {
-      diagnostics.push(
-        createGuidanceDiagnosticV1({
-          code: "EMPTY_SOURCE",
-          severity: "WARNING",
-          path,
-          startUtf16: 0,
-          omittedCount: null,
-        }),
-      );
-      continue;
-    }
-    sources.set(resolved.resolvedPath, source);
-    directSourcesByDiscoveredPath.set(path, { resolvedPath: resolved.resolvedPath, source });
-  }
-
-  const directSources = new Map<string, DirectGuidanceSourceInputV1>();
-  let recognitionCount = 0;
-  for (const target of targets) {
-    const selected = selectPathsForTarget(target.targetId, target.applicabilityPath).filter(
-      (path) => directSourcesByDiscoveredPath.has(path),
-    );
-    selected.forEach((path, nativeOrder) => {
-      recognitionCount += 1;
-      if (recognitionCount > MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1)
-        discoveryLimit(
-          `more than ${MAX_GUIDANCE_DIRECT_RECOGNITIONS_V1} recognitions were produced.`,
-        );
-      const direct = directSourcesByDiscoveredPath.get(path);
-      if (!direct) throw new Error(`Selected Copilot source ${path} was not loaded.`);
-      const input = directSources.get(direct.resolvedPath) ?? {
-        resolvedPath: direct.resolvedPath,
-        contentDigest: direct.source.contentDigest,
-        directRecognitions: [],
-      };
-      const recognition = {
-        familyId: "COPILOT",
-        sourceKind:
-          path === REPOSITORY_PATH_V1
-            ? "COPILOT_REPOSITORY"
-            : modularPaths.includes(path)
-              ? "COPILOT_MODULAR"
-              : path.endsWith("AGENTS.md")
-                ? "COPILOT_AGENTS"
-                : path === DOT_CLAUDE_PATH_V1
-                  ? "COPILOT_DOT_CLAUDE"
-                  : path.endsWith("CLAUDE.md")
-                    ? "COPILOT_CLAUDE"
-                    : "COPILOT_GEMINI",
-        nativeOrder,
-        applicableTargetId: target.targetId,
-        discoveredPath: path,
-      } as const;
-      session.claimDirectRecognition(input, recognition);
-      input.directRecognitions.push(recognition);
-      directSources.set(direct.resolvedPath, input);
-    });
-  }
-  if (directSources.size > MAX_GUIDANCE_NODES_V1)
-    discoveryLimit(`more than ${MAX_GUIDANCE_NODES_V1} applicable source nodes were selected.`);
-
-  const graphSources = new Map(directSources);
-  const importTargets = new Map<
-    string,
-    { input: Omit<GuidanceImportInputV1, "applicableTargetIds">; targetIds: Set<string> }
-  >();
-  const importScans = new Map<string, ReturnType<typeof scanCopilotImportOccurrencesV1>>();
-  let importEdgeCount = 0;
-  const loadImportedSource = async (path: string) => {
-    const resolved = await resolveBaseGuidanceBlobV1(
-      repositoryPath,
-      manifest.source.baseCommit,
+    if (!modularPaths.includes(path)) continue;
+    const frontmatter = parseCopilotFrontmatterV1(
       path,
+      await readBaseGuidanceFrontmatterV1(repositoryPath, resolved.resolvedPath, resolved.metadata),
     );
-    if (!resolved) importFailure("GUIDANCE_IMPORT_UNRESOLVED", path);
-    const existing = sources.get(resolved.resolvedPath);
-    if (existing) return { resolvedPath: resolved.resolvedPath, source: existing };
-    const source = await readBaseMarkdownGuidanceSourceV1(
-      repositoryPath,
-      resolved.resolvedPath,
-      resolved.metadata,
-    );
-    if (source.content.trim().length === 0)
-      importFailure("GUIDANCE_IMPORT_EMPTY", resolved.resolvedPath);
-    sources.set(resolved.resolvedPath, source);
-    return { resolvedPath: resolved.resolvedPath, source };
-  };
-  const traverseImports = async (
-    importerPath: string,
-    applicableTargetId: string,
-    depth: number,
-    ancestry: ReadonlySet<string>,
-  ): Promise<void> => {
-    const importer = sources.get(importerPath);
-    if (!importer) throw new Error(`Copilot import source ${importerPath} was not loaded.`);
-    let occurrences = importScans.get(importerPath);
-    if (!occurrences) {
-      occurrences = scanCopilotImportOccurrencesV1(importerPath, importer.content);
-      importScans.set(importerPath, occurrences);
-    }
-    if (occurrences.length > 0 && depth >= MAX_GUIDANCE_IMPORT_DEPTH_V1)
-      importFailure("GUIDANCE_IMPORT_DEPTH_LIMIT", importerPath);
-    for (const occurrence of occurrences) {
-      const occurrenceKey = session.claimOccurrence({
-        familyId: "COPILOT",
-        syntaxKind: "COPILOT_AT_PATH",
-        importerPath,
-        importerContentDigest: importer.contentDigest,
-        requestedSpecifier: occurrence.requestedSpecifier,
-        startUtf16: occurrence.startUtf16,
-        endUtf16: occurrence.endUtf16,
-      });
-      const requestedPath = resolveCopilotImportPathV1(importerPath, occurrence.requestedSpecifier);
-      const { resolvedPath: importedPath, source: imported } =
-        await loadImportedSource(requestedPath);
-      if (ancestry.has(importedPath)) importFailure("GUIDANCE_IMPORT_CYCLE", importedPath);
-      const key = JSON.stringify([
-        importerPath,
-        importer.contentDigest.value,
-        occurrence.requestedSpecifier,
-        occurrence.startUtf16,
-        occurrence.endUtf16,
-        importedPath,
-        imported.contentDigest.value,
-      ]);
-      const accumulated = importTargets.get(key) ?? {
-        input: {
-          familyId: "COPILOT" as const,
-          syntaxKind: "COPILOT_AT_PATH" as const,
-          importerPath,
-          importerContentDigest: importer.contentDigest,
-          importedPath,
-          importedContentDigest: imported.contentDigest,
-          requestedSpecifier: occurrence.requestedSpecifier,
-          startUtf16: occurrence.startUtf16,
-          endUtf16: occurrence.endUtf16,
-        },
-        targetIds: new Set<string>(),
-      };
-      if (!accumulated.targetIds.has(applicableTargetId)) {
-        session.claimImportEdge(
-          occurrenceKey,
-          { resolvedPath: importedPath, contentDigest: imported.contentDigest },
-          applicableTargetId,
-        );
-        accumulated.targetIds.add(applicableTargetId);
-        importEdgeCount += 1;
-      }
-      importTargets.set(key, accumulated);
-      if (importTargets.size > MAX_GUIDANCE_OCCURRENCES_V1)
-        discoveryLimit(
-          `more than ${MAX_GUIDANCE_OCCURRENCES_V1} import occurrences were produced.`,
-        );
-      if (importEdgeCount > MAX_GUIDANCE_EDGES_V1)
-        importFailure("GUIDANCE_IMPORT_EDGE_LIMIT", importerPath);
-      const existingGraphSource = graphSources.get(importedPath);
-      graphSources.set(
-        importedPath,
-        existingGraphSource ?? {
-          resolvedPath: importedPath,
-          contentDigest: imported.contentDigest,
-          directRecognitions: [],
-        },
-      );
-      if (graphSources.size > MAX_GUIDANCE_NODES_V1)
-        discoveryLimit(`more than ${MAX_GUIDANCE_NODES_V1} applicable source nodes were selected.`);
-      await traverseImports(
-        importedPath,
-        applicableTargetId,
-        depth + 1,
-        new Set([...ancestry, importedPath]),
-      );
-    }
-  };
-
-  for (const [path, input] of directSources) {
-    for (const recognition of input.directRecognitions) {
-      if (
-        recognition.sourceKind === "COPILOT_MODULAR" ||
-        recognition.sourceKind === "COPILOT_GEMINI"
-      ) {
-        continue;
-      }
-      await traverseImports(path, recognition.applicableTargetId, 0, new Set([path]));
-    }
+    if (frontmatter.excludesCodeReview) excludedModular.add(path);
+    else modularMatchers.set(path, compileGuidancePatternsV1(path, frontmatter.applyTo));
   }
-  const imports: GuidanceImportInputV1[] = [...importTargets.values()].map(
-    ({ input, targetIds }) => ({ ...input, applicableTargetIds: [...targetIds].sort() }),
-  );
 
-  for (const diagnostic of diagnostics) session.addDiagnostic(diagnostic);
-  return {
-    graph: buildGuidanceGraphV1(
-      manifest,
-      [...graphSources.values()],
-      imports,
-      session.finalizeDiagnostics(),
-    ),
-    blobs: new Map(
-      [...graphSources.keys()].map((path) => {
-        const source = sources.get(path);
-        if (!source) throw new Error(`Applicable Copilot source ${path} was not loaded.`);
-        return [source.contentDigest.value, Uint8Array.from(source.bytes)];
-      }),
-    ),
+  const sourceKindFor = (path: string): GuidanceSourceKindV1 =>
+    path === REPOSITORY_PATH_V1
+      ? "COPILOT_REPOSITORY"
+      : modularPaths.includes(path)
+        ? "COPILOT_MODULAR"
+        : path.endsWith("AGENTS.md")
+          ? "COPILOT_AGENTS"
+          : path === DOT_CLAUDE_PATH_V1
+            ? "COPILOT_DOT_CLAUDE"
+            : path.endsWith("CLAUDE.md")
+              ? "COPILOT_CLAUDE"
+              : "COPILOT_GEMINI";
+
+  const family: GuidanceFamilyDiscoveryV1 = {
+    familyId: "COPILOT",
+    label: "Copilot guidance source",
+    limitPath: REPOSITORY_PATH_V1,
+    importGraphLabel: "Copilot @path import graph",
+    imports: {
+      syntaxKind: "COPILOT_AT_PATH",
+      maxDepth: 5,
+      scan: scanCopilotImportOccurrencesV1,
+      resolvePath: resolveCopilotImportPathV1,
+      // Modular instructions and borrowed Gemini context are leaves: Copilot does not expand
+      // their references, so following them would transmit content the real agent never reads.
+      seedsTraversal: ({ sourceKind }) =>
+        sourceKind !== "COPILOT_MODULAR" && sourceKind !== "COPILOT_GEMINI",
+    },
   };
+  return await completeGuidanceDiscoveryV1(repositoryPath, manifest, session, family, {
+    resolvedByDiscoveredPath,
+    selectPathsForTarget: ({ targetId, applicabilityPath }) => {
+      const directories = ancestorsByTarget.get(targetId) ?? [];
+      const ancestors = (filename: string) =>
+        directories
+          .map((directory) => guidancePathInDirectoryV1(directory, filename))
+          .filter((path) => resolvedByDiscoveredPath.has(path));
+      return [
+        ...new Set([
+          ...(resolvedByDiscoveredPath.has(REPOSITORY_PATH_V1) ? [REPOSITORY_PATH_V1] : []),
+          ...ancestors("AGENTS.md"),
+          ...ancestors("CLAUDE.md"),
+          ...(resolvedByDiscoveredPath.has(DOT_CLAUDE_PATH_V1) ? [DOT_CLAUDE_PATH_V1] : []),
+          ...ancestors("GEMINI.md"),
+          ...modularPaths.filter(
+            (path) =>
+              !excludedModular.has(path) && modularMatchers.get(path)?.(applicabilityPath) === true,
+          ),
+        ]),
+      ];
+    },
+    sourceKindFor,
+  });
 }
