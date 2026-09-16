@@ -83,7 +83,9 @@ CLI using OpenRouter. Hosting-provider automation is out of scope.
    not consume author ask-backs.
 8. Command execution is performed by a bounded local executor, not an agent.
    The reviewer selects only configured named checks. Finding verification is a
-   separate author-blind model judgment over already frozen evidence.
+   separate author-blind model assessment over already frozen evidence. Active
+   V4 returns obligation, scenario-scope, and behavioral-support checks; runner
+   derives finding judgment from their combination.
 9. Token efficiency is a product invariant. Limits are explicit, measurable,
    and failure-producing; the engine must not silently truncate evidence or
    convert budget exhaustion into a successful review.

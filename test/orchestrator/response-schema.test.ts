@@ -6,12 +6,14 @@ import {
   FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
   FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
   FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
+  FINDING_VERIFICATION_CANDIDATE_V4_JSON_SCHEMA,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
 } from "../../src/index.js";
 import {
   constrainFinalConcernScopeV1,
   constrainFindingVerificationCandidateSchemaV1,
   constrainFindingVerificationCandidateSchemaV3,
+  constrainFindingVerificationCandidateSchemaV4,
   constrainRepairReferencesV1,
   constrainResponseSchemaV1,
   ResponseSchemaShapeError,
@@ -167,6 +169,24 @@ describe("constrainResponseSchemaV1", () => {
     assert.equal(rootProperty(verification.schema, "concernAssessments").minItems, 3);
     assert.equal(rootProperty(verification.schema, "concernAssessments").maxItems, 3);
     assert.doesNotMatch(JSON.stringify(verification.schema), /preliminaryFindingId|concernIndex/);
+  });
+
+  it("binds V4 basis-check counts without accepting a provider-owned finding status", () => {
+    const verification = constrainFindingVerificationCandidateSchemaV4(
+      FINDING_VERIFICATION_CANDIDATE_V4_JSON_SCHEMA,
+      2,
+      3,
+      options.identities,
+    );
+    assert.equal(rootProperty(verification.schema, "assessments").minItems, 2);
+    assert.equal(rootProperty(verification.schema, "assessments").maxItems, 2);
+    assert.equal(rootProperty(verification.schema, "concernAssessments").minItems, 3);
+    assert.equal(rootProperty(verification.schema, "concernAssessments").maxItems, 3);
+    const serialized = JSON.stringify(verification.schema);
+    assert.match(serialized, /obligationStatus/);
+    assert.match(serialized, /scenarioStatus/);
+    assert.match(serialized, /behaviorStatus/);
+    assert.doesNotMatch(serialized, /preliminaryFindingId|concernIndex|VIOLATION_DEMONSTRATED/);
   });
 
   it("requires provider fast follows to stay empty because runner derives next actions", () => {

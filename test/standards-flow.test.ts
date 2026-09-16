@@ -167,12 +167,14 @@ for (const scenario of [
         if (request.stage === "FINDING_VERIFICATION") {
           assert.doesNotMatch(JSON.stringify(request.messages), /AUTHOR_PRIVATE/);
           const value = {
-            schemaVersion: 3,
+            schemaVersion: 4,
             stage: "FINDING_VERIFICATION",
             snapshotDigest: brief.blindReviewEvidence.snapshotManifest.snapshotDigest,
             briefDigest: brief.blindReviewEvidence.briefDigest,
             assessments: brief.preliminaryFindings.map(() => ({
-              status: "VIOLATION_DEMONSTRATED",
+              obligationStatus: "APPLICABLE",
+              scenarioStatus: "IN_SCOPE",
+              behaviorStatus: "SUPPORTED",
               rationale: "Changed evidence demonstrates the selected naming-rule violation.",
             })),
             concernAssessments: brief.preliminaryConcerns.map(() => ({

@@ -64,6 +64,7 @@ async function arrangePacket(
   includeAdditionalSource = false,
   reviewedBefore = "before\n",
   reviewedAfter = "after\n",
+  canonicalRequirement = "Review the changed behavior.",
 ): Promise<{ repositoryPath: string; packetPath: string }> {
   const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-flow-"));
   await git(repositoryPath, "init", "--initial-branch=main");
@@ -100,7 +101,7 @@ async function arrangePacket(
           id: "input_requirement",
           kind: "REQUIREMENTS" as const,
           title: "Requirement",
-          content: "Review the changed behavior.",
+          content: canonicalRequirement,
           provenance: { type: "INLINE" as const, label: "flow test" },
         },
       ],
@@ -205,12 +206,14 @@ function confirmedFindingVerificationResponse(
 ): ReviewProviderResponseV1 {
   const input = JSON.parse(request.messages[1]?.content ?? "{}");
   return response({
-    schemaVersion: 3,
+    schemaVersion: 4,
     stage: "FINDING_VERIFICATION",
     snapshotDigest: input.blindReviewEvidence.snapshotManifest.snapshotDigest,
     briefDigest: input.blindReviewEvidence.briefDigest,
     assessments: input.preliminaryFindings.map(() => ({
-      status: "VIOLATION_DEMONSTRATED",
+      obligationStatus: "APPLICABLE",
+      scenarioStatus: "IN_SCOPE",
+      behaviorStatus: "SUPPORTED",
       rationale: "The cited changed evidence supports this in-scope finding.",
     })),
     concernAssessments: input.preliminaryConcerns.map(() => ({
@@ -289,7 +292,7 @@ function collectArrayLimits(schema: unknown, propertyName: string): number[] {
 }
 
 describe("two-stage review orchestrator", () => {
-  it("uses a fresh blind verifier and enforces no-violation judgments before author reconciliation", async () => {
+  it("withdraws the case 005 out-of-domain pagination finding after structured verification", async () => {
     const { repositoryPath, packetPath } = await arrangePacket(
       false,
       "AUTHOR_SECRET",
@@ -297,8 +300,18 @@ describe("two-stage review orchestrator", () => {
       undefined,
       false,
       false,
-      "export function page(items, pageNumber, pageSize) { return items.slice(0, pageSize); }\n",
-      "export function page(items, pageNumber, pageSize) { const end = pageSize; return items.slice(0, end); }\n",
+      `export function page(items, pageNumber, pageSize) {
+  const start = (pageNumber - 1) * pageSize;
+  return items.slice(start, start + pageSize);
+}
+`,
+      `export function page(items, pageNumber, pageSize) {
+  const offset = (pageNumber - 1) * pageSize;
+  const endExclusive = offset + pageSize;
+  return items.slice(offset, endExclusive);
+}
+`,
+      "Pagination uses one-based positive pages, returns up to pageSize contiguous items, and omits none.",
     );
     const calls: ReviewProviderRequestV1[] = [];
     let finalCalls = 0;
@@ -348,28 +361,30 @@ describe("two-stage review orchestrator", () => {
             /preliminaryFindingId/,
           );
           assert.equal(providerRequest.messages.length, 2);
-          assert.equal(providerRequest.responseSchema.name, "finding_verification_candidate_v3");
-          assert.match(
+          assert.equal(providerRequest.responseSchema.name, "finding_verification_candidate_v4");
+          assert.match(JSON.stringify(providerRequest.responseSchema.schema), /scenarioStatus/);
+          assert.doesNotMatch(
             JSON.stringify(providerRequest.responseSchema.schema),
-            /VIOLATION_DEMONSTRATED/,
+            /VIOLATION_DEMONSTRATED|CONFIRMED/,
           );
-          assert.doesNotMatch(JSON.stringify(providerRequest.responseSchema.schema), /CONFIRMED/);
           assert.match(
             providerRequest.messages[0]?.content ?? "",
-            /Never choose VIOLATION_DEMONSTRATED because code complies/,
+            /runner derives the finding judgment/,
           );
           const input = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
-          assert.equal(input.schemaVersion, 3);
+          assert.equal(input.schemaVersion, 4);
           assert.equal(input.preliminaryFindings.length, 1);
           assert.doesNotMatch(JSON.stringify(input.preliminaryFindings), /finding_invalid_domain/);
           return response({
-            schemaVersion: 3,
+            schemaVersion: 4,
             stage: "FINDING_VERIFICATION",
             snapshotDigest: input.blindReviewEvidence.snapshotManifest.snapshotDigest,
             briefDigest: input.blindReviewEvidence.briefDigest,
             assessments: [
               {
-                status: "NO_VIOLATION",
+                obligationStatus: "APPLICABLE",
+                scenarioStatus: "OUT_OF_SCOPE",
+                behaviorStatus: "REFUTED",
                 rationale:
                   "Page zero is outside the stated valid input domain and no validation behavior is required.",
               },
@@ -456,6 +471,19 @@ describe("two-stage review orchestrator", () => {
     try {
       const result = await runTwoStageReviewV1(packetPath, config, provider);
       assert.equal(result.report.verdict, "READY");
+      assert.deepEqual(result.report.findings, []);
+      const persistedVerification = JSON.parse(
+        await readFile(join(packetPath, "review", "finding-verification.json"), "utf8"),
+      );
+      assert.deepEqual(persistedVerification.assessments[0], {
+        preliminaryFindingId: "finding_invalid_domain",
+        status: "NO_VIOLATION",
+        obligationStatus: "APPLICABLE",
+        scenarioStatus: "OUT_OF_SCOPE",
+        behaviorStatus: "REFUTED",
+        rationale:
+          "Page zero is outside the stated valid input domain and no validation behavior is required.",
+      });
       assert.deepEqual(
         calls.map((call) => call.stage),
         ["PRELIMINARY", "FINDING_VERIFICATION", "FINAL", "FINAL"],
@@ -506,8 +534,8 @@ describe("two-stage review orchestrator", () => {
           });
         }
         if (providerRequest.stage === "FINDING_VERIFICATION") {
-          assert.equal(providerRequest.responseSchema.name, "finding_verification_candidate_v3");
-          assert.equal(input.schemaVersion, 3);
+          assert.equal(providerRequest.responseSchema.name, "finding_verification_candidate_v4");
+          assert.equal(input.schemaVersion, 4);
           assert.deepEqual(input.preliminaryFindings, []);
           assert.deepEqual(input.preliminaryConcerns, [
             {
@@ -517,7 +545,7 @@ describe("two-stage review orchestrator", () => {
           ]);
           assert.doesNotMatch(JSON.stringify(providerRequest), /AUTHOR_SECRET|concernIndex/);
           return response({
-            schemaVersion: 3,
+            schemaVersion: 4,
             stage: "FINDING_VERIFICATION",
             snapshotDigest: brief.snapshotManifest.snapshotDigest,
             briefDigest: brief.briefDigest,
@@ -623,7 +651,7 @@ describe("two-stage review orchestrator", () => {
         assert.equal(providerRequest.stage, "FINDING_VERIFICATION");
         assert.doesNotMatch(JSON.stringify(providerRequest), /AUTHOR_SECRET/);
         return response({
-          schemaVersion: 3,
+          schemaVersion: 4,
           stage: "FINDING_VERIFICATION",
           snapshotDigest: input.blindReviewEvidence.snapshotManifest.snapshotDigest,
           briefDigest: input.blindReviewEvidence.briefDigest,
@@ -2021,13 +2049,15 @@ describe("two-stage review orchestrator", () => {
         if (request.stage === "FINDING_VERIFICATION") {
           const evidence = input.blindReviewEvidence;
           return response({
-            schemaVersion: 3,
+            schemaVersion: 4,
             stage: "FINDING_VERIFICATION",
             snapshotDigest: evidence.snapshotManifest.snapshotDigest,
             briefDigest: evidence.briefDigest,
             assessments: [
               {
-                status: "VIOLATION_DEMONSTRATED",
+                obligationStatus: "APPLICABLE",
+                scenarioStatus: "IN_SCOPE",
+                behaviorStatus: "SUPPORTED",
                 rationale: "The changed behavior demonstrates the finding.",
               },
             ],
@@ -2563,7 +2593,7 @@ describe("two-stage review orchestrator", () => {
         if (providerRequest.stage === "FINDING_VERIFICATION") {
           const evidence = brief.blindReviewEvidence;
           return response({
-            schemaVersion: 3,
+            schemaVersion: 4,
             stage: "FINDING_VERIFICATION",
             snapshotDigest: evidence.snapshotManifest.snapshotDigest,
             briefDigest: evidence.briefDigest,

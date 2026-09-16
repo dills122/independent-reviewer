@@ -5,19 +5,25 @@ import {
   assembleFindingVerificationV1,
   assembleFindingVerificationV2,
   assembleFindingVerificationV3,
+  assembleFindingVerificationV4,
   assertFindingVerificationScopeV1,
   assertFindingVerificationScopeV2,
   assertFindingVerificationScopeV3,
+  assertFindingVerificationScopeV4,
   FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
   FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
   FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
+  FINDING_VERIFICATION_CANDIDATE_V4_JSON_SCHEMA,
   FINDING_VERIFICATION_V1_JSON_SCHEMA,
   FINDING_VERIFICATION_V2_JSON_SCHEMA,
   FINDING_VERIFICATION_V3_JSON_SCHEMA,
+  FINDING_VERIFICATION_V4_JSON_SCHEMA,
   FindingVerificationCandidateV1Schema,
   FindingVerificationCandidateV2Schema,
   FindingVerificationCandidateV3Schema,
+  FindingVerificationCandidateV4Schema,
   FindingVerificationV1Schema,
+  FindingVerificationV4Schema,
 } from "../../src/contracts/finding-verification.js";
 
 const digest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
@@ -188,6 +194,72 @@ describe("finding verification contract", () => {
     );
   });
 
+  it("derives V4 finding judgments from explicit obligation, scope, and behavior checks", () => {
+    const candidate = FindingVerificationCandidateV4Schema.parse({
+      schemaVersion: 4,
+      stage: "FINDING_VERIFICATION",
+      snapshotDigest: digest,
+      briefDigest: digest,
+      assessments: [
+        {
+          obligationStatus: "APPLICABLE",
+          scenarioStatus: "OUT_OF_SCOPE",
+          behaviorStatus: "SUPPORTED",
+          rationale: "Page zero is outside the stated positive-page input domain.",
+        },
+        {
+          obligationStatus: "APPLICABLE",
+          scenarioStatus: "IN_SCOPE",
+          behaviorStatus: "REFUTED",
+          rationale: "The claimed runtime behavior is false.",
+        },
+        {
+          obligationStatus: "APPLICABLE",
+          scenarioStatus: "IN_SCOPE",
+          behaviorStatus: "SUPPORTED",
+          rationale: "Changed evidence demonstrates the in-scope violation.",
+        },
+        {
+          obligationStatus: "UNDETERMINED",
+          scenarioStatus: "UNDETERMINED",
+          behaviorStatus: "NOT_ESTABLISHED",
+          rationale: "Frozen evidence cannot establish the obligation or behavior.",
+        },
+      ],
+      concernAssessments: [],
+    });
+
+    const assembled = assembleFindingVerificationV4(
+      candidate,
+      ["finding_domain", "finding_false_behavior", "finding_defect", "finding_unknown"],
+      [],
+    );
+
+    assert.deepEqual(
+      assembled.assessments.map((assessment) => assessment.status),
+      ["NO_VIOLATION", "NO_VIOLATION", "VIOLATION_DEMONSTRATED", "INCONCLUSIVE"],
+    );
+    assert.doesNotMatch(JSON.stringify(candidate), /"status"|preliminaryFindingId/);
+    assert.doesNotThrow(() =>
+      assertFindingVerificationScopeV4(
+        assembled,
+        ["finding_domain", "finding_false_behavior", "finding_defect", "finding_unknown"],
+        [],
+      ),
+    );
+    assert.throws(
+      () =>
+        FindingVerificationV4Schema.parse({
+          ...assembled,
+          assessments: [
+            { ...assembled.assessments[0], status: "VIOLATION_DEMONSTRATED" },
+            ...assembled.assessments.slice(1),
+          ],
+        }),
+      /derived status/i,
+    );
+  });
+
   it("rejects duplicate, missing, and unknown preliminary finding IDs", () => {
     const duplicate = {
       ...verification(),
@@ -228,6 +300,14 @@ describe("finding verification contract", () => {
     assert.deepEqual(
       JSON.parse(await readFile("schemas/finding-verification-v3.schema.json", "utf8")),
       FINDING_VERIFICATION_V3_JSON_SCHEMA,
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile("schemas/finding-verification-candidate-v4.schema.json", "utf8")),
+      FINDING_VERIFICATION_CANDIDATE_V4_JSON_SCHEMA,
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile("schemas/finding-verification-v4.schema.json", "utf8")),
+      FINDING_VERIFICATION_V4_JSON_SCHEMA,
     );
   });
 });
