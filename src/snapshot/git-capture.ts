@@ -1379,7 +1379,7 @@ export async function captureGitSnapshotV1(
   const excludedPatterns = compileExclusionPatterns(options.excludedPathPatterns ?? []);
   const roleOverrides = options.pathRoleOverrides ?? new Map<string, PathRoleV1>();
   const explicitReferences =
-    request.schemaVersion === 2 ? selectedReferences(request.canonicalInputs) : [];
+    request.schemaVersion !== 1 ? selectedReferences(request.canonicalInputs) : [];
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const first = await collectState(
