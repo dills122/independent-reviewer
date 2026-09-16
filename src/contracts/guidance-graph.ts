@@ -629,6 +629,9 @@ export const GuidanceGraphV1Schema = GuidanceGraphBaseV1Schema.superRefine(valid
 export type GuidanceGraphV1 = z.infer<typeof GuidanceGraphV1Schema>;
 export type GuidanceTargetV1 = z.infer<typeof GuidanceTargetV1Schema>;
 export type GuidanceDiagnosticV1 = z.infer<typeof GuidanceDiagnosticV1Schema>;
+export type GuidanceFamilyV1 = z.infer<typeof GuidanceFamilyV1Schema>;
+export type GuidanceSourceKindV1 = z.infer<typeof GuidanceSourceKindV1Schema>;
+export type GuidanceImportSyntaxKindV1 = z.infer<typeof GuidanceImportSyntaxKindV1Schema>;
 export type DirectGuidanceRecognitionV1 = z.infer<typeof DirectRecognitionV1Schema>;
 
 export interface DirectGuidanceSourceInputV1 {
