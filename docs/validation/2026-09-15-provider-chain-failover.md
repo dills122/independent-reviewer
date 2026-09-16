@@ -58,7 +58,24 @@ model fallback remains a separate quality decision.
 - OpenRouter adapter suite: 30 tests passed, including open and pinned
   multi-provider failure-chain regressions.
 - Full dry evaluation matrix: 30/30 cases passed, zero provider calls, zero cost.
-- Repository gate: 732 coverage tests and 35 provider-free CLI E2E tests passed;
+- Repository gate: 733 coverage tests and 35 provider-free CLI E2E tests passed;
   dependency audit reported zero vulnerabilities.
 - Local AI-context check passed with 57 skills and expected compatibility links.
-- Paid qualification of this revised route pool has not yet been performed.
+
+## Paid qualification
+
+Full live run `failover-v6-full-644d12b-20260915-live` completed all 30 cases.
+Across 83 calls, 80 succeeded and three provider failures were recovered through
+the revised route pool. Successful calls reached all four configured providers:
+CoreWeave 51, DeepInfra 25, AkashML 2, and DekaLLM 2. Provider-reported cost was
+`$0.021741966`, with three unknown-cost attempts conservatively accounted as
+`$0.004266801` by admission controls.
+
+The run matched 27/30 expected verdicts. Cases 14 and 22 exposed an unrelated V3
+standards-reference capture regression, fixed in this branch. Targeted paid run
+`v3-reference-fix-8548672-20260915-live` then matched both expected verdicts and
+confirmed `API_NAMES.md` was captured in each neutral brief. Its five calls all
+succeeded through CoreWeave at a provider-reported cost of `$0.00144297`.
+
+Case 30 remains a known semantic-classification miss tracked by issue #171. It is
+not a provider-delivery or failover failure and does not block this routing change.
