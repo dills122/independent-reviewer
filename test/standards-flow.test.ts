@@ -923,7 +923,7 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
       await readFile(join(f.packet, "review", "report-metadata.json"), "utf8"),
     );
     assert.deepEqual(metadata.guidanceGraphDigest, inspected.guidanceGraphDigest);
-    assert.equal(metadata.promptVersion, "standards-review-v18");
+    assert.equal(metadata.promptVersion, "standards-review-v19");
     assert.match(output.join("\n"), /Standards satisfied/);
 
     const firstRunCallCount = requests.length;

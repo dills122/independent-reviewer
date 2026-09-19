@@ -491,10 +491,7 @@
           },
           "status": {
             "type": "string",
-            "enum": [
-              "CONTRADICTED",
-              "UNVERIFIED"
-            ]
+            "const": "UNVERIFIED"
           },
           "explanation": {
             "type": "string",

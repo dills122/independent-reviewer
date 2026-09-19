@@ -2,6 +2,7 @@ import * as z from "zod";
 
 import {
   type AuthorPacketV1,
+  applyAdmissiblePreliminaryConcernsV1,
   assembleFindingVerificationV4,
   assertFindingVerificationScopeV4,
   FindingVerificationCandidateV4Schema,
@@ -351,7 +352,9 @@ export async function parsePreliminary(
 ): Promise<ReviewPreliminary> {
   const parsed = (
     isStandardsBrief(brief) ? StandardsPreliminaryV2Schema : PreliminaryAssessmentV1Schema
-  ).safeParse(applyRunnerOwnedStandardsSeverityV1(value, brief));
+  ).safeParse(
+    applyAdmissiblePreliminaryConcernsV1(applyRunnerOwnedStandardsSeverityV1(value, brief)),
+  );
   if (!parsed.success) {
     throw new PreliminaryOutputValidationError(
       `Invalid preliminary assessment: ${z.prettifyError(parsed.error)}`,

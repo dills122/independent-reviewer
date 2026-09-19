@@ -244,7 +244,6 @@ function finalCoverage() {
     authorVerificationClaims: [
       {
         claimIndex: 0,
-        status: "UNVERIFIED" as const,
         explanation: "The reviewer did not run the author-reported command.",
       },
     ],
@@ -645,6 +644,108 @@ describe("two-stage review orchestrator", () => {
         await readFile(join(packetPath, "review", "finding-verification.json"), "utf8"),
       );
       assert.equal(persistedVerification.assessments[0].status, "INCONCLUSIVE");
+      assert.deepEqual(
+        calls.map((call) => call.stage),
+        ["PRELIMINARY", "FINDING_VERIFICATION", "FINAL"],
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("drops a placeholder preliminary limitation before verification and the final report", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket(
+      false,
+      "AUTHOR_SECRET",
+      undefined,
+      undefined,
+      false,
+      false,
+      "export function page(items, pageNumber, pageSize) { return items.slice(0, pageSize); }\n",
+      "export function page(items, pageNumber, pageSize) { const end = pageSize; return items.slice(0, end); }\n",
+    );
+    const calls: ReviewProviderRequestV1[] = [];
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls.push(providerRequest);
+        const input = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        const brief = input.blindReviewEvidence ?? input;
+        if (providerRequest.stage === "PRELIMINARY") {
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "The specified pagination behavior is preserved.",
+            inspectedPaths: ["reviewed.ts"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [],
+            evidenceGaps: ["type"],
+            limitations: ["type", "The selected rules conflict for the changed path."],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        if (providerRequest.stage === "FINDING_VERIFICATION") {
+          assert.deepEqual(input.preliminaryConcerns, [
+            {
+              kind: "LIMITATION",
+              text: "The selected rules conflict for the changed path.",
+            },
+          ]);
+          return response({
+            schemaVersion: 4,
+            stage: "FINDING_VERIFICATION",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            assessments: [],
+            concernAssessments: [
+              {
+                status: "BLOCKING_UNCERTAINTY_DEMONSTRATED",
+                rationale: "The incompatible rules decide the changed path.",
+              },
+            ],
+          });
+        }
+        return response({
+          schemaVersion: 3,
+          stage: "FINAL",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "The rule conflict remains unresolved.",
+          findings: [],
+          withdrawnPreliminaryFindings: [],
+          authorClaims: [],
+          authorVerificationClaims: finalCoverage().authorVerificationClaims,
+          preliminaryConcernDispositions: [
+            {
+              kind: "LIMITATION",
+              concernIndex: 0,
+              disposition: "REMAINS",
+              rationale: "The incompatible rules still decide the changed path.",
+            },
+          ],
+          limitations: [],
+          verdict: "UNABLE_TO_VERIFY",
+          nextActions: { blockers: [], fastFollows: [] },
+        });
+      },
+    };
+
+    try {
+      const result = await runTwoStageReviewV1(packetPath, config, provider);
+      const persistedPreliminary = JSON.parse(
+        await readFile(join(packetPath, "review", "preliminary.json"), "utf8"),
+      );
+      assert.deepEqual(persistedPreliminary.evidenceGaps, []);
+      assert.deepEqual(persistedPreliminary.limitations, [
+        "The selected rules conflict for the changed path.",
+      ]);
+      assert.deepEqual(
+        result.report.preliminaryConcernDispositions.map((entry) => entry.preliminaryConcern),
+        ["The selected rules conflict for the changed path."],
+      );
+      assert.doesNotMatch(JSON.stringify(result.report), /"type"/);
       assert.deepEqual(
         calls.map((call) => call.stage),
         ["PRELIMINARY", "FINDING_VERIFICATION", "FINAL"],
@@ -1282,7 +1383,6 @@ describe("two-stage review orchestrator", () => {
           authorVerificationClaims: [
             {
               claimIndex: 0,
-              status: "UNVERIFIED",
               explanation: "The reviewer did not run the author-reported command.",
             },
           ],
@@ -2892,7 +2992,6 @@ describe("two-stage review orchestrator", () => {
           authorVerificationClaims: [
             {
               claimIndex: 0,
-              status: "UNVERIFIED",
               explanation: "The reviewer did not run the author-reported command.",
             },
           ],
