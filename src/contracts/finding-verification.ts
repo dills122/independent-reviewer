@@ -267,6 +267,16 @@ export function assembleFindingVerificationV3(
 function deriveFindingVerificationStatusV4(
   assessment: z.infer<typeof FindingVerificationBasisV4Schema>,
 ): z.infer<typeof FindingVerificationAssessmentV4Schema>["status"] {
+  // An absent obligation cannot silently withdraw a finding whose concrete
+  // in-domain scenario and changed behavior the same response affirmed; that
+  // combination is internally inconsistent and stays uncertain, not clean.
+  if (
+    assessment.obligationStatus === "ABSENT_OR_INAPPLICABLE" &&
+    assessment.scenarioStatus === "IN_SCOPE" &&
+    assessment.behaviorStatus === "SUPPORTED"
+  ) {
+    return "INCONCLUSIVE";
+  }
   if (
     assessment.obligationStatus === "ABSENT_OR_INAPPLICABLE" ||
     assessment.scenarioStatus === "OUT_OF_SCOPE" ||

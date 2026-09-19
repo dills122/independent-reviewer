@@ -62,6 +62,10 @@ limitations is recorded in
 Runner-derived finding judgments from explicit obligation, scenario-scope, and
 behavior checks are recorded in
 [ADR-020](decisions/020-derive-finding-verification-from-structured-checks.md).
+Explicit functional requirements as applicable obligations, and the refusal to
+withdraw a finding on a denied obligation the same checks contradict, are
+recorded in
+[ADR-021](decisions/021-treat-functional-requirements-as-verifiable-obligations.md).
 Isolating capture from developer Git configuration is recorded in
 [ADR-017](decisions/017-isolate-capture-from-developer-git-configuration.md).
 Proposed isolated named-check contracts, Linux backend qualification, and the
