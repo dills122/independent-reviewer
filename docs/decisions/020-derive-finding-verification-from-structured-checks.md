@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted
+Accepted; obligation semantics and the absent-obligation row of the derivation
+table refined by
+[ADR-021](021-treat-functional-requirements-as-verifiable-obligations.md)
 
 ## Date
 

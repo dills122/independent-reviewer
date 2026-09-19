@@ -260,6 +260,66 @@ describe("finding verification contract", () => {
     );
   });
 
+  it("keeps an inconsistent absent-obligation withdrawal inconclusive without blocking out-of-domain rejection", () => {
+    const candidate = FindingVerificationCandidateV4Schema.parse({
+      schemaVersion: 4,
+      stage: "FINDING_VERIFICATION",
+      snapshotDigest: digest,
+      briefDigest: digest,
+      assessments: [
+        {
+          obligationStatus: "ABSENT_OR_INAPPLICABLE",
+          scenarioStatus: "IN_SCOPE",
+          behaviorStatus: "SUPPORTED",
+          rationale: "The supplied read requirement is not a legal or policy obligation.",
+        },
+        {
+          obligationStatus: "ABSENT_OR_INAPPLICABLE",
+          scenarioStatus: "OUT_OF_SCOPE",
+          behaviorStatus: "SUPPORTED",
+          rationale: "The scenario depends on inputs outside the stated domain.",
+        },
+        {
+          obligationStatus: "ABSENT_OR_INAPPLICABLE",
+          scenarioStatus: "NO_INPUT_SCENARIO",
+          behaviorStatus: "SUPPORTED",
+          rationale: "No supplied requirement or selected rule asks for the extra work.",
+        },
+        {
+          obligationStatus: "ABSENT_OR_INAPPLICABLE",
+          scenarioStatus: "IN_SCOPE",
+          behaviorStatus: "NOT_ESTABLISHED",
+          rationale: "Neither the obligation nor the claimed behavior is established.",
+        },
+      ],
+      concernAssessments: [],
+    });
+
+    const findingIds = [
+      "finding_inconsistent",
+      "finding_out_of_domain",
+      "finding_invented",
+      "finding_unestablished",
+    ];
+    const assembled = assembleFindingVerificationV4(candidate, findingIds, []);
+
+    assert.deepEqual(
+      assembled.assessments.map((assessment) => assessment.status),
+      ["INCONCLUSIVE", "NO_VIOLATION", "NO_VIOLATION", "NO_VIOLATION"],
+    );
+    assert.throws(
+      () =>
+        FindingVerificationV4Schema.parse({
+          ...assembled,
+          assessments: [
+            { ...assembled.assessments[0], status: "NO_VIOLATION" },
+            ...assembled.assessments.slice(1),
+          ],
+        }),
+      /derived status/i,
+    );
+  });
+
   it("rejects duplicate, missing, and unknown preliminary finding IDs", () => {
     const duplicate = {
       ...verification(),

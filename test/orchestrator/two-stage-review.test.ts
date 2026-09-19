@@ -499,6 +499,161 @@ describe("two-stage review orchestrator", () => {
     }
   });
 
+  it("keeps a supported owner-access inversion blocking when verification denies the obligation", async () => {
+    const { repositoryPath, packetPath } = await arrangePacket(
+      false,
+      "AUTHOR_SECRET",
+      undefined,
+      undefined,
+      false,
+      false,
+      `export function canRead(user, document) {
+  return user.id === document.ownerId;
+}
+`,
+      `export function canRead(user, document) {
+  return user.id !== document.ownerId;
+}
+`,
+      "Only the owner of a document may read it; every other user is denied.",
+    );
+    const calls: ReviewProviderRequestV1[] = [];
+    const provider: ReviewProviderV1 = {
+      auditRequest: mockAuditRequest,
+      complete: async (providerRequest) => {
+        calls.push(providerRequest);
+        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+        if (providerRequest.stage === "PRELIMINARY") {
+          return response({
+            schemaVersion: 1,
+            stage: "PRELIMINARY",
+            snapshotDigest: brief.snapshotManifest.snapshotDigest,
+            briefDigest: brief.briefDigest,
+            summary: "The changed predicate inverts owner access.",
+            inspectedPaths: ["reviewed.ts"],
+            canonicalInputCoverage: canonicalInputCoverage(),
+            findings: [
+              {
+                id: "finding_owner_inversion",
+                severity: "P1",
+                title: "Owner access is inverted",
+                scenario:
+                  "Calling canRead with the owning user returns false, and a non-owner returns true.",
+                impact: "Owners lose access and every other user gains it.",
+                evidence: [
+                  {
+                    path: "reviewed.ts",
+                    anchor: "LINE_RANGE",
+                    side: "HEAD",
+                    startLine: 2,
+                    endLine: 2,
+                    detail: "The predicate compares with !== instead of ===.",
+                  },
+                ],
+                correction: "Compare the identifiers with === again.",
+              },
+            ],
+            evidenceGaps: [],
+            limitations: [],
+            nextAction: "REQUEST_AUTHOR_PACKET",
+          });
+        }
+        if (providerRequest.stage === "FINDING_VERIFICATION") {
+          const input = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
+          assert.match(
+            providerRequest.messages[0]?.content ?? "",
+            /supplied functional or behavioral requirement/,
+          );
+          return response({
+            schemaVersion: 4,
+            stage: "FINDING_VERIFICATION",
+            snapshotDigest: input.blindReviewEvidence.snapshotManifest.snapshotDigest,
+            briefDigest: input.blindReviewEvidence.briefDigest,
+            assessments: [
+              {
+                obligationStatus: "ABSENT_OR_INAPPLICABLE",
+                scenarioStatus: "IN_SCOPE",
+                behaviorStatus: "SUPPORTED",
+                rationale: "The read requirement is not a legal or written policy obligation.",
+              },
+            ],
+            concernAssessments: [],
+          });
+        }
+        const envelope = providerRequest.messages.find((message) =>
+          message.content.includes('"type":"FINDING_VERIFICATION"'),
+        );
+        assert.ok(envelope);
+        assert.match(envelope.content, /"status":"INCONCLUSIVE"/);
+        return response({
+          schemaVersion: 1,
+          stage: "FINAL",
+          snapshotDigest: brief.snapshotManifest.snapshotDigest,
+          briefDigest: brief.briefDigest,
+          summary: "The inverted owner check still blocks the change.",
+          findings: [
+            {
+              id: "finding_owner_inversion",
+              severity: "P1",
+              title: "Owner access is inverted",
+              scenario:
+                "Calling canRead with the owning user returns false, and a non-owner returns true.",
+              impact: "Owners lose access and every other user gains it.",
+              evidence: [
+                {
+                  path: "reviewed.ts",
+                  anchor: "LINE_RANGE",
+                  side: "HEAD",
+                  startLine: 2,
+                  endLine: 2,
+                  detail: "The predicate compares with !== instead of ===.",
+                },
+              ],
+              correction: "Compare the identifiers with === again.",
+              origin: "PRELIMINARY",
+              emergenceRationale: null,
+            },
+          ],
+          preliminaryFindingDispositions: [
+            {
+              preliminaryFindingId: "finding_owner_inversion",
+              disposition: "RETAINED",
+              finalFindingId: "finding_owner_inversion",
+              rationale: "The changed predicate still denies owners and admits non-owners.",
+            },
+          ],
+          ...finalCoverage(),
+          authorClaims: [],
+          limitations: [],
+          verdict: "NOT_READY",
+          nextActions: {
+            blockers: ["Compare the identifiers with === again."],
+            fastFollows: [],
+          },
+        });
+      },
+    };
+
+    try {
+      const result = await runTwoStageReviewV1(packetPath, config, provider);
+      assert.equal(result.report.verdict, "NOT_READY");
+      assert.deepEqual(result.report.nextActions.blockers, [
+        "Compare the identifiers with === again.",
+      ]);
+      assert.equal(result.report.findings.length, 1);
+      const persistedVerification = JSON.parse(
+        await readFile(join(packetPath, "review", "finding-verification.json"), "utf8"),
+      );
+      assert.equal(persistedVerification.assessments[0].status, "INCONCLUSIVE");
+      assert.deepEqual(
+        calls.map((call) => call.stage),
+        ["PRELIMINARY", "FINDING_VERIFICATION", "FINAL"],
+      );
+    } finally {
+      await rm(repositoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("verifies limitation-only preliminary claims and prevents final free-form reintroduction", async () => {
     const { repositoryPath, packetPath } = await arrangePacket(
       false,
