@@ -4,10 +4,12 @@ import { resolve } from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  applyAdmissiblePreliminaryConcernsV1,
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
   FINAL_REVIEW_REPORT_V1_JSON_SCHEMA,
   FinalReviewReportV1Schema,
+  isAdmissiblePreliminaryConcernV1,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
   PreliminaryAssessmentV1Schema,
 } from "../../src/index.js";
@@ -200,6 +202,42 @@ describe("review result contracts", () => {
     assert.equal(FinalReviewReportV1Schema.safeParse(report).success, true);
   });
 
+  it("drops placeholder preliminary concerns and keeps readable ones in order", () => {
+    const normalized = applyAdmissiblePreliminaryConcernsV1({
+      evidenceGaps: ["type", "  ", "The dependency contract is unavailable.", "id"],
+      limitations: ["The selected rules conflict for the changed path.", "TODO"],
+    }) as { evidenceGaps: string[]; limitations: string[] };
+
+    assert.deepEqual(normalized.evidenceGaps, ["The dependency contract is unavailable."]);
+    assert.deepEqual(normalized.limitations, ["The selected rules conflict for the changed path."]);
+    assert.equal(isAdmissiblePreliminaryConcernV1("type"), false);
+    assert.equal(isAdmissiblePreliminaryConcernV1("no runtime contract"), true);
+  });
+
+  it("leaves a preliminary assessment without concern arrays untouched", () => {
+    assert.deepEqual(applyAdmissiblePreliminaryConcernsV1({ summary: "text" }), {
+      summary: "text",
+    });
+    assert.deepEqual(applyAdmissiblePreliminaryConcernsV1(["type"]), ["type"]);
+  });
+
+  it("records every author verification claim as runner-owned UNVERIFIED", () => {
+    const report = finalReport();
+    for (const status of ["CONFIRMED", "CONTRADICTED"]) {
+      report.authorVerificationClaims = [
+        {
+          claimIndex: 0,
+          command: "node checks.mjs",
+          claimedOutcome: "PASSED",
+          claimedSummary: "Reported by the author.",
+          status,
+          explanation: "The runner did not execute the author-reported command.",
+        },
+      ];
+      assert.equal(FinalReviewReportV1Schema.safeParse(report).success, false);
+    }
+  });
+
   it("does not promote author-reported verification to runner-confirmed evidence", () => {
     const report = finalReport();
     report.authorVerificationClaims = [
@@ -320,7 +358,6 @@ describe("final candidate assembly", () => {
   };
   const claim = (claimIndex: number) => ({
     claimIndex,
-    status: "UNVERIFIED",
     explanation: "No runner evidence.",
   });
   const concern = (kind: string, concernIndex: number) => ({
@@ -352,6 +389,7 @@ describe("final candidate assembly", () => {
         command: claims[index]?.command,
         claimedOutcome: claims[index]?.outcome,
         claimedSummary: claims[index]?.summary,
+        status: "UNVERIFIED",
       })),
     );
     assert.deepEqual(
@@ -390,12 +428,14 @@ describe("final candidate assembly", () => {
     }
   });
 
-  it("rejects model-supplied source text and confirmed author test claims", () => {
+  it("rejects model-supplied source text and every model-supplied author disposition", () => {
     for (const extra of [
       { claimedSummary: claims[0]?.summary },
       { command: "npm test" },
       { claimedOutcome: "PASSED" },
       { status: "CONFIRMED" },
+      { status: "CONTRADICTED" },
+      { status: "UNVERIFIED" },
     ]) {
       assert.throws(() =>
         materializeFinalReviewCandidateV1(

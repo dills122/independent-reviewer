@@ -185,6 +185,7 @@ export type {
   ReviewFindingV1,
 } from "./review-results.js";
 export {
+  applyAdmissiblePreliminaryConcernsV1,
   FINAL_REVIEW_CANDIDATE_V1_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V2_JSON_SCHEMA,
   FINAL_REVIEW_CANDIDATE_V3_JSON_SCHEMA,
@@ -193,6 +194,7 @@ export {
   FinalReviewCandidateV2Schema,
   FinalReviewCandidateV3Schema,
   FinalReviewReportV1Schema,
+  isAdmissiblePreliminaryConcernV1,
   PRELIMINARY_ASSESSMENT_V1_JSON_SCHEMA,
   PreliminaryAssessmentV1Schema,
   ReviewEvidenceV1Schema,

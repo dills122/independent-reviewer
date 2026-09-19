@@ -6,6 +6,7 @@ export function asFinalCandidateV3(value: unknown): unknown {
   const {
     findings,
     preliminaryFindingDispositions,
+    authorVerificationClaims,
     changedPathCoverage: _changedPathCoverage,
     canonicalInputCoverage: _canonicalInputCoverage,
     ...rest
@@ -14,6 +15,9 @@ export function asFinalCandidateV3(value: unknown): unknown {
   return {
     ...rest,
     schemaVersion: 3,
+    authorVerificationClaims: (
+      (authorVerificationClaims ?? []) as Array<Record<string, unknown>>
+    ).map(({ status: _status, ...claim }) => claim),
     findings: (findings as Array<Record<string, unknown>>).map(
       ({ id, origin: _origin, emergenceRationale, ...finding }) => ({
         ...finding,

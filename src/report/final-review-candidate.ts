@@ -175,6 +175,7 @@ function materializeExpandedCandidate(
         command: source.command,
         claimedOutcome: source.outcome,
         claimedSummary: source.summary,
+        status: "UNVERIFIED" as const,
       };
     }),
     preliminaryConcernDispositions: candidate.preliminaryConcernDispositions.map(

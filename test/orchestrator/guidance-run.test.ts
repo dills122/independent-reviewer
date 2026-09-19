@@ -499,11 +499,11 @@ test("final resume rejects a replaced import before any resumed call", async () 
     );
     const runRecordPath = join(packetPath, "review", "run-record.jsonl");
     const currentRunRecord = await readFile(runRecordPath, "utf8");
-    assert.match(currentRunRecord, /"promptVersion":"standards-review-v18"/);
+    assert.match(currentRunRecord, /"promptVersion":"standards-review-v19"/);
     await writeFile(
       runRecordPath,
       currentRunRecord.replace(
-        '"promptVersion":"standards-review-v18"',
+        '"promptVersion":"standards-review-v19"',
         '"promptVersion":"standards-review-v17"',
       ),
     );
@@ -608,16 +608,16 @@ test("guidance-capable run binds prompt identity and withholds author context", 
       .split("\n")
       .map((line) => JSON.parse(line));
     const started = events.find((event) => event.type === "RUN_STARTED");
-    assert.equal(started.promptVersion, "standards-review-v18");
+    assert.equal(started.promptVersion, "standards-review-v19");
     assert.equal(started.guidanceGraphDigest.value.length, 64);
     assert.equal(events.find((event) => event.type === "GUIDANCE_ADMISSION")?.status, "ACCEPTED");
     assert.equal(
       events.find((event) => event.type === "CALL_STARTED")?.promptVersion,
-      "standards-review-v18",
+      "standards-review-v19",
     );
     const reportMetadata = JSON.parse(await readFile(result.reportMetadataPath, "utf8"));
     assert.deepEqual(reportMetadata.guidanceGraphDigest, started.guidanceGraphDigest);
-    assert.equal(reportMetadata.promptVersion, "standards-review-v18");
+    assert.equal(reportMetadata.promptVersion, "standards-review-v19");
     assert.equal(reportMetadata.preliminarySchema, "standards_preliminary_v2");
     assert.equal(reportMetadata.finalSchema, "standards_candidate_v3");
     assert.deepEqual(

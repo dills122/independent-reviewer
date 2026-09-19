@@ -89,6 +89,45 @@ const PreliminaryAssessmentBaseV1Schema = z.strictObject({
   nextAction: z.literal("REQUEST_AUTHOR_PACKET"),
 });
 
+/**
+ * The shortest preliminary concern the final report is allowed to repeat back to a reader.
+ *
+ * A paid matrix persisted a limitation whose complete text was `type`, invented an interpretation
+ * for it during verification, and printed `LIMITATION RESOLVED: type` in the final report (#168).
+ * A concern is a sentence about missing evidence, so a fragment that cannot carry one is dropped
+ * before it reaches verification indices or user-facing text rather than failing the whole
+ * response and buying a repair call for one junk entry.
+ */
+const MINIMUM_CONCERN_CHARACTERS_V1 = 12;
+const MINIMUM_CONCERN_WORDS_V1 = 3;
+
+/** True when a preliminary evidence gap or limitation carries a readable statement. */
+export function isAdmissiblePreliminaryConcernV1(concern: string): boolean {
+  const trimmed = concern.trim();
+  if (trimmed.length < MINIMUM_CONCERN_CHARACTERS_V1) return false;
+  return (trimmed.match(/[A-Za-z0-9]+/g) ?? []).length >= MINIMUM_CONCERN_WORDS_V1;
+}
+
+/**
+ * Drops empty, placeholder, and fragmentary preliminary concerns before they are persisted.
+ *
+ * Normalization happens before the preliminary is written, so verification indices, final concern
+ * dispositions, and the rendered report all agree on the same surviving list.
+ */
+export function applyAdmissiblePreliminaryConcernsV1(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const candidate = value as Record<string, unknown>;
+  const normalized = { ...candidate };
+  for (const field of ["evidenceGaps", "limitations"] as const) {
+    const concerns = candidate[field];
+    if (!Array.isArray(concerns)) continue;
+    normalized[field] = concerns.filter(
+      (concern) => typeof concern !== "string" || isAdmissiblePreliminaryConcernV1(concern),
+    );
+  }
+  return normalized;
+}
+
 export function validatePreliminaryStructure(
   assessment: Omit<
     z.infer<typeof PreliminaryAssessmentBaseV1Schema>,
@@ -164,7 +203,9 @@ const FinalReviewReportBaseV1Schema = z.strictObject({
       command: NonEmptyTextSchema,
       claimedOutcome: z.enum(["PASSED", "FAILED", "PARTIAL", "NOT_RUN"]),
       claimedSummary: NonEmptyTextSchema,
-      status: z.enum(["CONTRADICTED", "UNVERIFIED"]),
+      // The runner never executes an author-reported command, so no observation can establish
+      // that its outcome was false. Code inspection proves a defect, not a false command result.
+      status: z.literal("UNVERIFIED"),
       explanation: NonEmptyTextSchema,
     }),
   ),
@@ -309,6 +350,7 @@ export const FinalReviewCandidateV1Schema = z.strictObject({
       command: true,
       claimedOutcome: true,
       claimedSummary: true,
+      status: true,
     }),
   ),
   preliminaryConcernDispositions: z.array(
