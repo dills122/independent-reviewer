@@ -106,6 +106,8 @@ for (const scenario of [
   "clean",
   "exception",
   "recommended",
+  "recommended-required-exception",
+  "recommended-exception",
   "unavailable",
   "mixed-unavailable",
   "inapplicable",
@@ -115,9 +117,11 @@ for (const scenario of [
 ])
   test(`standards CLI protocol: ${scenario}`, async () => {
     const invalidRule = scenario === "unknown";
+    const recommended = scenario.startsWith("recommended");
+    const withdrawn = scenario === "exception" || scenario === "recommended-exception";
     const noFindings =
       scenario === "clean" || scenario === "unavailable" || scenario === "semantic-conflict";
-    const removed = noFindings || scenario === "exception";
+    const removed = noFindings || withdrawn;
     const expectedExit = ["unknown", "inapplicable", "conflict", "omitted-rule"].includes(scenario)
       ? 1
       : ["unavailable", "mixed-unavailable", "semantic-conflict"].includes(scenario)
@@ -128,10 +132,27 @@ for (const scenario of [
     const f = await fixture();
     const fixtureRequest = JSON.parse(await readFile(f.requestPath, "utf8"));
     const profile = JSON.parse(fixtureRequest.canonicalInputs.standards[0].content);
-    if (scenario === "recommended") profile.rules[0].enforcement = "RECOMMENDED";
-    if (scenario === "exception") {
+    if (recommended) profile.rules[0].enforcement = "RECOMMENDED";
+    if (withdrawn) {
       profile.rules[0].exceptions = "Keep names required by an established public API.";
       fixtureRequest.authorPacket.overview += " This exported name is fixed by the public API.";
+    }
+    if (scenario === "recommended-exception") {
+      profile.rules[0].exceptions =
+        "A @publicApiStable annotation permits an existing short export.";
+      await writeFile(join(f.repo, "code.ts"), "/** @publicApiStable */\nexport const v = 1;\n");
+    }
+    if (scenario === "recommended-required-exception") {
+      profile.rules[0].text =
+        "Prefer descriptive exports even when a required naming rule permits a compatibility exception.";
+      profile.rules.push({
+        ...profile.rules[0],
+        id: "rule_required_names",
+        text: "Exported constants must have descriptive names.",
+        enforcement: "REQUIRED",
+        exceptions: "A @publicApiStable annotation permits an existing short export.",
+      });
+      await writeFile(join(f.repo, "code.ts"), "/** @publicApiStable */\nexport const v = 1;\n");
     }
     if (scenario === "inapplicable") profile.rules[0].paths = ["lib/**"];
     if (scenario === "semantic-conflict")
@@ -166,16 +187,24 @@ for (const scenario of [
         const brief = JSON.parse(request.messages[1]?.content ?? "{}");
         if (request.stage === "FINDING_VERIFICATION") {
           assert.doesNotMatch(JSON.stringify(request.messages), /AUTHOR_PRIVATE/);
+          if (recommended) {
+            assert.match(request.messages[0]?.content ?? "", /RECOMMENDED.*APPLICABLE/);
+            assert.match(request.messages[0]?.content ?? "", /exception.*only.*rule/i);
+          }
           const value = {
             schemaVersion: 4,
             stage: "FINDING_VERIFICATION",
             snapshotDigest: brief.blindReviewEvidence.snapshotManifest.snapshotDigest,
             briefDigest: brief.blindReviewEvidence.briefDigest,
             assessments: brief.preliminaryFindings.map(() => ({
-              obligationStatus: "APPLICABLE",
-              scenarioStatus: "IN_SCOPE",
+              obligationStatus:
+                scenario === "recommended-exception" ? "ABSENT_OR_INAPPLICABLE" : "APPLICABLE",
+              scenarioStatus: recommended ? "NO_INPUT_SCENARIO" : "IN_SCOPE",
               behaviorStatus: "SUPPORTED",
-              rationale: "Changed evidence demonstrates the selected naming-rule violation.",
+              rationale:
+                scenario === "recommended-exception"
+                  ? "The frozen annotation satisfies the cited recommendation's own exception."
+                  : "Changed evidence demonstrates the selected naming-rule departure.",
             })),
             concernAssessments: brief.preliminaryConcerns.map(() => ({
               status: "BLOCKING_UNCERTAINTY_DEMONSTRATED",
@@ -196,14 +225,14 @@ for (const scenario of [
             path: "code.ts",
             anchor: "LINE_RANGE",
             side: "HEAD",
-            startLine: 1,
-            endLine: 1,
+            startLine: scenario.startsWith("recommended-") ? 2 : 1,
+            endLine: scenario.startsWith("recommended-") ? 2 : 1,
             detail: "Export v",
           },
         ];
         const finding = {
           ruleIds: [invalidRule ? "rule_unknown" : "rule_names"],
-          severity: scenario === "recommended" ? "RECOMMENDED" : "REQUIRED",
+          severity: recommended ? "RECOMMENDED" : "REQUIRED",
           title: "Describe the exported constant",
           problem: "The public name v does not convey its purpose.",
           impact: "Callers must inspect implementation to understand the value.",
@@ -282,15 +311,14 @@ for (const scenario of [
                     reconciliationRationale: "Preference does not establish a permitted exception.",
                   },
                 ],
-            withdrawnPreliminaryFindings:
-              scenario === "exception"
-                ? [
-                    {
-                      preliminaryFindingId: "finding_name",
-                      rationale: "Selected exception applies to the established API.",
-                    },
-                  ]
-                : [],
+            withdrawnPreliminaryFindings: withdrawn
+              ? [
+                  {
+                    preliminaryFindingId: "finding_name",
+                    rationale: "Selected exception applies to the established API.",
+                  },
+                ]
+              : [],
             preliminaryConcernDispositions: [],
             authorClaims: [],
             authorVerificationClaims: [],
@@ -343,7 +371,14 @@ for (const scenario of [
         { readOpenRouterApiKey: () => "test", createProvider: () => provider },
       );
       assert.equal(result, expectedExit, errors.join("\n"));
-      const findingBearing = ["required", "exception", "recommended", "mixed-unavailable"];
+      const findingBearing = [
+        "required",
+        "exception",
+        "recommended",
+        "recommended-required-exception",
+        "recommended-exception",
+        "mixed-unavailable",
+      ];
       assert.equal(
         calls,
         scenario === "conflict" ? 0 : findingBearing.includes(scenario) ? 3 : 2,
@@ -354,6 +389,23 @@ for (const scenario of [
         assert.match(output.join("\n"), /Standards/);
         const report = JSON.parse(await readFile(join(f.packet, "review", "final.json"), "utf8"));
         assert.equal(report.mode, "STANDARDS");
+        if (recommended) {
+          assert.equal(report.verdict, withdrawn ? "READY" : "READY_WITH_FOLLOW_UPS");
+          assert.deepEqual(report.nextActions.blockers, []);
+          assert.deepEqual(
+            report.nextActions.fastFollows,
+            withdrawn ? [] : ["Use a descriptive exported name."],
+          );
+          assert.deepEqual(report.limitations, []);
+          if (!withdrawn) assert.equal(report.findings[0].severity, "RECOMMENDED");
+          const verification = JSON.parse(
+            await readFile(join(f.packet, "review", "finding-verification.json"), "utf8"),
+          );
+          assert.equal(
+            verification.assessments[0].status,
+            withdrawn ? "NO_VIOLATION" : "VIOLATION_DEMONSTRATED",
+          );
+        }
         if (scenario === "unavailable") {
           assert.equal(report.findings.length, 0);
           assert.equal(report.ruleAssessments[0].status, "UNASSESSED");
