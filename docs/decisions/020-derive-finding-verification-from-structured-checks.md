@@ -48,6 +48,17 @@ to frozen finding and concern identities. Active resume requires exact V4 schema
 and policy versions; V1-V3 artifacts remain readable through exported contracts
 but cannot resume as V4 work.
 
+The V8 verification policy clarifies that applicability and enforcement are
+separate: a selected `RECOMMENDED` rule can create an applicable advisory
+obligation. A supported departure derives `VIOLATION_DEMONSTRATED`, while
+runner-owned standards severity keeps it non-blocking. Exceptions apply to the
+rule declaring them; a mandatory-rule exception does not cancel a separate
+recommendation. An exception to the recommendation itself can still make its
+claimed obligation inapplicable. This changes policy wording and resume policy
+identity, not the V4 derivation table or schemas. See the
+[#184 adjudication](../validation/2026-09-22-semantic-verdict-adjudication.md)
+for evidence and limits of offline verification.
+
 ## Consequences
 
 - Provider cannot emit a demonstrated-violation label that contradicts its own
