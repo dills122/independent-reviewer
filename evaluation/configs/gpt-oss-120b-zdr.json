@@ -18,7 +18,7 @@
     "maxInitialEvidenceBytes": 350000,
     "maxConversationBytes": 600000,
     "maxOutputTokensPerCall": 8192,
-    "maxTotalTokens": 240000,
+    "maxTotalTokens": 400000,
     "maxTotalCostUsd": 0.02,
     "timeoutMs": 120000,
     "maxAttemptsPerCall": 2,

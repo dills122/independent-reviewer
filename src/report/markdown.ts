@@ -2,6 +2,7 @@ import type { FinalReviewReportV1 } from "../contracts/index.js";
 import type { ReviewBrief } from "../contracts/neutral-review-brief.js";
 import type { ReviewReport } from "../contracts/standards-results.js";
 import type { selectedRules } from "../contracts/standards-review.js";
+import type { VerifiedReviewReport } from "../contracts/verified-report.js";
 
 /** Human-readable verdict names, shared with the CLI so the two cannot disagree. */
 export const VERDICT_LABELS_V1: Record<FinalReviewReportV1["verdict"], string> = {
@@ -39,7 +40,7 @@ function lineItems(items: string[]): string {
 
 /** Renders only validated report fields; it does not infer or change a verdict. */
 export function renderReviewMarkdown(
-  report: ReviewReport,
+  report: ReviewReport | VerifiedReviewReport,
   rules: ReturnType<typeof selectedRules> = [],
   coverageConstraints: ReviewBrief["coverageConstraints"] = [],
 ): string {
@@ -49,7 +50,7 @@ export function renderReviewMarkdown(
       : report.findings
           .map(
             (finding) =>
-              `### ${finding.severity}: ${escapeMarkdown(finding.title)}\n\nOrigin: ${finding.origin === "FINAL_ONLY" ? `Final-only — ${escapeMarkdown(finding.emergenceRationale ?? "")}` : "Preliminary assessment"}\n\n${escapeMarkdown("problem" in finding ? finding.problem : finding.scenario)}${"ruleIds" in finding ? `\n\nStandards: ${finding.ruleIds.map(escapeMarkdown).join(", ")}` : ""}\n\nImpact: ${escapeMarkdown(finding.impact)}\n\nCorrection: ${escapeMarkdown(finding.correction)}\n\nEvidence:\n${finding.evidence
+              `### ${finding.severity}: ${escapeMarkdown(finding.title)}\n\nClaims: ${"claimIds" in finding ? finding.claimIds.map(escapeMarkdown).join(", ") : escapeMarkdown(finding.id)}\n\nOrigin: ${finding.origin === "FINAL_ONLY" ? `Final-only — ${escapeMarkdown(finding.emergenceRationale ?? "")}` : "Preliminary assessment"}\n\n${escapeMarkdown("problem" in finding ? finding.problem : finding.scenario)}${"ruleIds" in finding ? `\n\nStandards: ${finding.ruleIds.map(escapeMarkdown).join(", ")}` : ""}\n\nImpact: ${escapeMarkdown(finding.impact)}\n\nCorrection: ${escapeMarkdown(finding.correction)}\n\nEvidence:\n${finding.evidence
                 .map((evidence) => {
                   const location =
                     evidence.anchor === "LINE_RANGE"
@@ -103,7 +104,7 @@ export function renderReviewMarkdown(
     "",
     escapeMarkdown(report.summary),
     "",
-    ...(report.schemaVersion === 3
+    ...("authorContext" in report && report.authorContext !== null
       ? [
           "## Author context",
           "",
@@ -134,6 +135,17 @@ export function renderReviewMarkdown(
           ),
           "",
           "This result covers the selected standards and defects demonstrable from the changed code alone. Behaviour that depends on other modules, callers, concurrency, deployment or runtime state was not assessed. It is not a bug-free or deployment-readiness assessment.",
+          "",
+        ]
+      : []),
+    ...("uncertainties" in report
+      ? [
+          "## Unverified claims",
+          "",
+          ...report.uncertainties.map(
+            (item) =>
+              `- ${escapeMarkdown(item.claimId)} (${item.blocking ? "blocking uncertainty" : "verification follow-up"}): ${escapeMarkdown(item.assertion)}`,
+          ),
           "",
         ]
       : []),
@@ -190,7 +202,7 @@ export const STANDARDS_VERDICT_LABELS = {
   NOT_READY: "Standards review: changes requested",
   UNABLE_TO_VERIFY: "Standards review: unable to assess",
 };
-export function reviewVerdictLabel(report: ReviewReport): string {
+export function reviewVerdictLabel(report: ReviewReport | VerifiedReviewReport): string {
   return ("ruleAssessments" in report ? STANDARDS_VERDICT_LABELS : VERDICT_LABELS_V1)[
     report.verdict
   ];

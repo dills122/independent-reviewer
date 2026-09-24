@@ -1,0 +1,178 @@
+{
+  "$id": "urn:independent-reviewer:schema:claim-verification:v1",
+  "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "FINDING_VERIFICATION",
+        "FINAL_CLAIM_VERIFICATION"
+      ]
+    },
+    "snapshotDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "briefDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "targetSetDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "catalogSetDigest": {
+      "type": "object",
+      "properties": {
+        "algorithm": {
+          "type": "string",
+          "const": "SHA256"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "algorithm",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "assessments": {
+      "maxItems": 1024,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "claimId": {
+            "type": "string",
+            "minLength": 7,
+            "maxLength": 128,
+            "allOf": [
+              {
+                "pattern": "^claim_[A-Za-z0-9][A-Za-z0-9_-]*$"
+              },
+              {
+                "pattern": "^claim_[0-9a-f]{64}$"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "DEMONSTRATED",
+              "REJECTED",
+              "INCONCLUSIVE"
+            ]
+          },
+          "correctionStatus": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "SUPPORTED",
+                  "REJECTED",
+                  "INCONCLUSIVE"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "duplicateOf": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 7,
+                "maxLength": 128,
+                "allOf": [
+                  {
+                    "pattern": "^claim_[A-Za-z0-9][A-Za-z0-9_-]*$"
+                  },
+                  {
+                    "pattern": "^claim_[0-9a-f]{64}$"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "claimId",
+          "status",
+          "correctionStatus",
+          "duplicateOf",
+          "rationale"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "stage",
+    "snapshotDigest",
+    "briefDigest",
+    "targetSetDigest",
+    "catalogSetDigest",
+    "assessments"
+  ],
+  "additionalProperties": false
+}

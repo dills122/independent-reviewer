@@ -19,6 +19,9 @@ export {
   digestCanonicalJson,
   sha256Utf8,
 } from "./canonical-json.js";
+export * from "./claim-scope.js";
+export * from "./claim-verification.js";
+export * from "./final-claim-candidate.js";
 export type {
   FindingVerificationCandidateV1,
   FindingVerificationCandidateV2,
@@ -144,6 +147,8 @@ export {
   NonEmptyTextSchema,
   prefixedIdentifier,
 } from "./primitives.js";
+export * from "./report-reader.js";
+export * from "./review-claims.js";
 export type {
   ReviewContextMapIdentityInputV1,
   ReviewContextMapV1,
@@ -227,6 +232,7 @@ export type {
   RunRecordEventV1,
 } from "./run-record.js";
 export { RUN_RECORD_EVENT_V1_JSON_SCHEMA, RunRecordEventV1Schema } from "./run-record.js";
+export * from "./run-record-v2.js";
 export type {
   ResolvedSimpleReviewSettingsV1,
   ResolvedSimpleReviewSettingsV2,
@@ -274,3 +280,4 @@ export {
 } from "./snapshot-manifest.js";
 export * from "./standards-results.js";
 export * from "./standards-review.js";
+export * from "./verified-report.js";

@@ -18,7 +18,7 @@ const ConcernVerificationJudgmentV3Schema = z.strictObject({
   rationale: NonEmptyTextSchema.max(400),
 });
 
-const FindingVerificationBasisV4Schema = z.strictObject({
+export const FindingVerificationBasisV4Schema = z.strictObject({
   obligationStatus: z.enum(["APPLICABLE", "ABSENT_OR_INAPPLICABLE", "UNDETERMINED"]),
   scenarioStatus: z.enum(["IN_SCOPE", "OUT_OF_SCOPE", "NO_INPUT_SCENARIO", "UNDETERMINED"]),
   behaviorStatus: z.enum(["SUPPORTED", "REFUTED", "NOT_ESTABLISHED"]),
@@ -264,7 +264,7 @@ export function assembleFindingVerificationV3(
   });
 }
 
-function deriveFindingVerificationStatusV4(
+export function deriveFindingVerificationStatusV4(
   assessment: z.infer<typeof FindingVerificationBasisV4Schema>,
 ): z.infer<typeof FindingVerificationAssessmentV4Schema>["status"] {
   // An absent obligation cannot silently withdraw a finding whose concrete

@@ -38,19 +38,26 @@ export {
   REVIEWER_RULES_PATH_V1,
 } from "./guidance/reviewer-rules.js";
 export {
+  resumeClaimReviewV2 as resumeFinalReview,
+  resumeClaimReviewV2,
+} from "./orchestrator/claim-resume.js";
+export type {
+  ClaimReviewResultV2 as TwoStageReviewResult,
+  ClaimReviewResultV2,
+} from "./orchestrator/claim-review.js";
+export {
+  preflightClaimReviewV2 as preflightReview,
+  runClaimReviewV2 as runTwoStageReview,
+  runClaimReviewV2,
+} from "./orchestrator/claim-review.js";
+export {
   evaluateGuidanceAdmissionV1,
   GUIDANCE_CONTENT_STOP_BYTES_V1,
   GUIDANCE_CONTENT_WARNING_BYTES_V1,
 } from "./orchestrator/guidance-admission.js";
-export type {
-  TwoStageReviewResult,
-  TwoStageReviewResultV1,
-} from "./orchestrator/two-stage-review.js";
+export type { TwoStageReviewResultV1 } from "./orchestrator/two-stage-review.js";
 export {
-  preflightReview,
-  resumeFinalReview,
   resumeFinalReviewV1,
-  runTwoStageReview,
   runTwoStageReviewV1,
 } from "./orchestrator/two-stage-review.js";
 export { buildFallbackReviewContextMapV1 } from "./planning/fallback-context-map.js";
@@ -65,9 +72,12 @@ export type {
   ReviewMessageV1,
   ReviewProviderRequestAuditV1,
   ReviewProviderRequestV1,
+  ReviewProviderRequestV2,
   ReviewProviderResponseV1,
   ReviewProviderV1,
+  ReviewProviderV2,
   ReviewStageV1,
+  ReviewStageV2,
 } from "./provider/review-provider.js";
 export { ProviderCallError } from "./provider/review-provider.js";
 export { renderFinalReviewMarkdownV1, renderReviewMarkdown } from "./report/markdown.js";

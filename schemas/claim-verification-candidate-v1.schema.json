@@ -1,0 +1,240 @@
+{
+  "$id": "urn:independent-reviewer:schema:claim-verification-candidate:v1",
+  "$comment": "This JSON Schema validates structural constraints only. Contract acceptance also requires versioned semantic validation by the Independent Reviewer runtime or an equivalent implementation.",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "FINDING_VERIFICATION",
+        "FINAL_CLAIM_VERIFICATION"
+      ]
+    },
+    "assessments": {
+      "maxItems": 1024,
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "obligationStatus": {
+                "type": "string",
+                "enum": [
+                  "APPLICABLE",
+                  "ABSENT_OR_INAPPLICABLE",
+                  "UNDETERMINED"
+                ]
+              },
+              "scenarioStatus": {
+                "type": "string",
+                "enum": [
+                  "IN_SCOPE",
+                  "OUT_OF_SCOPE",
+                  "NO_INPUT_SCENARIO",
+                  "UNDETERMINED"
+                ]
+              },
+              "behaviorStatus": {
+                "type": "string",
+                "enum": [
+                  "SUPPORTED",
+                  "REFUTED",
+                  "NOT_ESTABLISHED"
+                ]
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "duplicateOf": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "TARGET",
+                          "CARRIED"
+                        ]
+                      },
+                      "index": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "index"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "kind": {
+                "type": "string",
+                "const": "VIOLATION"
+              },
+              "correctionStatus": {
+                "type": "string",
+                "enum": [
+                  "SUPPORTED",
+                  "REJECTED",
+                  "INCONCLUSIVE"
+                ]
+              }
+            },
+            "required": [
+              "obligationStatus",
+              "scenarioStatus",
+              "behaviorStatus",
+              "rationale",
+              "duplicateOf",
+              "kind",
+              "correctionStatus"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "duplicateOf": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "TARGET",
+                          "CARRIED"
+                        ]
+                      },
+                      "index": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "index"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "const": "BLOCKING_UNCERTAINTY"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "DEMONSTRATED",
+                  "REJECTED",
+                  "INCONCLUSIVE"
+                ]
+              },
+              "correctionStatus": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "duplicateOf",
+              "rationale",
+              "kind",
+              "status",
+              "correctionStatus"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "duplicateOf": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "TARGET",
+                          "CARRIED"
+                        ]
+                      },
+                      "index": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "source",
+                      "index"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "rationale": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "const": "STANDARD_STATUS"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "DEMONSTRATED",
+                  "REJECTED",
+                  "INCONCLUSIVE"
+                ]
+              },
+              "correctionStatus": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "duplicateOf",
+              "rationale",
+              "kind",
+              "status",
+              "correctionStatus"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "stage",
+    "assessments"
+  ],
+  "additionalProperties": false
+}

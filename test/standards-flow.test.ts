@@ -8,15 +8,44 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { saveLocalSimpleReviewSettingsV2 } from "../src/cli/simple-settings.js";
 import { runCliV1 } from "../src/cli.js";
-import { RunRecordEventV1Schema } from "../src/contracts/run-record.js";
+import type { ReviewClaimSetV1 } from "../src/contracts/review-claims.js";
+import { RunRecordEventV2Schema } from "../src/contracts/run-record-v2.js";
+import { resumeClaimReviewV2 as resumeFinalReview } from "../src/orchestrator/claim-resume.js";
 import {
-  preflightReview,
-  resumeFinalReview,
-  runTwoStageReview,
-} from "../src/orchestrator/two-stage-review.js";
-import { ProviderCallError, type ReviewProviderV1 } from "../src/provider/review-provider.js";
+  preflightClaimReviewV2 as preflightReview,
+  runClaimReviewV2 as runTwoStageReview,
+} from "../src/orchestrator/claim-review.js";
+import type { ReviewProviderRequestV2 } from "../src/provider/review-provider.js";
+import { ProviderCallError, type ReviewProviderV2 } from "../src/provider/review-provider.js";
 import { captureGitSnapshotV1 } from "../src/snapshot/git-capture.js";
 import { inspectSnapshotPacket, writeSnapshotPacketV1 } from "../src/snapshot/snapshot-packet.js";
+
+function finalClaimCandidate(request: ReviewProviderRequestV2, withdraw = false) {
+  const user = JSON.parse(
+    request.messages.find((message) => message.role === "user")?.content ?? "{}",
+  );
+  const prior = user.priorClaims as ReviewClaimSetV1;
+  return {
+    schemaVersion: 4,
+    stage: "FINAL",
+    mode: "STANDARDS",
+    snapshotDigest: prior.snapshotDigest,
+    briefDigest: prior.briefDigest,
+    continuedClaimIds: withdraw ? [] : prior.claims.map((claim) => claim.claimId),
+    withdrawnClaimIds: withdraw ? prior.claims.map((claim) => claim.claimId) : [],
+    newClaims: [],
+  };
+}
+function providerResponse(value: unknown, request: ReviewProviderRequestV2) {
+  return {
+    value,
+    rawContent: JSON.stringify(value),
+    responseId: "test",
+    model: request.models[0] ?? null,
+    provider: "test/fp4",
+    usage: { promptTokens: 100, completionTokens: 100, totalTokens: 200, cost: 0.00001 },
+  };
+}
 
 const exec = promisify(execFile);
 const digest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
@@ -87,8 +116,8 @@ async function fixture() {
     budgets: {
       maxInitialEvidenceBytes: 32000,
       maxConversationBytes: 200000,
-      maxOutputTokensPerCall: 2000,
-      maxTotalTokens: 300000,
+      maxOutputTokensPerCall: 8192,
+      maxTotalTokens: 2000000,
       maxTotalCostUsd: 1,
       timeoutMs: 10000,
     },
@@ -175,7 +204,7 @@ for (const scenario of [
     const output: string[] = [];
     const errors: string[] = [];
     let calls = 0;
-    const provider: ReviewProviderV1 = {
+    const provider: ReviewProviderV2 = {
       auditRequest: () => ({
         providerPolicyVersion: "test",
         wireBodyDigest: digest,
@@ -185,40 +214,53 @@ for (const scenario of [
       async complete(request) {
         calls++;
         const brief = JSON.parse(request.messages[1]?.content ?? "{}");
-        if (request.stage === "FINDING_VERIFICATION") {
-          assert.doesNotMatch(JSON.stringify(request.messages), /AUTHOR_PRIVATE/);
+        if (
+          request.stage === "FINDING_VERIFICATION" ||
+          request.stage === "FINAL_CLAIM_VERIFICATION"
+        ) {
+          if (request.stage === "FINDING_VERIFICATION")
+            assert.doesNotMatch(JSON.stringify(request.messages), /AUTHOR_PRIVATE/);
           if (recommended) {
             assert.match(request.messages[0]?.content ?? "", /RECOMMENDED.*APPLICABLE/);
             assert.match(request.messages[0]?.content ?? "", /exception.*only.*rule/i);
           }
+          const targets = brief.targets as Array<{ kind: string }>;
           const value = {
-            schemaVersion: 4,
-            stage: "FINDING_VERIFICATION",
-            snapshotDigest: brief.blindReviewEvidence.snapshotManifest.snapshotDigest,
-            briefDigest: brief.blindReviewEvidence.briefDigest,
-            assessments: brief.preliminaryFindings.map(() => ({
-              obligationStatus:
-                scenario === "recommended-exception" ? "ABSENT_OR_INAPPLICABLE" : "APPLICABLE",
-              scenarioStatus: recommended ? "NO_INPUT_SCENARIO" : "IN_SCOPE",
-              behaviorStatus: "SUPPORTED",
-              rationale:
-                scenario === "recommended-exception"
-                  ? "The frozen annotation satisfies the cited recommendation's own exception."
-                  : "Changed evidence demonstrates the selected naming-rule departure.",
-            })),
-            concernAssessments: brief.preliminaryConcerns.map(() => ({
-              status: "BLOCKING_UNCERTAINTY_DEMONSTRATED",
-              rationale: "The named missing evidence blocks an in-scope standards judgment.",
-            })),
+            schemaVersion: 1,
+            stage: request.stage,
+            assessments: targets.map((claim) =>
+              claim.kind === "VIOLATION"
+                ? {
+                    kind: "VIOLATION",
+                    obligationStatus:
+                      scenario === "recommended-exception"
+                        ? "ABSENT_OR_INAPPLICABLE"
+                        : "APPLICABLE",
+                    scenarioStatus: recommended ? "NO_INPUT_SCENARIO" : "IN_SCOPE",
+                    behaviorStatus:
+                      request.stage === "FINAL_CLAIM_VERIFICATION" && withdrawn
+                        ? "REFUTED"
+                        : "SUPPORTED",
+                    correctionStatus: "SUPPORTED",
+                    duplicateOf: null,
+                    rationale:
+                      "Selected rule applicability and frozen evidence establish this judgment.",
+                  }
+                : {
+                    kind: claim.kind,
+                    status: "DEMONSTRATED",
+                    correctionStatus: null,
+                    duplicateOf: null,
+                    rationale:
+                      "The named missing evidence or rule conflict blocks standards judgment.",
+                  },
+            ),
           };
-          return {
-            value,
-            rawContent: JSON.stringify(value),
-            responseId: "test",
-            model: request.models[0] as string,
-            provider: "test/fp4",
-            usage: { promptTokens: 100, completionTokens: 100, totalTokens: 200, cost: 0.00001 },
-          };
+          return providerResponse(value, request);
+        }
+        if (request.stage === "FINAL") {
+          assert.match(JSON.stringify(brief.untrustedAuthorEvidence), /AUTHOR_PRIVATE/);
+          return providerResponse(finalClaimCandidate(request, withdrawn), request);
         }
         const evidence = [
           {
@@ -291,49 +333,6 @@ for (const scenario of [
             limitations: [],
             nextAction: "REQUEST_AUTHOR_PACKET",
           };
-        } else {
-          assert.match(request.messages.at(-1)?.content ?? "", /AUTHOR_PRIVATE/);
-          const saved = JSON.parse(
-            await readFile(join(f.packet, "review", "preliminary.json"), "utf8"),
-          );
-          assert.equal(saved.findings.length, noFindings ? 0 : 1);
-          value = {
-            ...common,
-            schemaVersion: 3,
-            stage: "FINAL",
-            mode: "STANDARDS",
-            findings: removed
-              ? []
-              : [
-                  {
-                    ...finding,
-                    sourceFindingIds: ["finding_name"],
-                    reconciliationRationale: "Preference does not establish a permitted exception.",
-                  },
-                ],
-            withdrawnPreliminaryFindings: withdrawn
-              ? [
-                  {
-                    preliminaryFindingId: "finding_name",
-                    rationale: "Selected exception applies to the established API.",
-                  },
-                ]
-              : [],
-            preliminaryConcernDispositions: [],
-            authorClaims: [],
-            authorVerificationClaims: [],
-            limitations: [],
-            verdict:
-              scenario === "recommended"
-                ? "READY_WITH_FOLLOW_UPS"
-                : removed
-                  ? "READY"
-                  : "NOT_READY",
-            nextActions: {
-              blockers: scenario === "required" ? ["Use a descriptive name."] : [],
-              fastFollows: scenario === "recommended" ? ["Consider a descriptive name."] : [],
-            },
-          };
         }
         return {
           value,
@@ -371,19 +370,15 @@ for (const scenario of [
         { readOpenRouterApiKey: () => "test", createProvider: () => provider },
       );
       assert.equal(result, expectedExit, errors.join("\n"));
-      const findingBearing = [
-        "required",
-        "exception",
-        "recommended",
-        "recommended-required-exception",
-        "recommended-exception",
-        "mixed-unavailable",
-      ];
-      assert.equal(
-        calls,
-        scenario === "conflict" ? 0 : findingBearing.includes(scenario) ? 3 : 2,
-        errors.join("\n"),
-      );
+      const expectedCalls: Record<string, number> = {
+        conflict: 0,
+        unknown: 1,
+        inapplicable: 1,
+        "omitted-rule": 1,
+        clean: 2,
+        exception: 4,
+      };
+      assert.equal(calls, expectedCalls[scenario] ?? 3, errors.join("\n"));
       if (invalidRule) assert.match(errors.join("\n"), /Unknown standard rule/);
       else if (expectedExit !== 1) {
         assert.match(output.join("\n"), /Standards/);
@@ -401,32 +396,38 @@ for (const scenario of [
           const verification = JSON.parse(
             await readFile(join(f.packet, "review", "finding-verification.json"), "utf8"),
           );
-          assert.equal(
-            verification.assessments[0].status,
-            withdrawn ? "NO_VIOLATION" : "VIOLATION_DEMONSTRATED",
-          );
+          assert.equal(verification.assessments[0].status, withdrawn ? "REJECTED" : "DEMONSTRATED");
         }
         if (scenario === "unavailable") {
           assert.equal(report.findings.length, 0);
           assert.equal(report.ruleAssessments[0].status, "UNASSESSED");
-          assert.deepEqual(report.limitations, ["Standards remain unassessed: rule_names."]);
-          assert.match(
-            report.nextActions.blockers[0],
-            /Supply the existing authoritative evidence/,
-          );
+          assert.equal(report.limitations.length, 1);
+          assert.match(report.limitations[0], /rule_names.*UNASSESSED/);
+          assert.equal(report.verdict, "UNABLE_TO_VERIFY");
+          assert.equal(report.ruleAssessments[0].status, "UNASSESSED");
         }
         if (scenario === "mixed-unavailable") {
           assert.equal(report.verdict, "UNABLE_TO_VERIFY");
-          assert.deepEqual(report.limitations, ["Standards remain unassessed: rule_context."]);
+          assert.equal(report.limitations.length, 1);
+          assert.match(report.limitations[0], /rule_context.*UNASSESSED/);
           assert.deepEqual(report.nextActions.blockers, ["Use a descriptive exported name."]);
         }
         if (scenario === "semantic-conflict") {
-          assert.deepEqual(report.limitations, [
-            "Standards conflict remains unresolved: rule_names, rule_short.",
-          ]);
-          assert.deepEqual(report.nextActions.blockers, [
-            "Clarify precedence, applicability, or exceptions for conflicting standards: rule_names, rule_short. Do not change code merely to satisfy one conflicting rule.",
-          ]);
+          assert.equal(report.verdict, "UNABLE_TO_VERIFY");
+          assert.equal(report.limitations.length, 2);
+          for (const ruleId of ["rule_names", "rule_short"]) {
+            const assessment = report.ruleAssessments.find(
+              (entry: { ruleId: string }) => entry.ruleId === ruleId,
+            );
+            assert.equal(assessment.status, "CONFLICT");
+            assert.equal(assessment.conflictingRuleIds.length, 1);
+            assert.ok(
+              report.limitations.some(
+                (line: string) => line.includes(ruleId) && line.includes("CONFLICT"),
+              ),
+            );
+          }
+          assert.deepEqual(report.findings, []);
         }
         assert.equal(report.findings.length, removed ? 0 : 1);
         if (!removed) assert.equal(report.findings[0].ruleIds[0], "rule_names");
@@ -510,7 +511,7 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
 
     assert.equal(
       await runCliV1(
-        ["init", "--repo", f.repo, "--model", "openai/gpt-oss-120b", "--max-cost", "0.05"],
+        ["init", "--repo", f.repo, "--model", "openai/gpt-oss-120b", "--max-cost", "0.5"],
         io,
       ),
       0,
@@ -522,13 +523,13 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
     assert.deepEqual(localSettings, {
       schemaVersion: 2,
       model: "openai/gpt-oss-120b",
-      maxCostUsd: 0.05,
+      maxCostUsd: 0.5,
       requireAuthorExplanation: true,
       useReviewerRules: true,
     });
     assert.equal(
       await runCliV1(
-        ["init", "--repo", f.repo, "--model", "openai/gpt-oss-120b", "--max-cost", "0.05"],
+        ["init", "--repo", f.repo, "--model", "openai/gpt-oss-120b", "--max-cost", "0.5"],
         io,
       ),
       1,
@@ -566,7 +567,7 @@ test("simple settings initialize, inspect, and drive the existing provider-free 
     output.length = 0;
     assert.equal(await runCliV1(["config", "show", "--repo", f.repo, "--resolved"], io), 0);
     assert.match(output.join("\n"), /"reviewRunConfigDigest"/);
-    assert.match(output.join("\n"), /"maxTotalCostUsd": 0.05/);
+    assert.match(output.join("\n"), /"maxTotalCostUsd": 0.5/);
 
     output.length = 0;
     assert.equal(
@@ -685,7 +686,7 @@ test("request dry-run resolves reviewer rules from the target repository, never 
   const settings = (useReviewerRules: boolean) => ({
     schemaVersion: 2 as const,
     model: "openai/gpt-oss-120b" as const,
-    maxCostUsd: 0.05,
+    maxCostUsd: 0.5,
     requireAuthorExplanation: true,
     useReviewerRules,
   });
@@ -825,12 +826,12 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
   const f = await fixture();
   const output: string[] = [];
   const errors: string[] = [];
-  const requests: Parameters<ReviewProviderV1["complete"]>[0][] = [];
+  const requests: Parameters<ReviewProviderV2["complete"]>[0][] = [];
   const io = {
     stdout: (message: string) => output.push(message),
     stderr: (message: string) => errors.push(message),
   };
-  const provider: ReviewProviderV1 = {
+  const provider: ReviewProviderV2 = {
     auditRequest: () => ({
       providerPolicyVersion: "test",
       wireBodyDigest: digest,
@@ -840,6 +841,7 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
     complete: async (request) => {
       requests.push(request);
       const brief = JSON.parse(request.messages[1]?.content ?? "{}");
+      if (request.stage === "FINAL") return providerResponse(finalClaimCandidate(request), request);
       const common = {
         snapshotDigest: brief.snapshotManifest.snapshotDigest,
         briefDigest: brief.briefDigest,
@@ -853,39 +855,23 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
           },
         ],
       };
-      const value =
-        request.stage === "PRELIMINARY"
-          ? {
-              ...common,
-              schemaVersion: 2,
-              stage: "PRELIMINARY",
-              inspectedPaths: brief.initialEvidence.map((entry: { path: string }) => entry.path),
-              canonicalInputCoverage: [
-                {
-                  canonicalInputId: "input_standards",
-                  status: "ASSESSED",
-                  explanation: "Applied selected naming rule.",
-                },
-              ],
-              findings: [],
-              evidenceGaps: [],
-              limitations: [],
-              nextAction: "REQUEST_AUTHOR_PACKET",
-            }
-          : {
-              ...common,
-              schemaVersion: 3,
-              stage: "FINAL",
-              mode: "STANDARDS",
-              findings: [],
-              withdrawnPreliminaryFindings: [],
-              preliminaryConcernDispositions: [],
-              authorClaims: [],
-              authorVerificationClaims: [],
-              limitations: [],
-              verdict: "READY",
-              nextActions: { blockers: [], fastFollows: [] },
-            };
+      const value = {
+        ...common,
+        schemaVersion: 2,
+        stage: "PRELIMINARY",
+        inspectedPaths: brief.initialEvidence.map((entry: { path: string }) => entry.path),
+        canonicalInputCoverage: [
+          {
+            canonicalInputId: "input_standards",
+            status: "ASSESSED",
+            explanation: "Applied selected naming rule.",
+          },
+        ],
+        findings: [],
+        evidenceGaps: [],
+        limitations: [],
+        nextAction: "REQUEST_AUTHOR_PACKET",
+      };
       return {
         value,
         rawContent: JSON.stringify(value),
@@ -920,7 +906,7 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
     await writeFile(overviewPath, request.authorPacket.overview);
     assert.equal(
       await runCliV1(
-        ["init", "--repo", f.repo, "--model", "openai/gpt-oss-120b", "--max-cost", "0.05"],
+        ["init", "--repo", f.repo, "--model", "openai/gpt-oss-120b", "--max-cost", "0.5"],
         io,
       ),
       0,
@@ -975,7 +961,7 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
       await readFile(join(f.packet, "review", "report-metadata.json"), "utf8"),
     );
     assert.deepEqual(metadata.guidanceGraphDigest, inspected.guidanceGraphDigest);
-    assert.equal(metadata.promptVersion, "standards-review-v19");
+    assert.equal(metadata.promptVersion, "standards-review-v19/claim-preliminary-v1");
     assert.match(output.join("\n"), /Standards satisfied/);
 
     const firstRunCallCount = requests.length;
@@ -1011,7 +997,7 @@ test("simple settings capture BASE reviewer rules through a complete CLI review"
     const declinedReport = JSON.parse(
       await readFile(join(declinedPacket, "review", "final.json"), "utf8"),
     );
-    assert.equal(declinedReport.schemaVersion, 3);
+    assert.equal(declinedReport.schemaVersion, 4);
     assert.deepEqual(declinedReport.authorContext, {
       status: "DECLINED",
       digest: declinedReport.authorContext.digest,
@@ -1064,7 +1050,7 @@ test("simple settings reject advanced mixing and unknown models before credentia
           "--model",
           "openai/gpt-oss-120b",
           "--max-cost",
-          "0.05",
+          "0.5",
         ],
         io,
         {
@@ -1083,7 +1069,7 @@ test("simple settings reject advanced mixing and unknown models before credentia
 
     assert.equal(
       await runCliV1(
-        ["review", "--request", f.requestPath, "--model", "vendor/unknown", "--max-cost", "0.05"],
+        ["review", "--request", f.requestPath, "--model", "vendor/unknown", "--max-cost", "0.5"],
         io,
         {
           readOpenRouterApiKey: () => {
@@ -1157,7 +1143,7 @@ test("saved settings never overwrite silently and direct inputs enforce three ex
   }
 });
 
-test("a rate-limited declined-author final stage offers resume and rejects a silent author flip", async () => {
+test("a rate-limited declined-author final stage offers resume and rejects a silent author flip", async (t) => {
   // Regression for #121. The offer was gated on an exact eight-element event-type sequence that
   // omitted FINDING_VERIFICATION_PERSISTED, which every run emits, so the comparison could never
   // hold. A user whose final call was rate limited -- with a paid preliminary already saved --
@@ -1166,7 +1152,7 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
   const errors: string[] = [];
   let providerCalls = 0;
   let providerConstructions = 0;
-  const provider: ReviewProviderV1 = {
+  const provider: ReviewProviderV2 = {
     auditRequest: () => ({
       providerPolicyVersion: "test-provider-v1",
       wireBodyDigest: digest,
@@ -1262,7 +1248,7 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
     const stderr = errors.join("\n");
 
     assert.equal(exit, 1);
-    assert.match(stderr, /A final-only retry may be available/, stderr);
+    assert.match(stderr, /Saved review stages may be resumed/, stderr);
     assert.match(stderr, /resume-final --packet/, stderr);
     assert.doesNotMatch(stderr, /has no remaining final-only resume/);
     assert.match(stderr, /Initial assessment is saved/, stderr);
@@ -1272,7 +1258,6 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    const callsBeforeResume = providerCalls;
     const corruptions = [
       (draft: typeof events) => {
         const released = draft.find((event) => event.type === "AUTHOR_CONTEXT_RELEASED");
@@ -1286,7 +1271,7 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
       (draft: typeof events) => {
         const index = draft.findIndex((event) => event.type === "AUTHOR_CONTEXT_RELEASED");
         draft.splice(index, 0, {
-          schemaVersion: 1,
+          schemaVersion: 2,
           at: draft[index].at,
           type: "AUTHOR_DELIVERED",
           authorPacketDigest: digest,
@@ -1295,7 +1280,7 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
       (draft: typeof events) => {
         const index = draft.findIndex((event) => event.type === "AUTHOR_CONTEXT_RELEASED");
         draft[index] = {
-          schemaVersion: 1,
+          schemaVersion: 2,
           at: draft[index].at,
           type: "AUTHOR_DELIVERED",
           authorPacketDigest: digest,
@@ -1394,7 +1379,7 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
           (event) => event.type === "CALL_FAILED" && event.stage === "FINAL",
         );
         draft.splice(index + 1, 0, {
-          schemaVersion: 1,
+          schemaVersion: 2,
           at: draft[index].at,
           type: "PROVIDER_RETRY_REQUESTED",
           stage: "FINAL",
@@ -1413,7 +1398,7 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
           (event) => event.type === "CALL_FAILED" && event.stage === "FINAL",
         );
         draft.splice(index + 1, 0, {
-          schemaVersion: 1,
+          schemaVersion: 2,
           at: draft[index].at,
           type: "BUDGET_EXHAUSTED",
           budget: "COST",
@@ -1425,50 +1410,54 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
       },
     ];
     const grammarCorruptionStart = corruptions.length - 4;
-    const grammarRefusalCodes = [
-      "CALL_START_SEQUENCE_INVALID",
-      "CALL_OUTCOME_SEQUENCE_INVALID",
-      "PROVIDER_RETRY_SEQUENCE_INVALID",
-      "POST_TERMINAL_EVENT_INVALID",
+    const grammarRefusalMessages = [
+      "Call attempts must be contiguous and sequential",
+      "Call result has no matching active attempt",
+      "Provider retry requires adjacent matching failure and call",
+      "Budget-exhausted runs cannot resume",
     ];
     for (const [corruptionIndex, corrupt] of corruptions.entries()) {
-      const corrupted = structuredClone(events);
-      corrupt(corrupted);
-      corrupted.forEach((event) => {
-        RunRecordEventV1Schema.parse(event);
-      });
-      await writeFile(
-        runRecordPath,
-        `${corrupted.map((event) => JSON.stringify(event)).join("\n")}\n`,
-      );
-      errors.length = 0;
-      const constructionsBeforeResume = providerConstructions;
-      assert.equal(
-        await runCliV1(
-          ["resume-final", "--packet", f.packet, "--repo", f.repo, "--config", f.configPath],
-          { stdout: () => undefined, stderr: (message) => errors.push(message) },
-          {
-            readOpenRouterApiKey: () => "test",
-            createProvider: () => {
-              providerConstructions += 1;
-              return provider;
+      await t.test(`refuses ledger corruption ${corruptionIndex}`, async () => {
+        const callsBeforeResume = providerCalls;
+        const corrupted = structuredClone(events);
+        corrupt(corrupted);
+        corrupted.forEach((event) => {
+          RunRecordEventV2Schema.parse(event);
+        });
+        await writeFile(
+          runRecordPath,
+          `${corrupted.map((event) => JSON.stringify(event)).join("\n")}\n`,
+        );
+        errors.length = 0;
+        const constructionsBeforeResume = providerConstructions;
+        assert.equal(
+          await runCliV1(
+            ["resume-final", "--packet", f.packet, "--repo", f.repo, "--config", f.configPath],
+            { stdout: () => undefined, stderr: (message) => errors.push(message) },
+            {
+              readOpenRouterApiKey: () => "test",
+              createProvider: () => {
+                providerConstructions += 1;
+                return provider;
+              },
             },
-          },
-        ),
-        1,
-      );
-      assert.match(
-        errors.join("\n"),
-        /not eligible|persisted preliminary or author-stage identity is invalid/i,
-      );
-      assert.equal(providerCalls, callsBeforeResume);
-      if (corruptionIndex >= grammarCorruptionStart) {
-        assert.equal(providerConstructions, constructionsBeforeResume);
+          ),
+          1,
+        );
         assert.match(
           errors.join("\n"),
-          new RegExp(grammarRefusalCodes[corruptionIndex - grammarCorruptionStart] as string),
+          /Claim resume refused|not eligible|author.*mismatch|persisted preliminary or author-stage identity is invalid/i,
+          `ledger corruption ${corruptionIndex}: ${errors.join("\n")}`,
         );
-      }
+        assert.equal(providerCalls, callsBeforeResume);
+        if (corruptionIndex >= grammarCorruptionStart) {
+          assert.equal(providerConstructions, constructionsBeforeResume);
+          assert.match(
+            errors.join("\n"),
+            new RegExp(grammarRefusalMessages[corruptionIndex - grammarCorruptionStart] as string),
+          );
+        }
+      });
     }
   } finally {
     await rm(f.repo, { recursive: true, force: true });
@@ -1478,7 +1467,7 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
 test("historical metadata schema 2 remains readable through inspect, preflight, run and resume", async () => {
   const f = await fixture();
   let finalCalls = 0;
-  const provider: ReviewProviderV1 = {
+  const provider: ReviewProviderV2 = {
     auditRequest: () => ({
       providerPolicyVersion: "historical-fixture-v1",
       wireBodyDigest: digest,
@@ -1487,19 +1476,6 @@ test("historical metadata schema 2 remains readable through inspect, preflight, 
     }),
     complete: async (providerRequest) => {
       const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
-      const common = {
-        snapshotDigest: brief.snapshotManifest.snapshotDigest,
-        briefDigest: brief.briefDigest,
-        summary: "Historical packet review.",
-        ruleAssessments: [
-          {
-            ruleId: "rule_names",
-            status: "ASSESSED",
-            conflictingRuleIds: [],
-            explanation: "Applied selected naming rule.",
-          },
-        ],
-      };
       if (providerRequest.stage === "FINAL") {
         finalCalls += 1;
         if (finalCalls === 1) {
@@ -1518,39 +1494,38 @@ test("historical metadata schema 2 remains readable through inspect, preflight, 
           });
         }
       }
-      const value =
-        providerRequest.stage === "PRELIMINARY"
-          ? {
-              ...common,
-              schemaVersion: 2,
-              stage: "PRELIMINARY",
-              inspectedPaths: ["code.ts"],
-              canonicalInputCoverage: [
-                {
-                  canonicalInputId: "input_standard",
-                  status: "ASSESSED",
-                  explanation: "Applied naming rule.",
-                },
-              ],
-              findings: [],
-              evidenceGaps: [],
-              limitations: [],
-              nextAction: "REQUEST_AUTHOR_PACKET",
-            }
-          : {
-              ...common,
-              schemaVersion: 3,
-              stage: "FINAL",
-              mode: "STANDARDS",
-              findings: [],
-              withdrawnPreliminaryFindings: [],
-              preliminaryConcernDispositions: [],
-              authorClaims: [],
-              authorVerificationClaims: [],
-              limitations: [],
-              verdict: "READY",
-              nextActions: { blockers: [], fastFollows: [] },
-            };
+      if (providerRequest.stage === "FINAL")
+        return providerResponse(finalClaimCandidate(providerRequest), providerRequest);
+      const common = {
+        snapshotDigest: brief.snapshotManifest.snapshotDigest,
+        briefDigest: brief.briefDigest,
+        summary: "Historical packet review.",
+        ruleAssessments: [
+          {
+            ruleId: "rule_names",
+            status: "ASSESSED",
+            conflictingRuleIds: [],
+            explanation: "Applied selected naming rule.",
+          },
+        ],
+      };
+      const value = {
+        ...common,
+        schemaVersion: 2,
+        stage: "PRELIMINARY",
+        inspectedPaths: ["code.ts"],
+        canonicalInputCoverage: [
+          {
+            canonicalInputId: "input_standard",
+            status: "ASSESSED",
+            explanation: "Applied naming rule.",
+          },
+        ],
+        findings: [],
+        evidenceGaps: [],
+        limitations: [],
+        nextAction: "REQUEST_AUTHOR_PACKET",
+      };
       return {
         value,
         rawContent: JSON.stringify(value),
@@ -1595,8 +1570,8 @@ test("historical metadata schema 2 remains readable through inspect, preflight, 
     const authorIndex = wrongLifecycle.findIndex((event) => event.type === "AUTHOR_DELIVERED");
     const authorEvent = wrongLifecycle[authorIndex];
     assert.ok(authorEvent);
-    wrongLifecycle[authorIndex] = RunRecordEventV1Schema.parse({
-      schemaVersion: 1,
+    wrongLifecycle[authorIndex] = RunRecordEventV2Schema.parse({
+      schemaVersion: 2,
       at: authorEvent.at,
       type: "AUTHOR_CONTEXT_RELEASED",
       authorContext: {
@@ -1611,7 +1586,7 @@ test("historical metadata schema 2 remains readable through inspect, preflight, 
     );
     await assert.rejects(
       () => resumeFinalReview(f.packet, config, provider, f.repo),
-      /author-stage identity is invalid/i,
+      /author.*mismatch|author-stage identity is invalid/i,
     );
     assert.equal(finalCalls, 1);
     await writeFile(runRecordPath, originalRecord);

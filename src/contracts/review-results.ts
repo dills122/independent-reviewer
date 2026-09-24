@@ -6,14 +6,13 @@ import { DigestV1Schema, SnapshotPathV1Schema } from "./snapshot-manifest.js";
 
 const FindingIdSchema = prefixedIdentifier("finding");
 
-const LineRangeEvidenceV1Schema = z
+const LineRangeAnchorV1Schema = z
   .strictObject({
     path: SnapshotPathV1Schema,
     anchor: z.literal("LINE_RANGE"),
     side: z.enum(["BASE", "HEAD"]),
     startLine: z.int().min(1),
     endLine: z.int().min(1),
-    detail: NonEmptyTextSchema,
   })
   .superRefine((evidence, context) => {
     if (evidence.startLine > evidence.endLine) {
@@ -25,13 +24,21 @@ const LineRangeEvidenceV1Schema = z
     }
   });
 
-const SymbolEvidenceV1Schema = z.strictObject({
+const SymbolAnchorV1Schema = z.strictObject({
   path: SnapshotPathV1Schema,
   anchor: z.literal("SYMBOL"),
   side: z.enum(["BASE", "HEAD"]),
   symbol: NonEmptyTextSchema,
+});
+
+export const ReviewEvidenceAnchorV1Schema = z.union([
+  LineRangeAnchorV1Schema,
+  SymbolAnchorV1Schema,
+]);
+const LineRangeEvidenceV1Schema = LineRangeAnchorV1Schema.safeExtend({
   detail: NonEmptyTextSchema,
 });
+const SymbolEvidenceV1Schema = SymbolAnchorV1Schema.extend({ detail: NonEmptyTextSchema });
 
 export const ReviewEvidenceV1Schema = z.union([LineRangeEvidenceV1Schema, SymbolEvidenceV1Schema]);
 

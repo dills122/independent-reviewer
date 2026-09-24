@@ -1,6 +1,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
+  CLAIM_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
+  CLAIM_VERIFICATION_V1_JSON_SCHEMA,
+} from "../src/contracts/claim-verification.js";
+import { FINAL_CLAIM_CANDIDATE_V4_JSON_SCHEMA } from "../src/contracts/final-claim-candidate.js";
+import {
   FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA,
   FINDING_VERIFICATION_CANDIDATE_V2_JSON_SCHEMA,
   FINDING_VERIFICATION_CANDIDATE_V3_JSON_SCHEMA,
@@ -21,6 +26,7 @@ import {
   StandardsReviewBriefV2Schema,
   StandardsReviewBriefV3Schema,
 } from "../src/contracts/neutral-review-brief.js";
+import { REVIEW_CLAIM_SET_V1_JSON_SCHEMA } from "../src/contracts/review-claims.js";
 import { REVIEW_CONTEXT_MAP_V1_JSON_SCHEMA } from "../src/contracts/review-context-map.js";
 import { REVIEW_REPORT_METADATA_V1_JSON_SCHEMA } from "../src/contracts/review-report-metadata.js";
 import { REVIEW_REQUEST_V1_JSON_SCHEMA } from "../src/contracts/review-request.js";
@@ -34,6 +40,7 @@ import {
 import { REVIEW_RUN_CONFIG_V3_JSON_SCHEMA } from "../src/contracts/review-run-config.js";
 import { REVIEW_UNIT_PLAN_V1_JSON_SCHEMA } from "../src/contracts/review-unit-plan.js";
 import { RUN_RECORD_EVENT_V1_JSON_SCHEMA } from "../src/contracts/run-record.js";
+import { RUN_RECORD_EVENT_V2_JSON_SCHEMA } from "../src/contracts/run-record-v2.js";
 import {
   RESOLVED_SIMPLE_REVIEW_SETTINGS_V1_JSON_SCHEMA,
   RESOLVED_SIMPLE_REVIEW_SETTINGS_V2_JSON_SCHEMA,
@@ -55,11 +62,22 @@ import {
   STANDARDS_REVIEW_REQUEST_V2_JSON_SCHEMA,
   STANDARDS_REVIEW_REQUEST_V3_JSON_SCHEMA,
 } from "../src/contracts/standards-review.js";
+import {
+  FINAL_REVIEW_REPORT_V2_JSON_SCHEMA,
+  STANDARDS_REPORT_V4_JSON_SCHEMA,
+} from "../src/contracts/verified-report.js";
 
 const schemaDirectory = resolve("schemas");
 await mkdir(schemaDirectory, { recursive: true });
 
 const schemaArtifacts = [
+  ["final-claim-candidate-v4.schema.json", FINAL_CLAIM_CANDIDATE_V4_JSON_SCHEMA],
+  ["run-record-event-v2.schema.json", RUN_RECORD_EVENT_V2_JSON_SCHEMA],
+  ["final-review-report-v2.schema.json", FINAL_REVIEW_REPORT_V2_JSON_SCHEMA],
+  ["standards-report-v4.schema.json", STANDARDS_REPORT_V4_JSON_SCHEMA],
+  ["review-claim-set-v1.schema.json", REVIEW_CLAIM_SET_V1_JSON_SCHEMA],
+  ["claim-verification-candidate-v1.schema.json", CLAIM_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA],
+  ["claim-verification-v1.schema.json", CLAIM_VERIFICATION_V1_JSON_SCHEMA],
   ["guidance-graph-v1.schema.json", GUIDANCE_GRAPH_V1_JSON_SCHEMA],
   ["finding-verification-candidate-v1.schema.json", FINDING_VERIFICATION_CANDIDATE_V1_JSON_SCHEMA],
   ["finding-verification-v1.schema.json", FINDING_VERIFICATION_V1_JSON_SCHEMA],

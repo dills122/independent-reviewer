@@ -50,7 +50,14 @@
     "./schemas/simple-review-settings-v2": "./schemas/simple-review-settings-v2.schema.json",
     "./schemas/resolved-simple-review-settings-v1": "./schemas/resolved-simple-review-settings-v1.schema.json",
     "./schemas/resolved-simple-review-settings-v2": "./schemas/resolved-simple-review-settings-v2.schema.json",
-    "./schemas/run-record-event-v1": "./schemas/run-record-event-v1.schema.json"
+    "./schemas/run-record-event-v1": "./schemas/run-record-event-v1.schema.json",
+    "./schemas/review-claim-set-v1": "./schemas/review-claim-set-v1.schema.json",
+    "./schemas/claim-verification-candidate-v1": "./schemas/claim-verification-candidate-v1.schema.json",
+    "./schemas/claim-verification-v1": "./schemas/claim-verification-v1.schema.json",
+    "./schemas/final-claim-candidate-v4": "./schemas/final-claim-candidate-v4.schema.json",
+    "./schemas/run-record-event-v2": "./schemas/run-record-event-v2.schema.json",
+    "./schemas/final-review-report-v2": "./schemas/final-review-report-v2.schema.json",
+    "./schemas/standards-report-v4": "./schemas/standards-report-v4.schema.json"
   },
   "files": [
     "dist/src",
