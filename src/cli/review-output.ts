@@ -1,6 +1,8 @@
 import { stripVTControlCharacters } from "node:util";
 import type { RunRecordEventV1 } from "../contracts/run-record.js";
+import type { RunRecordEventV2 } from "../contracts/run-record-v2.js";
 import type { ReviewReport } from "../contracts/standards-results.js";
+import type { VerifiedReviewReport } from "../contracts/verified-report.js";
 import type { ReviewProgress } from "../orchestrator/progress.js";
 import { reviewVerdictLabel } from "../report/markdown.js";
 export function terminalText(text: string): string {
@@ -31,7 +33,9 @@ export function createProgressOutput(write: (message: string) => void, quiet: bo
             ? "Reviewing code against standards"
             : event.stage === "FINDING_VERIFICATION"
               ? "Challenging preliminary findings"
-              : "Reconciling author explanation";
+              : event.stage === "FINAL_CLAIM_VERIFICATION"
+                ? "Challenging final claims"
+                : "Reconciling author explanation";
         emit(`${label}…`);
         const start = Date.now();
         if (!quiet) {
@@ -56,7 +60,7 @@ export function createProgressOutput(write: (message: string) => void, quiet: bo
     },
   };
 }
-export function terminalReviewSummary(report: ReviewReport): string {
+export function terminalReviewSummary(report: ReviewReport | VerifiedReviewReport): string {
   return [
     reviewVerdictLabel(report),
     ...report.findings.map((finding) => {
@@ -80,7 +84,7 @@ export function terminalReviewSummary(report: ReviewReport): string {
  * real figure; presenting that as spend would misreport the bill. So this reports only confirmed
  * charges and says plainly how many calls are unaccounted for.
  */
-export function formatRunCost(events: readonly RunRecordEventV1[]): string {
+export function formatRunCost(events: readonly (RunRecordEventV1 | RunRecordEventV2)[]): string {
   let reported = 0;
   let unknown = 0;
   for (const event of events) {

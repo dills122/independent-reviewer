@@ -6,16 +6,33 @@ import { join } from "node:path";
 import { it } from "node:test";
 import { promisify } from "node:util";
 import { reviewOutcomeExitCodeV1, runCliV1 } from "../src/cli.js";
+import type { ReviewClaimSetV1 } from "../src/contracts/review-claims.js";
 import {
   buildGuidanceGraphV1,
   guidanceGraphDigestV1,
   ProviderCallError,
-  type ReviewProviderRequestV1,
+  type ReviewProviderRequestV2,
   type ReviewProviderResponseV1,
-  type ReviewProviderV1,
+  type ReviewProviderV2,
   sha256Utf8,
 } from "../src/index.js";
-import { asFinalCandidateV3 } from "./helpers/final-candidate.js";
+
+function finalClaimCandidate(request: ReviewProviderRequestV2) {
+  const user = JSON.parse(
+    request.messages.find((message) => message.role === "user")?.content ?? "{}",
+  );
+  const prior = user.priorClaims as ReviewClaimSetV1;
+  return {
+    schemaVersion: 4,
+    stage: "FINAL",
+    mode: "REQUIREMENTS",
+    snapshotDigest: prior.snapshotDigest,
+    briefDigest: prior.briefDigest,
+    continuedClaimIds: prior.claims.map((claim) => claim.claimId),
+    withdrawnClaimIds: [],
+    newClaims: [],
+  };
+}
 
 const execFileAsync = promisify(execFile);
 const mockDigest = { algorithm: "SHA256" as const, value: "a".repeat(64) };
@@ -250,7 +267,7 @@ it("inspects imported guidance only against the selected frozen-BASE repository"
   }
 });
 
-it("composes capture and the two-stage provider flow through the review command", async () => {
+it("composes capture and the claim-bound provider flow through the review command", async () => {
   const repositoryPath = await mkdtemp(join(tmpdir(), "independent-reviewer-cli-review-"));
   try {
     await git(repositoryPath, "init", "--initial-branch=main");
@@ -324,23 +341,23 @@ it("composes capture and the two-stage provider flow through the review command"
           maxInitialEvidenceBytes: 32_000,
           maxConversationBytes: 128_000,
           maxOutputTokensPerCall: 1_000,
-          maxTotalTokens: 100_000,
+          maxTotalTokens: 2_000_000,
           maxTotalCostUsd: 1,
           timeoutMs: 10_000,
         },
       }),
     );
 
-    const calls: ReviewProviderRequestV1[] = [];
+    const calls: ReviewProviderRequestV2[] = [];
     const response = (value: unknown): ReviewProviderResponseV1 => ({
-      value: asFinalCandidateV3(value),
-      rawContent: JSON.stringify(asFinalCandidateV3(value)),
+      value,
+      rawContent: JSON.stringify(value),
       responseId: "mock-response",
       model: "mock/reviewer",
       provider: "mock",
       usage: { promptTokens: 90, completionTokens: 10, totalTokens: 100, cost: 0 },
     });
-    const provider: ReviewProviderV1 = {
+    const provider: ReviewProviderV2 = {
       auditRequest: (providerRequest) => ({
         providerPolicyVersion: "mock-provider-v1",
         wireBodyDigest: mockDigest,
@@ -377,40 +394,7 @@ it("composes capture and the two-stage provider flow through the review command"
             nextAction: "REQUEST_AUTHOR_PACKET",
           });
         }
-        return response({
-          schemaVersion: 1,
-          stage: "FINAL",
-          snapshotDigest: brief.snapshotManifest.snapshotDigest,
-          briefDigest: brief.briefDigest,
-          summary: "The change is ready.",
-          findings: [],
-          preliminaryFindingDispositions: [],
-          preliminaryConcernDispositions: [],
-          authorClaims: [],
-          authorVerificationClaims: [],
-          changedPathCoverage: [
-            {
-              path: "reviewed.ts",
-              status: "INSPECTED",
-              explanation: "The complete changed file was inspected.",
-            },
-          ],
-          canonicalInputCoverage: [
-            {
-              canonicalInputId: "input_requirement",
-              status: "ASSESSED",
-              explanation: "The requirement is satisfied.",
-            },
-            {
-              canonicalInputId: "input_plan",
-              status: "ASSESSED",
-              explanation: "The plan is implemented.",
-            },
-          ],
-          limitations: [],
-          verdict: "READY",
-          nextActions: { blockers: [], fastFollows: [] },
-        });
+        return response(finalClaimCandidate(providerRequest));
       },
     };
     const output: string[] = [];
@@ -596,7 +580,7 @@ it("resumes a definite failed final stage without preparing or buying another pr
           maxInitialEvidenceBytes: 32_000,
           maxConversationBytes: 128_000,
           maxOutputTokensPerCall: 1_000,
-          maxTotalTokens: 100_000,
+          maxTotalTokens: 2_000_000,
           maxTotalCostUsd: 1,
           timeoutMs: 10_000,
         },
@@ -604,14 +588,14 @@ it("resumes a definite failed final stage without preparing or buying another pr
     );
 
     const makeResponse = (value: unknown): ReviewProviderResponseV1 => ({
-      value: asFinalCandidateV3(value),
-      rawContent: JSON.stringify(asFinalCandidateV3(value)),
+      value,
+      rawContent: JSON.stringify(value),
       responseId: "mock-response",
       model: "mock/reviewer",
       provider: "mock",
       usage: { promptTokens: 90, completionTokens: 10, totalTokens: 100, cost: 0 },
     });
-    const preliminaryValue = (providerRequest: ReviewProviderRequestV1) => {
+    const preliminaryValue = (providerRequest: ReviewProviderRequestV2) => {
       const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
       return {
         schemaVersion: 1,
@@ -638,7 +622,7 @@ it("resumes a definite failed final stage without preparing or buying another pr
         nextAction: "REQUEST_AUTHOR_PACKET",
       };
     };
-    const firstProvider: ReviewProviderV1 = {
+    const firstProvider: ReviewProviderV2 = {
       auditRequest: () => ({
         providerPolicyVersion: "mock-provider-v1",
         wireBodyDigest: mockDigest,
@@ -678,54 +662,50 @@ it("resumes a definite failed final stage without preparing or buying another pr
     const firstRun = firstRunStderr.join("\n");
     assert.match(firstRun, /Review did not complete\. Saved packet:/, firstRun);
     assert.match(firstRun, /Initial assessment is saved/, firstRun);
-    assert.match(firstRun, /A final-only retry may be available/, firstRun);
+    assert.match(firstRun, /Saved review stages may be resumed/, firstRun);
     assert.match(firstRun, /Provider-reported cost:/, firstRun);
 
     const runRecordPath = join(packetPath, "review", "run-record.jsonl");
+    const completedRecord = await readFile(runRecordPath, "utf8");
+    const nextAttempt =
+      Math.max(
+        ...completedRecord
+          .trim()
+          .split("\n")
+          .map((line) => {
+            const event = JSON.parse(line);
+            return event.type === "CALL_STARTED" ? event.attemptNumber : 0;
+          }),
+      ) + 1;
     const tornTail = '{"type":"RUN_FAILED"';
     await appendFile(runRecordPath, tornTail, "utf8");
 
     let resumedCalls = 0;
-    const resumedProvider: ReviewProviderV1 = {
+    const resumedProvider: ReviewProviderV2 = {
       auditRequest: firstProvider.auditRequest,
       complete: async (providerRequest) => {
         resumedCalls += 1;
         assert.equal(providerRequest.stage, "FINAL");
-        const brief = JSON.parse(providerRequest.messages[1]?.content ?? "{}");
-        return makeResponse({
-          schemaVersion: 1,
-          stage: "FINAL",
-          snapshotDigest: brief.snapshotManifest.snapshotDigest,
-          briefDigest: brief.briefDigest,
-          summary: "The resumed final review completed.",
-          findings: [],
-          preliminaryFindingDispositions: [],
-          preliminaryConcernDispositions: [],
-          authorClaims: [],
-          authorVerificationClaims: [],
-          changedPathCoverage: [
-            { path: "reviewed.ts", status: "INSPECTED", explanation: "The file was inspected." },
-          ],
-          canonicalInputCoverage: [
-            {
-              canonicalInputId: "input_requirement",
-              status: "ASSESSED",
-              explanation: "The requirement was assessed.",
-            },
-            {
-              canonicalInputId: "input_plan",
-              status: "ASSESSED",
-              explanation: "The plan was assessed.",
-            },
-          ],
-          limitations: [],
-          verdict: "READY",
-          nextActions: { blockers: [], fastFollows: [] },
-        });
+        return makeResponse(finalClaimCandidate(providerRequest));
       },
     };
     const output: string[] = [];
     const errors: string[] = [];
+    const competingClaim = join(packetPath, "review", `claim-resume-${nextAttempt}.json`);
+    await writeFile(competingClaim, "{}\n", { flag: "wx" });
+    assert.equal(
+      await runCliV1(
+        ["resume-final", "--packet", packetPath, "--config", configPath],
+        { stdout: () => undefined, stderr: (message) => errors.push(message) },
+        { readOpenRouterApiKey: () => "test-api-key", createProvider: () => resumedProvider },
+      ),
+      1,
+    );
+    assert.equal(resumedCalls, 0);
+    assert.match(errors.join("\n"), /EEXIST|already.*claimed|resume.*claim/i);
+    assert.equal(await readFile(runRecordPath, "utf8"), completedRecord + tornTail);
+    await rm(competingClaim);
+    errors.length = 0;
     const resumedExit = await runCliV1(
       ["resume-final", "--packet", packetPath, "--config", configPath],
       { stdout: (message) => output.push(message), stderr: (message) => errors.push(message) },

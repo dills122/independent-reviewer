@@ -200,7 +200,7 @@ const config: ReviewRunConfigV3 = {
     maxInitialEvidenceBytes: 32_000,
     maxConversationBytes: 256_000,
     maxOutputTokensPerCall: 1_000,
-    maxTotalTokens: 100_000,
+    maxTotalTokens: 1_000_000,
     maxTotalCostUsd: 1,
     timeoutMs: 10_000,
     maxAttemptsPerCall: 2,
@@ -251,13 +251,14 @@ test("compacts reviewer-rule provenance across small and large target sets", asy
           ...config.budgets,
           maxInitialEvidenceBytes: 128_000,
           maxConversationBytes: 600_000,
-          maxTotalTokens: 1_000_000,
+          maxTotalTokens: 2_000_000,
         },
       });
       assert.ok(admission.guidanceAdmission);
       const wireBytesByStage = admission.guidanceAdmission.wireBytesByStage;
       assert.deepEqual(Object.keys(wireBytesByStage).sort(), [
         "final",
+        "finalClaimVerification",
         "findingVerification",
         "preliminary",
       ]);
@@ -499,17 +500,17 @@ test("final resume rejects a replaced import before any resumed call", async () 
     );
     const runRecordPath = join(packetPath, "review", "run-record.jsonl");
     const currentRunRecord = await readFile(runRecordPath, "utf8");
-    assert.match(currentRunRecord, /"promptVersion":"standards-review-v19"/);
+    assert.match(currentRunRecord, /"promptVersion":"standards-review-v19\/claim-preliminary-v1"/);
     await writeFile(
       runRecordPath,
       currentRunRecord.replace(
-        '"promptVersion":"standards-review-v19"',
-        '"promptVersion":"standards-review-v17"',
+        '"promptVersion":"standards-review-v19/claim-preliminary-v1"',
+        '"promptVersion":"standards-review-v17/claim-preliminary-v1"',
       ),
     );
     await assert.rejects(
       () => resumeFinalReview(packetPath, config, resumedProvider, repositoryPath),
-      /incompatible final response protocol/i,
+      /protocol generation mismatch/i,
     );
     assert.equal(resumedCalls, 0);
     await writeFile(runRecordPath, currentRunRecord);
@@ -537,26 +538,15 @@ test("guidance-capable run binds prompt identity and withholds author context", 
     }),
     complete: async (request) => {
       requests.push(request);
-      const brief = JSON.parse(request.messages[1]?.content ?? "{}");
-      const common = {
-        snapshotDigest: brief.snapshotManifest.snapshotDigest,
-        briefDigest: brief.briefDigest,
-        summary: "Guidance-aware review completed.",
-        ruleAssessments: [
-          {
-            ruleId: "rule_typescript",
-            status: "ASSESSED",
-            conflictingRuleIds: [],
-            explanation: "Reviewed the selected rule and repository guidance.",
-          },
-        ],
-      };
+      const user = JSON.parse(request.messages[1]?.content ?? "{}");
       const value =
         request.stage === "PRELIMINARY"
           ? {
-              ...common,
               schemaVersion: 2,
               stage: "PRELIMINARY",
+              snapshotDigest: user.snapshotManifest.snapshotDigest,
+              briefDigest: user.briefDigest,
+              summary: "Guidance-aware review completed.",
               inspectedPaths: ["reviewed.ts"],
               canonicalInputCoverage: [
                 {
@@ -565,24 +555,30 @@ test("guidance-capable run binds prompt identity and withholds author context", 
                   explanation: "Applied the selected standard.",
                 },
               ],
+              ruleAssessments: [
+                {
+                  ruleId: "rule_typescript",
+                  status: "ASSESSED",
+                  conflictingRuleIds: [],
+                  explanation: "Reviewed the selected rule and repository guidance.",
+                },
+              ],
               findings: [],
               evidenceGaps: [],
               limitations: [],
               nextAction: "REQUEST_AUTHOR_PACKET",
             }
           : {
-              ...common,
-              schemaVersion: 3,
+              schemaVersion: 4,
               stage: "FINAL",
               mode: "STANDARDS",
-              findings: [],
-              withdrawnPreliminaryFindings: [],
-              preliminaryConcernDispositions: [],
-              authorClaims: [],
-              authorVerificationClaims: [],
-              limitations: [],
-              verdict: "READY",
-              nextActions: { blockers: [], fastFollows: [] },
+              snapshotDigest: user.priorClaims.snapshotDigest,
+              briefDigest: user.priorClaims.briefDigest,
+              continuedClaimIds: user.priorClaims.claims.map(
+                (claim: { claimId: string }) => claim.claimId,
+              ),
+              withdrawnClaimIds: [],
+              newClaims: [],
             };
       return {
         value,
@@ -608,18 +604,18 @@ test("guidance-capable run binds prompt identity and withholds author context", 
       .split("\n")
       .map((line) => JSON.parse(line));
     const started = events.find((event) => event.type === "RUN_STARTED");
-    assert.equal(started.promptVersion, "standards-review-v19");
+    assert.equal(started.promptVersion, "standards-review-v19/claim-preliminary-v1");
     assert.equal(started.guidanceGraphDigest.value.length, 64);
     assert.equal(events.find((event) => event.type === "GUIDANCE_ADMISSION")?.status, "ACCEPTED");
     assert.equal(
       events.find((event) => event.type === "CALL_STARTED")?.promptVersion,
-      "standards-review-v19",
+      "standards-review-v19/claim-preliminary-v1",
     );
     const reportMetadata = JSON.parse(await readFile(result.reportMetadataPath, "utf8"));
     assert.deepEqual(reportMetadata.guidanceGraphDigest, started.guidanceGraphDigest);
-    assert.equal(reportMetadata.promptVersion, "standards-review-v19");
+    assert.equal(reportMetadata.promptVersion, "standards-review-v19/claim-preliminary-v1");
     assert.equal(reportMetadata.preliminarySchema, "standards_preliminary_v2");
-    assert.equal(reportMetadata.finalSchema, "standards_candidate_v3");
+    assert.equal(reportMetadata.finalSchema, "final_claim_candidate_v4");
     assert.deepEqual(
       reportMetadata.reportDigest,
       sha256Utf8(await readFile(result.finalPath, "utf8")),

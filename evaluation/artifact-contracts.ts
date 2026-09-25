@@ -438,19 +438,23 @@ export const EvaluationExperimentManifestV1Schema = z
     }),
     stopRules: z.array(NonEmptyTextSchema).min(1),
     metricSet: z.array(EvaluationMetricNameV1Schema).min(1),
-    comparisons: z
-      .array(
-        z.strictObject({
-          comparisonId: EvaluationComparisonIdV1Schema,
-          baselineVariantId: EvaluationVariantIdV1Schema,
-          candidateVariantId: EvaluationVariantIdV1Schema,
-          pairIds: z.array(EvaluationPairIdV1Schema).min(1),
-          metrics: z.array(EvaluationMetricNameV1Schema).min(1),
-        }),
-      )
-      .min(1),
+    comparisons: z.array(
+      z.strictObject({
+        comparisonId: EvaluationComparisonIdV1Schema,
+        baselineVariantId: EvaluationVariantIdV1Schema,
+        candidateVariantId: EvaluationVariantIdV1Schema,
+        pairIds: z.array(EvaluationPairIdV1Schema).min(1),
+        metrics: z.array(EvaluationMetricNameV1Schema).min(1),
+      }),
+    ),
   })
   .superRefine((manifest, context) => {
+    if (manifest.variants.length > 1 && manifest.comparisons.length === 0)
+      context.addIssue({
+        code: "custom",
+        message: "multiple variants require explicit comparisons",
+        path: ["comparisons"],
+      });
     reportDuplicate(manifest.caseIds, context, ["caseIds"], "case ID");
     reportDuplicate(
       manifest.variants.map(({ variantId }) => variantId),

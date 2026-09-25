@@ -14,6 +14,7 @@ export type IdentifierPrefixV1 =
   | "case"
   | "comparison"
   | "check"
+  | "claim"
   | "config"
   | "context"
   | "evidence"
@@ -57,6 +58,25 @@ export function prefixedIdentifier(prefix: IdentifierPrefixV1): z.ZodString {
 }
 
 export const NonEmptyTextSchema = z.string().min(1);
+
+/** Canonical provider prose for content-bound claims; never truncate or normalize identity input. */
+export function boundedClaimTextV1(maxScalars: number, maxBytes: number) {
+  return NonEmptyTextSchema.superRefine((value, context) => {
+    if (
+      value !== value.trim() ||
+      /[\r\n\u0085\u2028\u2029]/u.test(value) ||
+      !value.isWellFormed() ||
+      [...value].length > maxScalars ||
+      Buffer.byteLength(value, "utf8") > maxBytes
+    ) {
+      context.addIssue({ code: "custom", message: "must be canonical bounded single-line text" });
+    }
+  });
+}
+
+export const ClaimLabelV1Schema = boundedClaimTextV1(160, 640);
+export const ClaimTextV1Schema = boundedClaimTextV1(600, 2400);
+export const ClaimRationaleV1Schema = boundedClaimTextV1(400, 1600);
 
 export const CanonicalInputIdSchema = prefixedIdentifier("input");
 

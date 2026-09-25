@@ -56,3 +56,27 @@ export function evaluateGuidanceAdmissionV1(
     stopReasons,
   };
 }
+
+export interface GuidanceAdmissionInputV2
+  extends Omit<GuidanceAdmissionInputV1, "wireBytesByStage"> {
+  wireBytesByStage: GuidanceWireBytesByStageV1 & { finalClaimVerification: number };
+}
+export function evaluateGuidanceAdmissionV2(input: GuidanceAdmissionInputV2) {
+  const result = evaluateGuidanceAdmissionV1(input);
+  const bytes = input.wireBytesByStage.finalClaimVerification;
+  assertSafeNonnegativeInteger(bytes, "finalClaimVerification wire bytes");
+  if (10 * bytes >= input.capacityBytes)
+    result.warningReasons.push("FINAL_CLAIM_VERIFICATION_WIRE_RATIO");
+  if (5 * bytes >= input.capacityBytes)
+    result.stopReasons.push("FINAL_CLAIM_VERIFICATION_WIRE_RATIO");
+  return {
+    ...result,
+    wireBytesByStage: input.wireBytesByStage,
+    status:
+      result.stopReasons.length > 0
+        ? ("STOP" as const)
+        : result.warningReasons.length > 0
+          ? ("WARNING" as const)
+          : ("ACCEPTED" as const),
+  };
+}

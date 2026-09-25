@@ -123,3 +123,15 @@ export interface ReviewProviderV1 {
   auditRequest(request: ReviewProviderRequestV1): ReviewProviderRequestAuditV1;
   complete(request: ReviewProviderRequestV1): Promise<ReviewProviderResponseV1>;
 }
+
+/** Stage B advances request routing while retaining the V1 provider response envelope. */
+export type ReviewStageV2 = ReviewStageV1 | "FINAL_CLAIM_VERIFICATION";
+export interface ReviewProviderRequestV2 extends Omit<ReviewProviderRequestV1, "stage"> {
+  stage: ReviewStageV2;
+}
+export interface ReviewProviderV2 {
+  deferRequests?(model: string, delayMs: number): void;
+  forRetry?(error: ProviderCallError, request: ReviewProviderRequestV2): ReviewProviderV2 | null;
+  auditRequest(request: ReviewProviderRequestV2): ReviewProviderRequestAuditV1;
+  complete(request: ReviewProviderRequestV2): Promise<ReviewProviderResponseV1>;
+}

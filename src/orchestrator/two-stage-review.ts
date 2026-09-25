@@ -31,29 +31,34 @@ import {
   STANDARDS_PRELIMINARY_V2_JSON_SCHEMA,
   StandardsReportV3Schema,
 } from "../contracts/standards-results.js";
-import type { AuthorContextBindingV1, ReviewAuthor } from "../contracts/standards-review.js";
-import { DECLINED_AUTHOR_CONTEXT_MARKER_V1, selectedRules } from "../contracts/standards-review.js";
+import { selectedRules } from "../contracts/standards-review.js";
 import { parseStrictJsonV1, readStrictJsonFileV1 } from "../contracts/strict-json.js";
 import { planReviewUnitsV1 } from "../planning/review-unit-planner.js";
 import {
   ProviderCallError,
-  type ProviderErrorDiagnosticV1,
   type ReviewMessageV1,
   type ReviewProviderResponseV1,
   type ReviewProviderV1,
 } from "../provider/review-provider.js";
 import { renderReviewMarkdown } from "../report/markdown.js";
-import {
-  type InspectedSnapshotPacket,
-  inspectSnapshotPacket,
-} from "../snapshot/snapshot-packet.js";
+import type { InspectedSnapshotPacket } from "../snapshot/snapshot-packet.js";
+import { inspectSnapshotPacket } from "../snapshot/snapshot-packet.js";
 import { buildReviewBrief } from "../transmission/neutral-brief-builder.js";
-import { compactProjectGuidanceV1 } from "../transmission/project-guidance-digest.js";
+import {
+  callCostUsd,
+  chargedTokens,
+  conservativeInputTokenUpperBound,
+  priceCeilingCostUsd,
+  type ReviewRunConfigV3,
+  RunCostLedgerV1,
+  reservationCostUsd,
+} from "./call-accounting.js";
 import {
   evaluateGuidanceAdmissionV1,
   type GuidanceAdmissionResultV1,
 } from "./guidance-admission.js";
 import { emitReviewProgress } from "./progress.js";
+import { failedAttemptChargeV1, normalizedError, retryDelayMs } from "./provider-failure.js";
 import {
   type ConstrainedResponseSchemaV1,
   constrainFinalConcernScopeV1,
@@ -70,6 +75,13 @@ import {
   ReviewOutputValidationError,
 } from "./response-validation.js";
 import { describeResumeRefusalsV1, evaluateResumeShapeV1 } from "./resume-eligibility.js";
+import {
+  authorReleaseMessageV1,
+  blindReviewEvidence,
+  type ReleasedAuthorContextV1,
+  releasedAuthorContextV1,
+} from "./review-input.js";
+import { type ReviewOutputPathsV1, reviewOutputPathsV1 } from "./review-paths.js";
 import {
   FINDING_VERIFICATION_POLICY_V4,
   FINDING_VERIFICATION_POLICY_VERSION_V4,
@@ -111,209 +123,12 @@ const MAX_PERSISTED_REVIEW_JSON_BYTES_V1 = 64 * 1024 * 1024;
 const MAX_STORED_PROVIDER_RESPONSE_BYTES_V1 = 8 * 1024 * 1024;
 const MAX_RUN_RECORD_LINE_BYTES_V1 = 8 * 1024 * 1024;
 
-function focusedReviewContext(plan: ReviewUnitPlanV1, contextMap: ReviewContextMapV1): unknown {
-  const regionIds = new Set(
-    plan.units.flatMap((unit) => [...unit.primaryRegionIds, ...unit.supportingRegionIds]),
-  );
-  const relationIds = new Set(plan.units.flatMap((unit) => unit.relationIds));
-  const relations = contextMap.relations.filter((relation) => relationIds.has(relation.relationId));
-  const producerIds = new Set([
-    ...contextMap.regions
-      .filter((region) => regionIds.has(region.regionId))
-      .map((region) => region.producerId),
-    ...relations.map((relation) => relation.producerId),
-    ...contextMap.producers
-      .filter((producer) => producer.status !== "COMPLETE")
-      .map((producer) => producer.producerId),
-  ]);
-  return {
-    producers: contextMap.producers
-      .filter((producer) => producerIds.has(producer.producerId))
-      .map((producer) => ({
-        producerId: producer.producerId,
-        producerVersion: producer.producerVersion,
-        status: producer.status,
-        diagnostics: producer.diagnostics.slice(0, 8).map((diagnostic) => diagnostic.slice(0, 256)),
-        diagnosticCount: producer.diagnostics.length,
-      })),
-    regions: contextMap.regions
-      .filter((region) => regionIds.has(region.regionId))
-      .map((region) => ({
-        regionId: region.regionId,
-        origin: region.origin,
-        path: region.path,
-        side: region.side,
-        languageId: region.languageId,
-        kind: region.kind,
-        producerId: region.producerId,
-        ...(region.range ? { range: region.range } : {}),
-        ...(region.displayName ? { displayName: region.displayName } : {}),
-      })),
-    relations: relations.map((relation) => ({
-      relationId: relation.relationId,
-      sourceRegionId: relation.sourceRegionId,
-      targetRegionId: relation.targetRegionId,
-      kind: relation.kind,
-      certainty: relation.certainty,
-      producerId: relation.producerId,
-    })),
-  };
-}
-
-function blindReviewEvidence(
-  brief: ReviewBrief,
-  plan: ReviewUnitPlanV1,
-  contextMap: ReviewContextMapV1,
-): unknown {
-  const reviewPlanning = {
-    reviewUnitPlan: {
-      schemaVersion: plan.schemaVersion,
-      units: plan.units.map((unit) => ({
-        unitId: unit.unitId,
-        targetPaths: unit.targetPaths,
-        primaryEvidenceIds: unit.primaryEvidenceIds,
-        primaryRegionIds: unit.primaryRegionIds,
-        supportingRegionIds: unit.supportingRegionIds,
-        limitations: unit.limitations,
-      })),
-    },
-    reviewContext: focusedReviewContext(plan, contextMap),
-  };
-  if (brief.schemaVersion !== 1)
-    return {
-      ...brief,
-      ...reviewPlanning,
-      requiredCoverage: {
-        changedPaths: brief.snapshotManifest.paths.map((entry) => entry.path),
-        canonicalInputIds: brief.snapshotManifest.canonicalInputs.map((input) => input.id),
-      },
-    };
-  const projectGuidanceDigest = compactProjectGuidanceV1(brief.canonicalInputs.projectGuidance);
-  const truncatedGuidanceIds = projectGuidanceDigest
-    .filter((entry) => entry.truncated)
-    .map((entry) => entry.id);
-  if (truncatedGuidanceIds.length > 0) {
-    throw new Error(
-      `Project guidance exceeds the compact transmission budget: ${truncatedGuidanceIds.join(", ")}.`,
-    );
-  }
-  return {
-    ...brief,
-    ...reviewPlanning,
-    requiredCoverage: {
-      changedPaths: brief.snapshotManifest.paths.map((entry) => entry.path),
-      canonicalInputIds: brief.snapshotManifest.canonicalInputs.map((entry) => entry.id),
-    },
-    canonicalInputs: {
-      requirements: brief.canonicalInputs.requirements,
-      implementationPlan: brief.canonicalInputs.implementationPlan,
-    },
-    projectGuidanceDigest,
-  };
-}
-
 async function appendRunEvent(
   runRecordPath: string,
   event: RunRecordEventPayloadV1,
 ): Promise<void> {
   const durableEvent = await appendRunRecordEventV1(runRecordPath, event);
   emitReviewProgress(durableEvent);
-}
-
-function normalizedError(error: unknown): {
-  name: string;
-  code: string | null;
-  message: string;
-  diagnostic?: ProviderErrorDiagnosticV1;
-} {
-  if (!(error instanceof Error)) {
-    return { name: "UnknownError", code: null, message: "A non-Error value was thrown." };
-  }
-  const possibleCode = (error as Error & { code?: unknown }).code;
-  const normalized: {
-    name: string;
-    code: string | null;
-    message: string;
-    diagnostic?: ProviderErrorDiagnosticV1;
-  } = {
-    name: error.name,
-    code: typeof possibleCode === "string" ? possibleCode : null,
-    message: error.message,
-  };
-  if (error instanceof ProviderCallError && error.diagnostic !== null) {
-    normalized.diagnostic = error.diagnostic;
-  }
-  return normalized;
-}
-
-/** OpenRouter unit prices are expressed in dollars per million tokens. */
-const TOKENS_PER_UNIT_PRICE_V1 = 1_000_000;
-
-type ReviewRunConfigV3 = z.infer<typeof ReviewRunConfigV3Schema>;
-
-/** Upper bound in dollars for a known token split at the configured unit-price ceiling. */
-function priceCeilingCostUsd(
-  promptTokens: number,
-  completionTokens: number,
-  config: ReviewRunConfigV3,
-): number {
-  const { prompt, completion, request } = config.providerRouting.maxPrice;
-  return (
-    (promptTokens / TOKENS_PER_UNIT_PRICE_V1) * prompt +
-    (completionTokens / TOKENS_PER_UNIT_PRICE_V1) * completion +
-    request
-  );
-}
-
-/** Price known prompt/output reservations separately, including each request fee. */
-function reservationCostUsd(reservedTokens: number, config: ReviewRunConfigV3, calls = 1): number {
-  const completionTokens = calls * config.budgets.maxOutputTokensPerCall;
-  return (
-    priceCeilingCostUsd(reservedTokens - completionTokens, completionTokens, config) +
-    (calls - 1) * config.providerRouting.maxPrice.request
-  );
-}
-
-/**
- * What a completed call cost. Unknown cost is never treated as zero: it falls back to the
- * unit-price ceiling over reported tokens, and to the reservation where tokens are missing too.
- */
-function callCostUsd(
-  response: ReviewProviderResponseV1,
-  config: ReviewRunConfigV3,
-  reservedInputTokens: number,
-): number {
-  if (response.usage.cost !== null) {
-    return response.usage.cost;
-  }
-  return priceCeilingCostUsd(
-    response.usage.promptTokens ?? reservedInputTokens,
-    response.usage.completionTokens ?? config.budgets.maxOutputTokensPerCall,
-    config,
-  );
-}
-
-/**
- * Tracks run spend against budgets.maxTotalCostUsd. maxPrice bounds unit rates on the provider
- * side and maxTotalTokens bounds tokens, but neither bounds the bill for one run: the same token
- * budget is a different amount of money on a different model.
- */
-class RunCostLedgerV1 {
-  #spentUsd = 0;
-
-  constructor(private readonly ceilingUsd: number) {}
-
-  get spentUsd(): number {
-    return this.#spentUsd;
-  }
-
-  record(costUsd: number): void {
-    this.#spentUsd += costUsd;
-  }
-
-  exceededBy(additionalUsd: number): number {
-    return this.#spentUsd + additionalUsd - this.ceilingUsd;
-  }
 }
 
 /** Aborts before or after a call when the run cost ceiling is crossed, and records why. */
@@ -385,75 +200,6 @@ function providerRetryContextV1(
     costLedger,
     ...reservations,
   };
-}
-
-/**
- * What a failed attempt costs the run.
- *
- * Charging every failure the full conservative reservation was the reason retries were refused
- * with "the remaining token budget cannot reserve a provider retry": a 429 that never reached a
- * model was billed as if it had produced a whole review. A provider error envelope carrying no
- * usage means no generation happened and costs nothing. Anything else may have generated output,
- * so it keeps the conservative reservation.
- */
-function failedAttemptChargeV1(
-  error: ProviderCallError,
-  inputTokens: number,
-  maxOutputTokens: number,
-): { tokens: number; promptTokens: number; completionTokens: number } {
-  const usage = error.responseMetadata?.usage;
-  const reported = usage ? chargedTokens({ usage }) : null;
-  if (reported !== null) {
-    return {
-      tokens: reported,
-      promptTokens: usage?.promptTokens ?? inputTokens,
-      completionTokens: usage?.completionTokens ?? 0,
-    };
-  }
-  // A provider error envelope carrying no usage means no generation happened; so does a failure
-  // that never reached the provider at all (#134). Both cost nothing.
-  if (error.code === "PROVIDER_ERROR" || error.code === "TRANSPORT_UNSENT") {
-    return { tokens: 0, promptTokens: 0, completionTokens: 0 };
-  }
-  return {
-    tokens: inputTokens + maxOutputTokens,
-    promptTokens: inputTokens,
-    completionTokens: maxOutputTokens,
-  };
-}
-
-/**
- * Base delay before another attempt, or null when the failure is not transient.
- *
- * A rejected request changes nothing on retry: 400/401/402/413/422 need a different request or a
- * different account, so they fail the run immediately instead of burning attempts and money.
- */
-function retryDelayMs(error: ProviderCallError): number | null {
-  const code = Number(error.diagnostic?.providerErrorCode);
-  const status = error.diagnostic?.httpStatus;
-  const transient = [408, 409, 429, 500, 502, 503, 504, 524, 529];
-  // An inference call is idempotent for this product: a request that may or may not have been
-  // submitted can be reissued, and the ledger charges the uncertain attempt either way. A request
-  // that was never submitted is unambiguously safe to reissue and costs nothing (#134).
-  if (error.code === "TRANSPORT_UNSENT" || error.code === "TRANSPORT_UNCERTAIN")
-    return 1_000 + Math.floor(Math.random() * 1_000);
-  if (
-    !error.retryable &&
-    (error.code !== "PROVIDER_ERROR" ||
-      !(transient.includes(code) || (status !== undefined && transient.includes(status))))
-  )
-    return null;
-  const fallbackDelay = () =>
-    code === 429 || status === 429 || code === 529 || status === 529
-      ? 5_000 + Math.floor(Math.random() * 5_000)
-      : 1_000 + Math.floor(Math.random() * 1_000);
-  const hint = error.diagnostic?.retryAfter;
-  if (!hint) return fallbackDelay();
-  const seconds = Number(hint);
-  const delay = Number.isFinite(seconds) ? seconds * 1_000 : Date.parse(hint) - Date.now();
-  // Longer hints remain actionable failures; never retry earlier than the server requested.
-  if (!Number.isFinite(delay)) return fallbackDelay();
-  return delay <= 30_000 ? Math.max(0, delay) : null;
 }
 
 /** Runner-owned provenance for one call, recorded alongside it rather than derived from it. */
@@ -641,28 +387,6 @@ function assertConversationBudget(messages: ReviewMessageV1[], maximum: number):
   }
 }
 
-/**
- * An upper bound on the tokens one call's input can consume, measured in UTF-8 bytes.
- *
- * Bytes bound tokens from above: no tokenizer emits a token shorter than one byte, so the encoded
- * size of the payload is a ceiling on its token count no matter which model runs. The per-message
- * addend covers chat-template and role framing the payload itself does not carry. That makes this
- * safe to reserve against and safe to price at the unit-price ceiling, in the conservative
- * direction in both cases.
- *
- * It is not an estimate of the real token count, and it is not close to one. English prose and
- * JSON run roughly 3-4 bytes per token, so this typically overshoots by a factor of about four.
- * Anything shown to a user must therefore describe it as a reservation, never as a token count
- * they could check against a model's context window (#135).
- */
-function conservativeInputTokenUpperBound(
-  messages: ReviewMessageV1[],
-  responseSchema: unknown,
-): number {
-  const bytes = Buffer.byteLength(JSON.stringify({ messages, responseSchema }), "utf8");
-  return bytes + messages.length * 256;
-}
-
 function findingVerificationReservationCountV1(): number {
   return 40;
 }
@@ -814,28 +538,6 @@ function guidanceAdmissionForCallsV1(
     );
   }
   return admission;
-}
-
-function chargedTokens(response: Pick<ReviewProviderResponseV1, "usage">): number | null {
-  const { promptTokens, completionTokens, totalTokens } = response.usage;
-  if (promptTokens === null || completionTokens === null || totalTokens === null) {
-    return null;
-  }
-  if (!Number.isSafeInteger(totalTokens) || totalTokens < 0) {
-    return null;
-  }
-  if (
-    !Number.isSafeInteger(promptTokens) ||
-    promptTokens < 0 ||
-    !Number.isSafeInteger(completionTokens) ||
-    completionTokens < 0
-  ) {
-    return null;
-  }
-  if (promptTokens + completionTokens !== totalTokens) {
-    return null;
-  }
-  return totalTokens;
 }
 
 function providerRecord(response: ReviewProviderResponseV1): unknown {
@@ -1397,46 +1099,6 @@ async function completeFinalStageV1(
   }
 }
 
-interface ReleasedAuthorContextV1 {
-  binding?: AuthorContextBindingV1;
-  authorPacket?: ReviewAuthor;
-  claimedVerification: AuthorPacketV1["claimedVerification"];
-}
-
-function releasedAuthorContextV1(packet: InspectedSnapshotPacket): ReleasedAuthorContextV1 {
-  if (packet.authorContext?.status === "DECLINED") {
-    return { binding: packet.authorContext, claimedVerification: [] };
-  }
-  if (packet.authorPacket) {
-    return {
-      ...(packet.authorContext ? { binding: packet.authorContext } : {}),
-      authorPacket: packet.authorPacket,
-      claimedVerification: packet.authorPacket.claimedVerification,
-    };
-  }
-  throw new Error("An author packet or explicit declined author context is required.");
-}
-
-function authorReleaseMessageV1(brief: ReviewBrief, released: ReleasedAuthorContextV1): string {
-  if (!released.binding) {
-    return JSON.stringify({
-      schemaVersion: 1,
-      type: "AUTHOR_PACKET",
-      snapshotDigest: brief.snapshotManifest.snapshotDigest,
-      authorPacket: released.authorPacket,
-    });
-  }
-  return JSON.stringify({
-    schemaVersion: 1,
-    type: "AUTHOR_CONTEXT_RELEASED",
-    snapshotDigest: brief.snapshotManifest.snapshotDigest,
-    authorContext: released.binding,
-    ...(released.authorPacket
-      ? { authorPacket: released.authorPacket }
-      : { declinedMarker: DECLINED_AUTHOR_CONTEXT_MARKER_V1 }),
-  });
-}
-
 function bindReleasedAuthorContextV1(
   report: ReviewReport,
   released: ReleasedAuthorContextV1,
@@ -1880,52 +1542,6 @@ async function writeExclusive(path: string, contents: string): Promise<void> {
     }
     throw error;
   }
-}
-
-/**
- * Every path one review writes under a packet.
- *
- * Built once so the two entry points cannot disagree about where an artifact lives. They used to
- * construct overlapping lists independently, and `resumeFinalReview` has to find exactly what
- * `runTwoStageReview` wrote -- a mismatch would surface as a missing-file failure partway through
- * a resume rather than as anything a reader could see (#123).
- */
-interface ReviewOutputPathsV1 {
-  reviewDirectory: string;
-  briefPath: string;
-  planPath: string;
-  preliminaryPath: string;
-  findingVerificationPath: string;
-  finalPath: string;
-  markdownPath: string;
-  reportMetadataPath: string;
-  runRecordPath: string;
-  preliminaryProviderPath: string;
-  preliminaryRepairProviderPath: string;
-  findingVerificationProviderPath: string;
-  finalProviderPath: string;
-  finalResumeClaimPath: string;
-}
-
-function reviewOutputPathsV1(packetPath: string): ReviewOutputPathsV1 {
-  const reviewDirectory = join(packetPath, "review");
-  const at = (name: string): string => join(reviewDirectory, name);
-  return {
-    reviewDirectory,
-    briefPath: at("neutral-review-brief.json"),
-    planPath: at("review-unit-plan.json"),
-    preliminaryPath: at("preliminary.json"),
-    findingVerificationPath: at("finding-verification.json"),
-    finalPath: at("final.json"),
-    markdownPath: at("report.md"),
-    reportMetadataPath: at("report-metadata.json"),
-    runRecordPath: at("run-record.jsonl"),
-    preliminaryProviderPath: at("preliminary-provider-response.json"),
-    preliminaryRepairProviderPath: at("preliminary-repair-provider-response.json"),
-    findingVerificationProviderPath: at("finding-verification-provider-response.json"),
-    finalProviderPath: at("final-provider-response.json"),
-    finalResumeClaimPath: at("final-resume-claim.json"),
-  };
 }
 
 /**

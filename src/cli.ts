@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 import { mkdtemp, readdir, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -31,6 +32,7 @@ import {
 import { buildInspectionReport, type InspectionReport } from "./contracts/inspection-report.js";
 import { jsonDocument } from "./contracts/json-document.js";
 import type { RunRecordEventV1 } from "./contracts/run-record.js";
+import type { RunRecordEventV2 } from "./contracts/run-record-v2.js";
 import {
   canonicalInputList,
   MAX_EXTERNAL_JSON_BYTES_V1,
@@ -39,20 +41,17 @@ import {
 } from "./contracts/standards-review.js";
 import { readStrictJsonFileV1 } from "./contracts/strict-json.js";
 import { captureRepositoryGuidanceV1 } from "./guidance/repository-guidance.js";
+import { resumeClaimReviewV2 as resumeFinalReview } from "./orchestrator/claim-resume.js";
+import { evaluateClaimResumeV1 } from "./orchestrator/claim-resume-eligibility.js";
+import {
+  preflightClaimReviewV2 as preflightReview,
+  runClaimReviewV2 as runTwoStageReview,
+} from "./orchestrator/claim-review.js";
 import { withReviewProgress } from "./orchestrator/progress.js";
-import {
-  describeResumeRefusalsV1,
-  evaluateResumeShapeV1,
-} from "./orchestrator/resume-eligibility.js";
-import { readRunRecordEventsV1 as readDurableRunRecordEventsV1 } from "./orchestrator/run-record.js";
-import {
-  preflightReview,
-  resumeFinalReview,
-  runTwoStageReview,
-} from "./orchestrator/two-stage-review.js";
+import { readRunRecordEventsAny as readDurableRunRecordEventsV1 } from "./orchestrator/run-record.js";
 import { ProviderCallPacerV1 } from "./provider/call-pacing.js";
 import { OpenRouterProviderV1, ProviderCallError } from "./provider/openrouter.js";
-import type { ReviewProviderV1 } from "./provider/review-provider.js";
+import type { ReviewProviderV2 } from "./provider/review-provider.js";
 import { reviewVerdictLabel } from "./report/markdown.js";
 import {
   captureGitSnapshotV1,
@@ -72,12 +71,26 @@ const MAX_CLI_RUN_RECORD_BYTES_V1 = 64 * 1024 * 1024;
 const MAX_CLI_RUN_RECORD_LINE_BYTES_V1 = 8 * 1024 * 1024;
 
 /** Reads a run record as typed events, the same contract the orchestrator writes and resumes on. */
-async function readRunRecordEventsV1(path: string): Promise<RunRecordEventV1[]> {
+async function readRunRecordEventsV1(
+  path: string,
+): Promise<Array<RunRecordEventV1 | RunRecordEventV2>> {
   const record = await readDurableRunRecordEventsV1(path, {
     maxTotalBytes: MAX_CLI_RUN_RECORD_BYTES_V1,
     maxLineBytes: MAX_CLI_RUN_RECORD_LINE_BYTES_V1,
   });
   return [...record.events];
+}
+
+function evaluateActiveResume(events: readonly (RunRecordEventV1 | RunRecordEventV2)[]) {
+  const current = events.filter((event): event is RunRecordEventV2 => event.schemaVersion === 2);
+  if (current.length !== events.length)
+    return {
+      eligible: false,
+      refusals: [
+        "Legacy run records are readable but cannot resume under claim protocol V2. Start a new review.",
+      ],
+    };
+  return evaluateClaimResumeV1(current);
 }
 
 const processIo: CliIoV1 = {
@@ -87,7 +100,7 @@ const processIo: CliIoV1 = {
 
 export interface CliDependenciesV1 {
   readOpenRouterApiKey(): string | undefined;
-  createProvider(apiKey: string, config: ReviewRunConfigV3): ReviewProviderV1;
+  createProvider(apiKey: string, config: ReviewRunConfigV3): ReviewProviderV2;
 }
 
 const processDependencies: CliDependenciesV1 = {
@@ -630,7 +643,7 @@ function formatInspection(report: InspectionReport): string {
 async function resolveLiveReviewContextV1(
   config: ReviewRunConfigV3,
   dependencies: CliDependenciesV1,
-): Promise<{ config: ReviewRunConfigV3; provider: ReviewProviderV1 }> {
+): Promise<{ config: ReviewRunConfigV3; provider: ReviewProviderV2 }> {
   const apiKey = dependencies.readOpenRouterApiKey();
   if (!apiKey || apiKey.trim().length === 0) {
     throw new Error("OPENROUTER_API_KEY is required in the environment for a live review.");
@@ -1018,7 +1031,7 @@ async function review(
         "Provider outcome and cost may be unknown. This submission cannot be safely replayed automatically.",
       );
     else {
-      let events: RunRecordEventV1[] = [];
+      let events: Array<RunRecordEventV1 | RunRecordEventV2> = [];
       try {
         events = await readRunRecordEventsV1(
           join(prepared.packetPath, "review", "run-record.jsonl"),
@@ -1035,17 +1048,17 @@ async function review(
       // The same predicate `resume-final` itself applies, rather than a second copy of the
       // eligibility rules. The previous literal event-type sequence had not been updated when
       // the finding-verification stage was added, so this offer was unreachable (#121).
-      if (evaluateResumeShapeV1(events).eligible) {
+      if (evaluateActiveResume(events).eligible) {
         const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
         const resumeConfig = effectiveOptions.config
           ? `--config ${quote(resolve(effectiveOptions.config))}`
           : `--model ${quote(config.model)} --max-cost ${config.budgets.maxTotalCostUsd}`;
         io.stderr(
-          `A final-only retry may be available. This command revalidates eligibility: independent-reviewer resume-final --packet ${quote(prepared.packetPath)} --repo ${quote(prepared.repositoryRoot)} ${resumeConfig}`,
+          `Saved review stages may be resumed. This command revalidates eligibility: independent-reviewer resume-final --packet ${quote(prepared.packetPath)} --repo ${quote(prepared.repositoryRoot)} ${resumeConfig}`,
         );
       } else if (persisted)
         io.stderr(
-          "This failure has no remaining final-only resume under the current policy. No automatic new review will be started.",
+          "This failure has no eligible stage resume under the current policy. No automatic new review will be started.",
         );
       if (events.length) io.stderr(formatRunCost(events));
     }
@@ -1061,10 +1074,11 @@ async function resumeFinal(
   dependencies: CliDependenciesV1,
 ): Promise<number> {
   const packetPath = resolve(options.packet);
-  const eligibility = evaluateResumeShapeV1(
+  const eligibility = evaluateActiveResume(
     await readRunRecordEventsV1(join(packetPath, "review", "run-record.jsonl")),
   );
-  if (!eligibility.eligible) throw new Error(describeResumeRefusalsV1(eligibility.refusals));
+  if (!eligibility.eligible)
+    throw new Error(`Claim resume refused: ${eligibility.refusals.join("; ")}`);
   const config = await resolveReviewConfigV1(options);
   const { provider } = await resolveLiveReviewContextV1(config, dependencies);
   const repositoryPath = resolve(options.repo ?? process.cwd());

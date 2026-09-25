@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -7,15 +8,15 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { terminalText } from "../src/cli/review-output.js";
 import { runCliV1 } from "../src/cli.js";
-import { FinalReviewReportV1Schema } from "../src/contracts/review-results.js";
+import { ReviewReportSchema } from "../src/contracts/report-reader.js";
 import {
   type ReviewRunConfigV3,
   ReviewRunConfigV3Schema,
 } from "../src/contracts/review-run-config.js";
 import type { RunRecordEventV1 } from "../src/contracts/run-record.js";
-import { StandardsReportV3Schema } from "../src/contracts/standards-results.js";
+import type { RunRecordEventV2 } from "../src/contracts/run-record-v2.js";
 import { readStrictJsonFileV1 } from "../src/contracts/strict-json.js";
-import { readRunRecordEventsV1 } from "../src/orchestrator/run-record.js";
+import { readRunRecordEventsAny as readRunRecordEventsV1 } from "../src/orchestrator/run-record.js";
 import { prepareEvaluationCaseV1 } from "./fixture-builder.js";
 import { parseEvaluationMatrixCommandV1 } from "./matrix-cli.js";
 import {
@@ -160,7 +161,9 @@ function finiteNonnegativeV1(value: number | null): number {
   return value !== null && Number.isFinite(value) && value >= 0 ? value : 0;
 }
 
-export function summarizeRunRecordV1(events: readonly RunRecordEventV1[]): RunRecordSummaryV1 {
+export function summarizeRunRecordV1(
+  events: readonly (RunRecordEventV1 | RunRecordEventV2)[],
+): RunRecordSummaryV1 {
   let reportedPromptTokens = 0;
   let reportedCompletionTokens = 0;
   let reportedTotalTokens = 0;
@@ -261,16 +264,19 @@ async function readVerdictV1(
       maxBytes: MAX_REPORT_BYTES_V1,
       source: `evaluation report ${testCase.id}`,
     });
-    return testCase.reviewMode === "standards"
-      ? StandardsReportV3Schema.parse(value).verdict
-      : FinalReviewReportV1Schema.parse(value).verdict;
+    const report = ReviewReportSchema.parse(value);
+    if ("ruleAssessments" in report !== (testCase.reviewMode === "standards"))
+      throw new Error("Evaluation report mode mismatch");
+    return report.verdict;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
 }
 
-async function readRunRecordV1(path: string): Promise<readonly RunRecordEventV1[]> {
+async function readRunRecordV1(
+  path: string,
+): Promise<readonly (RunRecordEventV1 | RunRecordEventV2)[]> {
   try {
     const record = await readRunRecordEventsV1(path, {
       maxTotalBytes: MAX_RUN_RECORD_BYTES_V1,
