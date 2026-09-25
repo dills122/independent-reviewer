@@ -66,6 +66,7 @@ describe("run record V2 generation boundary", () => {
         transitionDigest: digest,
         targetSetDigest: digest,
         catalogSetDigest: digest,
+        acceptedAttemptNumber: 2,
       },
       {
         type: "FINAL_CLAIM_VERIFICATION_PERSISTED",

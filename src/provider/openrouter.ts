@@ -10,9 +10,9 @@ import {
   ProviderCallError,
   type ProviderErrorDiagnosticV1,
   type ProviderResponseMetadataV1,
-  type ReviewProviderRequestV1,
+  type ReviewProviderRequestV2,
   type ReviewProviderResponseV1,
-  type ReviewProviderV1,
+  type ReviewProviderV2,
 } from "./review-provider.js";
 
 const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -359,7 +359,7 @@ function responseMetadata(body: unknown, apiKey: string): ProviderResponseMetada
 }
 
 function openRouterWireBodyV5(
-  request: ReviewProviderRequestV1,
+  request: ReviewProviderRequestV2,
   routing: OpenRouterProviderRoutingV2,
   ignoredProviders: readonly string[],
 ): string {
@@ -437,7 +437,7 @@ function failedProviderSlugs(error: ProviderCallError): string[] {
  * https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion
  * https://openrouter.ai/docs/guides/routing/provider-selection
  */
-export class OpenRouterProviderV1 implements ReviewProviderV1 {
+export class OpenRouterProviderV1 implements ReviewProviderV2 {
   readonly #apiKey: string;
   readonly #fetch: typeof fetch;
   readonly #routing: OpenRouterProviderRoutingV2;
@@ -461,7 +461,7 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
     this.#ignoredProviders = ignoredProviders;
   }
 
-  auditRequest(request: ReviewProviderRequestV1) {
+  auditRequest(request: ReviewProviderRequestV2) {
     const wireBody = openRouterWireBodyV5(request, this.#routing, this.#ignoredProviders);
     const credentialFreeWireRequest = JSON.stringify({
       url: OPENROUTER_CHAT_COMPLETIONS_URL,
@@ -488,7 +488,7 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
    * Excludes every endpoint OpenRouter reports in the failed routing chain and lets it re-route.
    * A pinned run with no provider identity drops the failed head of `order` instead.
    */
-  forRetry(error: ProviderCallError, _request: ReviewProviderRequestV1): ReviewProviderV1 | null {
+  forRetry(error: ProviderCallError, _request: ReviewProviderRequestV2): ReviewProviderV2 | null {
     const failed = failedProviderSlugs(error);
     const failedIdentities = new Set(
       failed.map((provider) => normalizedProviderIdentity(provider)),
@@ -525,7 +525,7 @@ export class OpenRouterProviderV1 implements ReviewProviderV1 {
     ]);
   }
 
-  async complete(request: ReviewProviderRequestV1): Promise<ReviewProviderResponseV1> {
+  async complete(request: ReviewProviderRequestV2): Promise<ReviewProviderResponseV1> {
     const primaryModel = request.models[0];
     if (primaryModel === undefined) {
       throw new ProviderCallError(

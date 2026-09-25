@@ -1,5 +1,5 @@
 import {
-  canonicalizeJson,
+  canonicalUniqueSorted,
   cloneCanonicalJson,
   digestCanonicalJson,
 } from "../contracts/canonical-json.js";
@@ -101,12 +101,6 @@ function effectRank(core: ReviewClaimCoreV1): number {
 function blocking(core: ReviewClaimCoreV1): boolean {
   return effectRank(core) < 2;
 }
-function canonicalUnion<T>(values: T[]): T[] {
-  return [...new Map(values.map((value) => [canonicalizeJson(value), value])).entries()]
-    .sort(([a], [b]) => compareUtf16(a, b))
-    .map(([, value]) => value);
-}
-
 function groupFindings(eligible: EligibleClaim[]) {
   const demonstrated = eligible.filter(
     ({ claim, assessment }) =>
@@ -154,8 +148,8 @@ function groupFindings(eligible: EligibleClaim[]) {
         ) ?? strongest;
       const core = ReviewClaimCoreV1Schema.parse({
         ...representative.claim.core,
-        obligations: canonicalUnion(members.flatMap(({ claim }) => claim.core.obligations)),
-        evidence: canonicalUnion(members.flatMap(({ claim }) => claim.core.evidence)),
+        obligations: canonicalUniqueSorted(members.flatMap(({ claim }) => claim.core.obligations)),
+        evidence: canonicalUniqueSorted(members.flatMap(({ claim }) => claim.core.evidence)),
       });
       return {
         claimIds: members.map(({ claim }) => claim.claimId).sort(compareUtf16),

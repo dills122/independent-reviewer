@@ -1,6 +1,5 @@
-import { canonicalizeJson } from "../contracts/canonical-json.js";
+import { canonicalizeJson, canonicalUniqueSorted } from "../contracts/canonical-json.js";
 import type { ReviewBrief } from "../contracts/neutral-review-brief.js";
-import { compareUtf16 } from "../contracts/primitives.js";
 import {
   assembleReviewClaimSetV1,
   identifyReviewClaimV1,
@@ -11,12 +10,6 @@ import {
 import type { ReviewPreliminary, ReviewReport } from "../contracts/standards-results.js";
 import { selectedRules } from "../contracts/standards-review.js";
 import { ClaimTransitionProposalV1Schema } from "../report/claim-projection.js";
-
-function canonicalUnique<T>(values: T[]): T[] {
-  return [...new Map(values.map((value) => [canonicalizeJson(value), value])).entries()]
-    .sort(([a], [b]) => compareUtf16(a, b))
-    .map(([, value]) => value);
-}
 
 /** Bind semantic evidence only; source identifiers and presentation are excluded. */
 export function reviewClaimSetV1(brief: ReviewBrief, review: ReviewPreliminary | ReviewReport) {
@@ -35,7 +28,7 @@ export function reviewClaimSetV1(brief: ReviewBrief, review: ReviewPreliminary |
       for (const rule of selectedRules({ standards: [input] })) owners.set(rule.id, input.id);
     }
   const obligations = (ruleIds?: string[]) =>
-    canonicalUnique<{ canonicalInputId: string; ruleId: string | null }>(
+    canonicalUniqueSorted<{ canonicalInputId: string; ruleId: string | null }>(
       mode === "REQUIREMENTS"
         ? brief.snapshotManifest.canonicalInputs.map((input) => ({
             canonicalInputId: input.id,
@@ -66,7 +59,9 @@ export function reviewClaimSetV1(brief: ReviewBrief, review: ReviewPreliminary |
         observedResult: assertion,
         expectedResult: "Satisfy the cited canonical obligations under those conditions.",
       },
-      evidence: canonicalUnique(finding.evidence.map(({ detail: _detail, ...anchor }) => anchor)),
+      evidence: canonicalUniqueSorted(
+        finding.evidence.map(({ detail: _detail, ...anchor }) => anchor),
+      ),
       assertion,
       correction: finding.correction,
       effect:
@@ -123,7 +118,7 @@ export function reviewClaimSetV1(brief: ReviewBrief, review: ReviewPreliminary |
           kind: "STANDARD_STATUS",
           ruleId: assessment.ruleId,
           status: assessment.status,
-          conflictingRuleIds: canonicalUnique(assessment.conflictingRuleIds),
+          conflictingRuleIds: canonicalUniqueSorted(assessment.conflictingRuleIds),
         },
       });
     }

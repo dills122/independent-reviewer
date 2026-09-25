@@ -1666,6 +1666,9 @@
             "value"
           ],
           "additionalProperties": false
+        },
+        "acceptedAttemptNumber": {
+          "type": "number"
         }
       },
       "required": [
@@ -1675,7 +1678,8 @@
         "candidateDigest",
         "transitionDigest",
         "targetSetDigest",
-        "catalogSetDigest"
+        "catalogSetDigest",
+        "acceptedAttemptNumber"
       ],
       "additionalProperties": false
     },
@@ -1780,6 +1784,56 @@
         "type",
         "reportDigest",
         "projectionPolicyVersion"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 2
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "PRELIMINARY",
+            "FINDING_VERIFICATION",
+            "FINAL",
+            "FINAL_CLAIM_VERIFICATION"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "TOKEN_BUDGET_EXHAUSTED"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "RESERVATION",
+            "REPORTED"
+          ]
+        },
+        "spentTokens": {
+          "type": "number"
+        },
+        "additionalTokens": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "at",
+        "stage",
+        "type",
+        "phase",
+        "spentTokens",
+        "additionalTokens"
       ],
       "additionalProperties": false
     }

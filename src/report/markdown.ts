@@ -149,14 +149,20 @@ export function renderReviewMarkdown(
           "",
         ]
       : []),
-    "## Preliminary finding dispositions",
-    "",
-    lineItems(preliminaryFindingDispositions),
-    "",
-    "## Preliminary concern dispositions",
-    "",
-    lineItems(preliminaryConcernDispositions),
-    "",
+    // Claim-ledger reports (VerifiedReviewReport) own provenance in the claim ledger, not here:
+    // their preliminaryFindingDispositions/preliminaryConcernDispositions are schema-forced empty.
+    ...("projection" in report
+      ? []
+      : [
+          "## Preliminary finding dispositions",
+          "",
+          lineItems(preliminaryFindingDispositions),
+          "",
+          "## Preliminary concern dispositions",
+          "",
+          lineItems(preliminaryConcernDispositions),
+          "",
+        ]),
     "## Author claims",
     "",
     lineItems(authorClaims),

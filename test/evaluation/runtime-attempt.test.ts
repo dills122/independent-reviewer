@@ -123,6 +123,7 @@ function fixture() {
       transitionDigest: digest,
       targetSetDigest: digest,
       catalogSetDigest: digest,
+      acceptedAttemptNumber: 2,
     }),
     started("FINAL_CLAIM_VERIFICATION", 3),
     failed("FINAL_CLAIM_VERIFICATION", 3),

@@ -59,6 +59,7 @@ const candidate = () =>
     transitionDigest: digest,
     targetSetDigest: digest,
     catalogSetDigest: digest,
+    acceptedAttemptNumber: 2,
   });
 const postVerification = (providerCall: boolean) =>
   event({
@@ -219,6 +220,32 @@ describe("evaluateClaimResumeV1", () => {
     refuses([
       ...valid.slice(0, -1),
       event({ type: "RUN_COMPLETED", terminalState: "READY" }),
+      terminal(),
+    ]);
+  });
+  it("refuses resume after either a cost or a token budget exhaustion", () => {
+    const valid = finalFailure();
+    refuses([
+      ...valid.slice(0, -1),
+      event({
+        type: "BUDGET_EXHAUSTED",
+        budget: "COST",
+        stage: "FINAL",
+        phase: "REPORTED",
+        spentUsd: 1,
+        additionalUsd: 0,
+      }),
+      terminal(),
+    ]);
+    refuses([
+      ...valid.slice(0, -1),
+      event({
+        type: "TOKEN_BUDGET_EXHAUSTED",
+        stage: "FINAL",
+        phase: "REPORTED",
+        spentTokens: 1,
+        additionalTokens: 0,
+      }),
       terminal(),
     ]);
   });

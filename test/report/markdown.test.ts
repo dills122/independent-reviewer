@@ -200,4 +200,34 @@ describe("final review Markdown", () => {
     assert.match(markdown, /Blocking coverage constraints/);
     assert.match(markdown, /src\/large\\\.ts/);
   });
+
+  it("omits preliminary disposition sections for claim-ledger reports", () => {
+    // VerifiedReviewReport forces preliminaryFindingDispositions/preliminaryConcernDispositions
+    // to length 0 (claim ledgers now own provenance); rendering "None." headings for every report
+    // looked like missing data. Its `projection` field is the discriminant from a legacy report.
+    const report = {
+      summary: "Reviewed via the claim-review runtime.",
+      findings: [],
+      preliminaryFindingDispositions: [],
+      preliminaryConcernDispositions: [],
+      authorClaims: [],
+      authorVerificationClaims: [],
+      changedPathCoverage: [
+        { path: "src/example.ts", status: "INSPECTED", explanation: "Inspected." },
+      ],
+      canonicalInputCoverage: [
+        { canonicalInputId: "input_plan", status: "ASSESSED", explanation: "Assessed." },
+      ],
+      limitations: [],
+      verdict: "READY",
+      nextActions: { blockers: [], fastFollows: [] },
+      projection: { policyVersion: "claim-projection-v1" },
+    } as unknown as Parameters<typeof renderReviewMarkdown>[0];
+
+    const markdown = renderReviewMarkdown(report);
+
+    assert.doesNotMatch(markdown, /Preliminary finding dispositions/);
+    assert.doesNotMatch(markdown, /Preliminary concern dispositions/);
+    assert.match(markdown, /Author claims/);
+  });
 });
