@@ -27,13 +27,21 @@ export function normalizedError(error: unknown): {
 }
 
 /**
+ * A provider error envelope carrying no usage means no generation happened; so does a failure
+ * that never reached the provider at all (#134). Both cost nothing — for tokens and for USD,
+ * consistently, so the two never drift apart.
+ */
+export function isZeroChargeFailureV1(code: string | null): boolean {
+  return code === "PROVIDER_ERROR" || code === "TRANSPORT_UNSENT";
+}
+
+/**
  * What a failed attempt costs the run.
  *
  * Charging every failure the full conservative reservation was the reason retries were refused
  * with "the remaining token budget cannot reserve a provider retry": a 429 that never reached a
- * model was billed as if it had produced a whole review. A provider error envelope carrying no
- * usage means no generation happened and costs nothing. Anything else may have generated output,
- * so it keeps the conservative reservation.
+ * model was billed as if it had produced a whole review. Anything that isn't zero-charge may have
+ * generated output, so it keeps the conservative reservation.
  */
 export function failedAttemptChargeV1(
   error: ProviderCallError,
@@ -49,9 +57,7 @@ export function failedAttemptChargeV1(
       completionTokens: usage?.completionTokens ?? 0,
     };
   }
-  // A provider error envelope carrying no usage means no generation happened; so does a failure
-  // that never reached the provider at all (#134). Both cost nothing.
-  if (error.code === "PROVIDER_ERROR" || error.code === "TRANSPORT_UNSENT") {
+  if (isZeroChargeFailureV1(error.code)) {
     return { tokens: 0, promptTokens: 0, completionTokens: 0 };
   }
   return {

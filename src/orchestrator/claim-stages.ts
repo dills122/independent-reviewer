@@ -201,6 +201,7 @@ export async function continueClaimStagesV1(
     "Post-author claim targets and catalog",
   );
   if (!retained) {
+    if (!final) throw new Error("Final claim call must complete before persisting a candidate");
     await input.persist("final-candidate.json", candidate);
     await input.persist("claim-transitions.json", plan);
     await input.persist("final-claim-targets.json", plan.targets);
@@ -211,6 +212,7 @@ export async function continueClaimStagesV1(
       transitionDigest: digestCanonicalJson(plan),
       targetSetDigest: digestCanonicalJson(plan.targets),
       catalogSetDigest: digestCanonicalJson(plan.catalog),
+      acceptedAttemptNumber: final.attemptNumber,
     });
   }
   if (retained?.finalVerification) {

@@ -20,7 +20,12 @@ import {
 } from "./call-accounting.js";
 import type { ClaimReviewStageV1, reserveClaimCallsV1 } from "./claim-admission.js";
 import { writeClaimArtifactV1 } from "./claim-artifacts.js";
-import { failedAttemptChargeV1, normalizedError, retryDelayMs } from "./provider-failure.js";
+import {
+  failedAttemptChargeV1,
+  isZeroChargeFailureV1,
+  normalizedError,
+  retryDelayMs,
+} from "./provider-failure.js";
 
 export interface ClaimCallStateV1 {
   nextAttempt: number;
@@ -181,7 +186,7 @@ export class ClaimCallExecutorV1 {
           error.responseMetadata?.usage.cost !== null &&
           error.responseMetadata?.usage.cost !== undefined
             ? error.responseMetadata.usage.cost
-            : error instanceof ProviderCallError && error.code === "TRANSPORT_UNSENT"
+            : error instanceof ProviderCallError && isZeroChargeFailureV1(error.code)
               ? 0
               : priceCeilingCostUsd(charge.promptTokens, charge.completionTokens, config);
         this.state.spentTokens += charge.tokens;
@@ -253,8 +258,16 @@ export class ClaimCallExecutorV1 {
         });
         throw new Error("Provider usage exceeded total claim review cost budget");
       }
-      if (this.state.spentTokens > config.budgets.maxTotalTokens)
+      if (this.state.spentTokens > config.budgets.maxTotalTokens) {
+        await durable({
+          type: "TOKEN_BUDGET_EXHAUSTED",
+          stage: request.stage,
+          phase: "REPORTED",
+          spentTokens: this.state.spentTokens,
+          additionalTokens: 0,
+        });
         throw new Error("Provider usage exceeded total claim review token budget");
+      }
       return { response, attemptNumber, responseArtifact };
     }
   }

@@ -61,6 +61,7 @@ export const RunRecordEventV2Schema = z.discriminatedUnion("type", [
     transitionDigest: DigestV1Schema,
     targetSetDigest: DigestV1Schema,
     catalogSetDigest: DigestV1Schema,
+    acceptedAttemptNumber: z.number(),
   }),
   z.strictObject({
     ...base,
@@ -75,6 +76,20 @@ export const RunRecordEventV2Schema = z.discriminatedUnion("type", [
     type: z.literal("FINAL_REPORT_PERSISTED"),
     reportDigest: DigestV1Schema,
     projectionPolicyVersion: z.string(),
+  }),
+  /**
+   * A distinct type rather than a second BUDGET_EXHAUSTED shape: nesting a differently-shaped
+   * member under one discriminant literal collapses TypeScript's narrowing for the whole
+   * RunRecordEventV2 union (every `event.type === "X"` check across the codebase), so this stays
+   * its own flat member instead.
+   */
+  z.strictObject({
+    ...base,
+    stage: ReviewStageV2Schema,
+    type: z.literal("TOKEN_BUDGET_EXHAUSTED"),
+    phase: z.enum(["RESERVATION", "REPORTED"]),
+    spentTokens: z.number(),
+    additionalTokens: z.number(),
   }),
 ]);
 export type RunRecordEventV2 = z.infer<typeof RunRecordEventV2Schema>;

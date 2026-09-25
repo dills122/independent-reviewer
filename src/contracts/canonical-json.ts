@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { types } from "node:util";
 
+import { compareUtf16 } from "./primitives.js";
 import type { DigestV1 } from "./snapshot-manifest.js";
 
 export type CanonicalJsonValue =
@@ -179,4 +180,11 @@ export function sha256Utf8(value: string): DigestV1 {
 /** Canonicalizes JSON-compatible data before hashing it as UTF-8. */
 export function digestCanonicalJson(value: unknown): DigestV1 {
   return sha256Utf8(canonicalizeJson(value));
+}
+
+/** Deduplicates by canonical-JSON identity, then sorts by canonical UTF-16 order. */
+export function canonicalUniqueSorted<T>(values: readonly T[]): T[] {
+  return [...new Map(values.map((value) => [canonicalizeJson(value), value])).entries()]
+    .sort(([a], [b]) => compareUtf16(a, b))
+    .map(([, value]) => value);
 }

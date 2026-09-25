@@ -287,6 +287,28 @@ describe("claim call executor", () => {
     assert.ok(run.events.some((event) => event.type === "CALL_SUCCEEDED"));
   });
 
+  it("reports a structured token-budget-exhausted event before rejecting an over-budget response", async (t) => {
+    const baseline = await arrange(t);
+    const threshold = baseline.admission.requiredWithRetry;
+    const run = await arrange(
+      t,
+      async () =>
+        response({
+          promptTokens: threshold,
+          completionTokens: threshold,
+          totalTokens: threshold * 2,
+          cost: 0.01,
+        }),
+      { maxTotalTokens: threshold },
+    );
+    await assert.rejects(run.executor.complete(request(), "prompt-test"));
+    const exhausted = run.events.find((event) => event.type === "TOKEN_BUDGET_EXHAUSTED");
+    assert.ok(exhausted);
+    assert.equal(exhausted.phase, "REPORTED");
+    assert.equal(exhausted.spentTokens, run.executor.state.spentTokens);
+    assert.ok(run.events.every((event) => event.type !== "BUDGET_EXHAUSTED"));
+  });
+
   it("rejects insufficient remaining cost before starting another call", async (t) => {
     const run = await arrange(t);
     const executor = new ClaimCallExecutorV1({

@@ -11,6 +11,7 @@ import { runCliV1 } from "../src/cli.js";
 import type { ReviewClaimSetV1 } from "../src/contracts/review-claims.js";
 import { RunRecordEventV2Schema } from "../src/contracts/run-record-v2.js";
 import { resumeClaimReviewV2 as resumeFinalReview } from "../src/orchestrator/claim-resume.js";
+import { CLAIM_RESUME_REFUSAL_V1 } from "../src/orchestrator/claim-resume-eligibility.js";
 import {
   preflightClaimReviewV2 as preflightReview,
   runClaimReviewV2 as runTwoStageReview,
@@ -1410,11 +1411,30 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
       },
     ];
     const grammarCorruptionStart = corruptions.length - 4;
-    const grammarRefusalMessages = [
-      "Call attempts must be contiguous and sequential",
-      "Call result has no matching active attempt",
-      "Provider retry requires adjacent matching failure and call",
-      "Budget-exhausted runs cannot resume",
+    // Exact refusal reason for each corruption, so a refactor that catches the same corrupted
+    // ledger for the WRONG reason fails this test instead of matching the "Claim resume ...
+    // refused/mismatch" prefix every refusal shares.
+    const expectedRefusalMessages = [
+      // Caught by resumeClaimReviewV2's own digest revalidation, not evaluateClaimResumeV1, so
+      // these two have no named CLAIM_RESUME_REFUSAL_V1 constant to reference.
+      "Claim resume author context mismatch",
+      CLAIM_RESUME_REFUSAL_V1.AUTHOR_RELEASE_ORDER,
+      CLAIM_RESUME_REFUSAL_V1.AUTHOR_RELEASE_ORDER,
+      "Claim resume author release mismatch",
+      CLAIM_RESUME_REFUSAL_V1.AUTHOR_RELEASE_ORDER,
+      CLAIM_RESUME_REFUSAL_V1.FINAL_CALL_OUT_OF_BOUNDS,
+      "Expected one RUN_STARTED checkpoint",
+      "Expected one PRELIMINARY_PERSISTED checkpoint",
+      "Expected one FINDING_VERIFICATION_PERSISTED checkpoint",
+      CLAIM_RESUME_REFUSAL_V1.UNMATCHED_CALL_OUTCOME,
+      CLAIM_RESUME_REFUSAL_V1.DUPLICATE_TERMINAL_FAILURE,
+      CLAIM_RESUME_REFUSAL_V1.PRELIMINARY_CHECKPOINT_UNSUPPORTED,
+      CLAIM_RESUME_REFUSAL_V1.AUTHOR_RELEASE_ORDER,
+      CLAIM_RESUME_REFUSAL_V1.UNMATCHED_CALL_OUTCOME,
+      CLAIM_RESUME_REFUSAL_V1.NONCONTIGUOUS_ATTEMPTS,
+      CLAIM_RESUME_REFUSAL_V1.UNMATCHED_CALL_OUTCOME,
+      CLAIM_RESUME_REFUSAL_V1.RETRY_NOT_ADJACENT,
+      CLAIM_RESUME_REFUSAL_V1.BUDGET_EXHAUSTED,
     ];
     for (const [corruptionIndex, corrupt] of corruptions.entries()) {
       await t.test(`refuses ledger corruption ${corruptionIndex}`, async () => {
@@ -1446,16 +1466,12 @@ test("a rate-limited declined-author final stage offers resume and rejects a sil
         );
         assert.match(
           errors.join("\n"),
-          /Claim resume refused|not eligible|author.*mismatch|persisted preliminary or author-stage identity is invalid/i,
+          new RegExp(expectedRefusalMessages[corruptionIndex] as string),
           `ledger corruption ${corruptionIndex}: ${errors.join("\n")}`,
         );
         assert.equal(providerCalls, callsBeforeResume);
         if (corruptionIndex >= grammarCorruptionStart) {
           assert.equal(providerConstructions, constructionsBeforeResume);
-          assert.match(
-            errors.join("\n"),
-            new RegExp(grammarRefusalMessages[corruptionIndex - grammarCorruptionStart] as string),
-          );
         }
       });
     }

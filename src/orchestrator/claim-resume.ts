@@ -50,7 +50,11 @@ import { prepareClaimReviewV1 } from "./claim-preparation.js";
 import { evaluateClaimResumeV1 } from "./claim-resume-eligibility.js";
 import { continueClaimStagesV1 } from "./claim-stages.js";
 import { emitReviewProgress } from "./progress.js";
-import { failedAttemptChargeV1, normalizedError } from "./provider-failure.js";
+import {
+  failedAttemptChargeV1,
+  isZeroChargeFailureV1,
+  normalizedError,
+} from "./provider-failure.js";
 import { assertFindingEvidenceAnchors, parsePreliminary } from "./response-validation.js";
 import { releasedAuthorContextV1 } from "./review-input.js";
 import { reviewOutputPathsV1 } from "./review-paths.js";
@@ -392,7 +396,7 @@ export async function resumeClaimReviewV2(
       state.spentTokens += charge.tokens;
       state.spentUsd +=
         result.responseMetadata?.usage.cost ??
-        (code === "TRANSPORT_UNSENT"
+        (isZeroChargeFailureV1(code)
           ? 0
           : priceCeilingCostUsd(charge.promptTokens, charge.completionTokens, config));
     }
@@ -419,13 +423,7 @@ export async function resumeClaimReviewV2(
     );
   }
   if (candidate) {
-    const finalCall = events.findLast(
-      (event) => event.type === "CALL_SUCCEEDED" && event.stage === "FINAL",
-    );
-    const response =
-      finalCall?.type === "CALL_SUCCEEDED"
-        ? successfulResponses.get(finalCall.attemptNumber)
-        : undefined;
+    const response = successfulResponses.get(candidateEvent?.acceptedAttemptNumber ?? -1);
     if (!response) throw new Error("Missing accepted final candidate response");
     assertSame(
       assembleFinalClaimCandidateV4(prior, response.value),
